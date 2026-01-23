@@ -1,0 +1,101 @@
+customer_id,age,income,credit_score,tenure_months,segment,primary_life_event,secondary_life_event,intent_score,login_frequency_30d,transaction_volume_30d,avg_transaction_amount,channel_preference,estimated_savings,debt_to_income_ratio,risk_category,value_tier
+CUST_000001,31,73896.29,694,36,Young Professionals,first_home,marriage,0.8,3,28,3894.98,mobile,11612.56,0.295,medium,silver
+CUST_000002,29,79097.3,709,16,Young Professionals,first_home,marriage,0.7,5,27,4135.92,mobile,27268.09,0.142,medium,silver
+CUST_000003,27,61473.86,743,22,Young Professionals,first_home,career_growth,1.0,0,47,3558.23,mobile,26025.51,0.191,medium,silver
+CUST_000004,29,56926.81,739,13,Young Professionals,first_home,career_growth,1.0,11,36,3036.61,mobile,17535.01,0.264,medium,silver
+CUST_000005,30,50939.4,697,37,Young Professionals,new_job,marriage,0.7,20,23,2853.67,mobile,15706.33,0.388,medium,silver
+CUST_000006,29,61660.32,732,29,Young Professionals,first_home,marriage,0.7,0,10,3323.55,mobile,15905.44,0.188,medium,silver
+CUST_000007,27,71205.72,714,33,Young Professionals,career_growth,first_home,1.0,3,44,3890.77,mobile,16545.3,0.119,medium,silver
+CUST_000008,31,70065.24,716,36,Young Professionals,marriage,new_job,0.7,4,48,3935.27,mobile,27233.78,0.171,medium,silver
+CUST_000009,31,51213.01,694,14,Young Professionals,first_home,marriage,0.8,1,22,2839.51,mobile,23712.98,0.175,medium,silver
+CUST_000010,28,78285.61,738,31,Young Professionals,new_job,marriage,0.6,18,44,4325.93,mobile,13670.86,0.368,medium,silver
+CUST_000011,34,53662.64,741,18,Young Professionals,career_growth,first_home,1.0,1,22,2807.23,mobile,16830.52,0.245,medium,silver
+CUST_000012,25,53595.96,723,12,Young Professionals,new_job,career_growth,0.6,5,24,3167.1,mobile,25992.91,0.176,medium,silver
+CUST_000013,26,71368.12,735,7,Young Professionals,career_growth,marriage,0.6,3,23,3903.86,mobile,26569.08,0.259,medium,silver
+CUST_000014,34,79569.51,711,35,Young Professionals,new_job,first_home,1.0,2,24,4313.01,mobile,28120.81,0.261,medium,silver
+CUST_000015,25,54521.53,738,11,Young Professionals,career_growth,first_home,1.0,3,38,3140.35,mobile,13056.07,0.129,medium,silver
+CUST_000016,33,70728.13,718,47,Young Professionals,career_growth,first_home,1.0,10,31,3899.51,mobile,13538.78,0.152,medium,silver
+CUST_000017,33,65499.08,681,49,Young Professionals,career_growth,marriage,0.7,10,21,3640.11,mobile,28732.12,0.357,medium,silver
+CUST_000018,30,73396.27,703,39,Young Professionals,career_growth,marriage,0.7,3,14,4018.39,mobile,7488.23,0.148,medium,silver
+CUST_000019,26,64568.41,714,27,Young Professionals,marriage,first_home,0.7,0,39,3570.76,mobile,28390.04,0.297,medium,silver
+CUST_000020,25,66276.21,738,16,Young Professionals,new_job,career_growth,0.6,6,29,3771.55,mobile,18143.63,0.205,medium,silver
+CUST_000021,25,67307.12,743,33,Young Professionals,marriage,first_home,0.7,0,35,3495.06,mobile,32050.53,0.386,medium,silver
+CUST_000022,29,76504.82,716,41,Young Professionals,marriage,career_growth,0.6,6,13,4012.8,mobile,13492.73,0.181,medium,silver
+CUST_000023,27,55084.78,704,20,Young Professionals,marriage,new_job,0.6,3,34,3249.76,mobile,8595.08,0.255,medium,silver
+CUST_000024,26,59676.52,712,10,Young Professionals,career_growth,new_job,0.6,1,20,3309.01,mobile,7915.36,0.102,medium,silver
+CUST_000025,28,73948.86,744,10,Young Professionals,new_job,marriage,0.6,7,33,3944.76,mobile,27273.11,0.198,medium,silver
+CUST_000026,44,117985.12,721,48,Established Families,investment,business_start,0.5,0,31,6096.25,mobile,50869.0,0.181,medium,gold
+CUST_000027,46,123602.33,767,62,Established Families,investment,home_purchase,0.8,0,48,6551.68,web,14390.65,0.22,low,gold
+CUST_000028,37,110728.0,754,26,Established Families,investment,business_start,0.5,19,26,5664.38,mobile,18001.58,0.175,low,gold
+CUST_000029,48,86571.13,788,57,Established Families,investment,child_education,0.3,4,39,4400.03,web,28258.11,0.148,low,gold
+CUST_000030,40,81007.54,777,23,Established Families,business_start,child_education,0.4,19,28,4144.4,mobile,24030.59,0.242,low,gold
+CUST_000031,35,112527.17,722,16,Established Families,marriage,career_growth,0.8,1,35,5902.77,mobile,49804.07,0.298,medium,gold
+CUST_000032,38,123109.58,779,43,Established Families,business_start,child_education,0.5,4,35,6411.69,mobile,39179.22,0.382,low,gold
+CUST_000033,37,137429.88,739,51,Established Families,child_education,investment,0.5,1,11,7199.71,mobile,32244.03,0.297,medium,gold
+CUST_000034,47,139141.27,789,41,Established Families,child_education,business_start,0.4,5,45,7337.85,mobile,58633.07,0.185,low,gold
+CUST_000035,44,109642.97,723,57,Established Families,business_start,child_education,0.5,0,33,5922.35,mobile,35606.19,0.172,medium,gold
+CUST_000036,41,132560.97,788,30,Established Families,business_start,investment,0.5,6,22,7081.03,mobile,33893.28,0.103,low,gold
+CUST_000037,43,139300.02,708,36,Established Families,home_purchase,business_start,0.9,4,13,7056.27,mobile,47498.02,0.266,medium,gold
+CUST_000038,39,132666.22,722,49,Established Families,child_education,business_start,0.5,3,31,6882.0,mobile,60373.96,0.205,medium,gold
+CUST_000039,36,147805.64,708,44,Established Families,child_education,investment,0.5,14,18,7618.78,mobile,67511.52,0.144,medium,gold
+CUST_000040,47,85938.64,782,52,Established Families,investment,child_education,0.3,24,40,4516.25,branch,11464.24,0.333,low,gold
+CUST_000041,40,129355.91,773,56,Established Families,business_start,home_purchase,0.9,1,32,6851.23,mobile,52632.06,0.347,low,gold
+CUST_000042,41,132223.14,776,30,Established Families,business_start,child_education,0.5,2,18,7094.61,mobile,13865.16,0.391,low,gold
+CUST_000043,47,102588.05,779,49,Established Families,business_start,child_education,0.4,16,35,5492.49,web,28911.0,0.288,low,gold
+CUST_000044,40,106894.13,786,21,Established Families,home_purchase,investment,0.9,1,14,5545.75,mobile,17944.53,0.294,low,gold
+CUST_000045,42,104734.66,749,32,Established Families,investment,child_education,0.5,19,31,5426.02,mobile,44566.48,0.305,medium,gold
+CUST_000046,47,89322.96,734,62,Established Families,home_purchase,business_start,0.7,8,45,4764.36,web,14821.69,0.223,medium,gold
+CUST_000047,40,136738.73,795,59,Established Families,business_start,child_education,0.5,6,43,7264.18,mobile,39309.28,0.224,low,gold
+CUST_000048,35,80957.04,754,47,Established Families,first_home,marriage,0.8,23,33,4424.61,mobile,32612.12,0.213,low,gold
+CUST_000049,39,111538.09,700,56,Established Families,investment,business_start,0.5,5,24,5678.01,mobile,41116.21,0.256,medium,gold
+CUST_000050,40,138196.0,749,54,Established Families,investment,business_start,0.5,14,15,6972.75,mobile,55562.38,0.286,medium,gold
+CUST_000051,36,136353.13,737,39,Established Families,home_purchase,investment,0.9,4,27,7274.53,mobile,32629.6,0.254,medium,gold
+CUST_000052,42,143732.99,729,47,Established Families,child_education,business_start,0.5,15,43,7582.66,mobile,18181.42,0.114,medium,gold
+CUST_000053,40,114483.27,776,28,Established Families,child_education,home_purchase,0.9,4,33,5954.3,mobile,43396.83,0.154,low,gold
+CUST_000054,38,104196.71,766,52,Established Families,business_start,child_education,0.5,0,11,5335.86,mobile,22030.95,0.153,low,gold
+CUST_000055,39,118410.07,704,37,Established Families,home_purchase,investment,0.9,0,22,6012.03,mobile,34629.99,0.306,medium,gold
+CUST_000056,60,238130.86,810,40,Affluent Seniors,estate_planning,wealth_management,0.4,0,24,12174.58,web,82703.3,0.211,low,platinum
+CUST_000057,51,212120.64,763,37,Affluent Seniors,wealth_management,retirement_planning,0.6,5,14,10857.37,branch,66403.71,0.173,low,platinum
+CUST_000058,54,127342.58,788,49,Affluent Seniors,retirement_planning,downsizing,0.6,1,28,6576.93,web,45783.37,0.244,low,gold
+CUST_000059,53,180565.98,783,58,Affluent Seniors,estate_planning,wealth_management,0.4,1,35,9335.15,mobile,43776.18,0.396,low,platinum
+CUST_000060,54,240053.77,802,38,Affluent Seniors,estate_planning,retirement_planning,0.6,8,42,12077.73,mobile,104885.64,0.115,low,platinum
+CUST_000061,57,204544.22,773,42,Affluent Seniors,retirement_planning,downsizing,0.6,15,38,10646.6,mobile,79236.93,0.261,low,platinum
+CUST_000062,68,225787.38,754,58,Affluent Seniors,retirement_planning,downsizing,0.6,0,34,11469.25,web,75073.24,0.146,low,platinum
+CUST_000063,53,148096.33,752,35,Affluent Seniors,estate_planning,retirement_planning,0.6,12,42,7569.4,mobile,55180.85,0.328,low,gold
+CUST_000064,60,170974.93,787,60,Affluent Seniors,downsizing,retirement_planning,0.6,14,47,9044.66,branch,31117.56,0.214,low,platinum
+CUST_000065,50,211168.1,771,32,Affluent Seniors,child_education,business_start,0.4,21,17,10714.47,web,74648.65,0.372,low,platinum
+CUST_000066,62,188246.0,767,83,Affluent Seniors,retirement_planning,downsizing,0.6,5,30,9566.8,mobile,86561.13,0.215,low,platinum
+CUST_000067,63,109992.87,800,70,Affluent Seniors,estate_planning,retirement_planning,0.6,3,41,5828.68,web,34470.05,0.368,low,gold
+CUST_000068,53,249653.89,806,47,Affluent Seniors,wealth_management,downsizing,0.4,2,29,12872.28,mobile,35242.74,0.261,low,platinum
+CUST_000069,64,226967.84,837,75,Affluent Seniors,downsizing,wealth_management,0.4,2,38,11686.91,mobile,85698.38,0.263,low,platinum
+CUST_000070,60,189854.4,769,49,Affluent Seniors,retirement_planning,estate_planning,0.6,6,16,9806.52,mobile,57403.52,0.283,low,platinum
+CUST_000071,64,208914.34,792,92,Affluent Seniors,estate_planning,wealth_management,0.4,6,24,10526.73,mobile,27352.83,0.131,low,platinum
+CUST_000072,58,238835.28,772,44,Affluent Seniors,estate_planning,wealth_management,0.4,2,44,12225.24,branch,80370.5,0.22,low,platinum
+CUST_000073,58,211637.45,823,77,Affluent Seniors,estate_planning,downsizing,0.4,6,46,10841.44,mobile,61868.99,0.376,low,platinum
+CUST_000074,60,104927.0,800,52,Affluent Seniors,downsizing,wealth_management,0.4,13,33,5580.87,mobile,11042.28,0.299,low,gold
+CUST_000075,56,246331.2,798,62,Affluent Seniors,downsizing,retirement_planning,0.6,0,25,12558.61,mobile,103437.62,0.205,low,platinum
+CUST_000076,27,33813.75,664,19,Entry Level,new_job,first_home,1.0,2,31,1981.19,mobile,9888.33,0.249,high,bronze
+CUST_000077,24,33104.8,620,14,Entry Level,stable,,0.3,2,20,2109.08,mobile,10283.39,0.34,high,bronze
+CUST_000078,28,33123.05,669,37,Entry Level,first_home,marriage,0.7,0,36,1715.02,mobile,4691.66,0.34,high,bronze
+CUST_000079,24,47749.21,627,7,Entry Level,stable,,0.3,2,44,2811.06,mobile,12361.0,0.3,high,bronze
+CUST_000080,26,38127.85,674,35,Entry Level,career_growth,new_job,0.6,22,14,2350.79,mobile,13618.13,0.311,high,bronze
+CUST_000081,22,46348.87,639,12,Entry Level,stable,,0.3,13,11,2741.24,mobile,11034.59,0.332,high,bronze
+CUST_000082,22,38722.53,663,8,Entry Level,stable,,0.3,21,14,2240.73,mobile,19134.62,0.241,high,bronze
+CUST_000083,29,38504.27,633,34,Entry Level,career_growth,marriage,0.6,0,43,2418.19,mobile,11946.95,0.152,high,bronze
+CUST_000084,28,43663.68,689,39,Entry Level,career_growth,marriage,0.6,3,26,2457.04,mobile,16945.04,0.132,medium,bronze
+CUST_000085,27,32737.71,676,15,Entry Level,new_job,career_growth,0.6,4,32,2064.03,mobile,8569.18,0.331,high,bronze
+CUST_000086,27,30939.32,673,31,Entry Level,career_growth,first_home,1.0,8,43,1793.7,mobile,14424.08,0.316,high,bronze
+CUST_000087,29,41328.09,674,31,Entry Level,marriage,new_job,0.6,4,31,2189.31,mobile,18044.34,0.354,high,bronze
+CUST_000088,24,41936.86,692,28,Entry Level,stable,,0.3,0,39,2369.81,mobile,15741.46,0.23,medium,bronze
+CUST_000089,28,31518.67,663,40,Entry Level,new_job,marriage,0.6,3,46,1687.5,mobile,15131.95,0.234,high,bronze
+CUST_000090,28,31734.1,699,37,Entry Level,first_home,new_job,1.0,20,35,2077.96,mobile,14640.39,0.294,medium,bronze
+CUST_000091,48,483217.8,826,29,High Net Worth,child_education,home_purchase,0.8,6,11,24524.73,mobile,105795.51,0.377,low,platinum
+CUST_000092,57,326528.8,818,59,High Net Worth,downsizing,retirement_planning,0.6,3,14,16411.07,mobile,123596.21,0.202,low,platinum
+CUST_000093,62,321345.63,818,58,High Net Worth,estate_planning,wealth_management,0.4,6,34,16222.11,mobile,35271.0,0.361,low,platinum
+CUST_000094,62,255641.87,797,89,High Net Worth,wealth_management,retirement_planning,0.6,0,11,13048.0,mobile,84950.53,0.182,low,platinum
+CUST_000095,64,430482.02,804,61,High Net Worth,wealth_management,estate_planning,0.4,1,21,21707.44,mobile,83273.78,0.113,low,platinum
+CUST_000096,40,473101.73,794,35,High Net Worth,home_purchase,child_education,0.9,11,33,24147.14,mobile,214636.6,0.28,low,platinum
+CUST_000097,52,496755.47,831,34,High Net Worth,wealth_management,estate_planning,0.4,9,11,25060.61,mobile,56974.26,0.387,low,platinum
+CUST_000098,63,305037.58,784,75,High Net Worth,wealth_management,downsizing,0.4,10,25,15643.09,branch,115428.74,0.146,low,platinum
+CUST_000099,42,267332.17,847,45,High Net Worth,business_start,home_purchase,0.9,4,29,13436.58,mobile,117860.72,0.111,low,platinum
+CUST_000100,54,396572.59,784,68,High Net Worth,retirement_planning,downsizing,0.6,15,13,19977.71,mobile,148041.94,0.123,low,platinum

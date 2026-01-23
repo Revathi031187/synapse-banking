@@ -1,0 +1,22 @@
+review_id,customer_id,product_id,rating,review_text,review_date,helpful_count,sentiment,verified_purchase
+REV_0001,CUST_000001,PROD_0001,5,"Absolutely love this laptop! The performance is amazing and it handles all my work tasks effortlessly. The battery life is impressive too. Highly recommend!",2023-06-25,45,positive,true
+REV_0002,CUST_000001,PROD_0003,5,"Best headphones I've ever owned. The noise cancellation is incredible and the sound quality is top-notch. Perfect for my daily commute!",2023-07-20,32,positive,true
+REV_0003,CUST_000002,PROD_0006,4,"Great running shoes! Very comfortable and provides good support. Only issue is they run a bit small, so order half size up.",2023-09-05,18,positive,true
+REV_0004,CUST_000003,PROD_0001,5,"This laptop exceeded my expectations. Fast, reliable, and perfect for video editing. The display is stunning. Worth every penny!",2023-03-15,67,positive,true
+REV_0005,CUST_000003,PROD_0002,4,"Good smartphone with excellent camera. The battery could be better though. Overall satisfied with the purchase.",2023-03-18,29,positive,true
+REV_0006,CUST_000004,PROD_0010,3,"Coffee maker works fine but was expecting better quality for the price. Does the job but nothing special.",2023-01-20,12,neutral,true
+REV_0007,CUST_000005,PROD_0005,4,"Nice jeans, good quality fabric. Fits well and looks stylish. Would buy again in different colors!",2023-05-25,21,positive,true
+REV_0008,CUST_000006,PROD_0002,5,"Amazing phone! Lightning fast performance, beautiful screen, and the 5G is super quick. Best phone I've owned!",2023-02-25,89,positive,true
+REV_0009,CUST_000007,PROD_0008,5,"Perfect yoga mat! Great thickness, non-slip surface works wonderfully. My yoga practice has improved significantly!",2023-09-20,34,positive,true
+REV_0010,CUST_000008,PROD_0011,4,"Solid blender for the price. Makes smooth smoothies and is easy to clean. Motor is a bit loud but works well.",2023-04-18,16,positive,true
+REV_0011,CUST_000010,PROD_0001,5,"Fantastic laptop for work and entertainment. The speed is incredible and it multitasks perfectly. Very happy with this purchase!",2023-02-05,52,positive,true
+REV_0012,CUST_000011,PROD_0015,5,"This skincare set transformed my skin! Noticed visible improvements within 2 weeks. Love the glow and smooth texture!",2023-05-28,41,positive,true
+REV_0013,CUST_000012,PROD_0018,5,"Best mechanical keyboard ever! The tactile feel is amazing and the RGB lighting is gorgeous. Perfect for gaming and typing!",2023-04-12,73,positive,true
+REV_0014,CUST_000013,PROD_0016,4,"Great makeup kit with good variety of colors. Quality is excellent. Only wish it came with a mirror.",2023-09-18,27,positive,true
+REV_0015,CUST_000003,PROD_0004,5,"Smartwatch is fantastic! Accurate fitness tracking, great battery life, and stylish design. Track all my workouts perfectly!",2023-04-22,56,positive,true
+REV_0016,CUST_000006,PROD_0017,4,"Good gaming mouse, responsive and comfortable. RGB looks cool. Buttons feel a bit stiff at first but loosen up.",2023-03-22,24,positive,true
+REV_0017,CUST_000010,PROD_0004,5,"Love this smartwatch! Syncs perfectly with my phone, fitness tracking is accurate, and battery lasts days. Excellent!",2023-03-28,48,positive,true
+REV_0018,CUST_000015,PROD_0001,5,"Top-tier laptop! Blazing fast, beautiful display, and runs cool even under heavy load. Professional quality!",2023-02-10,91,positive,true
+REV_0019,CUST_000016,PROD_0002,5,"Premium smartphone that delivers! Camera is outstanding, performance is flawless. Best tech purchase this year!",2023-11-02,103,positive,true
+REV_0020,CUST_000004,PROD_0020,4,"Good quality green tea. Fresh taste and comes well packaged. A bit pricey but worth it for the quality.",2023-02-18,14,positive,true
+

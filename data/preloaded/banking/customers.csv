@@ -1,0 +1,12 @@
+customer_id,name,email,age,gender,income,account_type,join_date
+ACC_000001,Robert Johnson,robert.j@bank.com,45,Male,60K-100K,Checking,2021-03-15
+ACC_000002,Linda Martinez,linda.m@bank.com,52,Female,>100K,Premium,2020-11-20
+ACC_000003,William Davis,william.d@bank.com,33,Male,30K-60K,Savings,2022-06-10
+ACC_000004,Patricia Garcia,patricia.g@bank.com,28,Female,<30K,Checking,2023-01-25
+ACC_000005,Charles Wilson,charles.w@bank.com,61,Male,>100K,Premium,2019-08-14
+ACC_000006,Jennifer Lopez,jennifer.l@bank.com,37,Female,60K-100K,Checking,2021-12-05
+ACC_000007,Thomas Anderson,thomas.a@bank.com,42,Male,60K-100K,Savings,2022-02-18
+ACC_000008,Elizabeth Taylor,elizabeth.t@bank.com,29,Female,30K-60K,Checking,2023-04-22
+ACC_000009,Christopher Moore,chris.m@bank.com,55,Male,>100K,Premium,2020-09-30
+ACC_000010,Barbara White,barbara.w@bank.com,48,Female,60K-100K,Savings,2021-07-12
+

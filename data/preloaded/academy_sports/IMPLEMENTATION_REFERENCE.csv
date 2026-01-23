@@ -1,0 +1,208 @@
+Section,Category,Item,Value,Description,Formula/Calculation,Example,Notes
+OVERVIEW,Project,Name,Academy Sports Camping Personalization,,,,
+OVERVIEW,Project,Goal,Personalize recommendations using K-Prototypes + Feature Lifts,,,,
+OVERVIEW,Project,Total Customers,5000,Generated synthetic customers,,,"40.7% Novice, 34.6% Family, 24.7% Pro"
+OVERVIEW,Project,Total Products,57,Camping gear products,,,Across 7 categories
+OVERVIEW,Project,Total Interactions,71020,Customer-product views,,,14.2 per customer average
+OVERVIEW,Project,Total Purchases,4605,Conversion events,,,6.48% conversion rate
+OVERVIEW,Project,Total Revenue,$909355.78,12-month period,,,$197.50 per purchase average
+,,,,,,,
+PERSONAS,Novice,Full Name,First-Time Camper,,,,The anxious beginner
+PERSONAS,Novice,Percentage,40.7%,2033 customers out of 5000,,,"High anxiety, needs simplicity"
+PERSONAS,Novice,Search Specificity,1-2,"Generic terms like ""camping tent""",,,"Doesn't know model names"
+PERSONAS,Novice,Spec Expansion Rate,0-20%,Rarely expands technical specs,,,Too confusing for them
+PERSONAS,Novice,Bundle Affinity,70-100%,LOVES bundle/kit products,,,Wants complete solution
+PERSONAS,Novice,Price Sort Frequency,70-100%,Always sorts by price low-to-high,,,Very price sensitive
+PERSONAS,Novice,Age Range,22-40,Younger demographics,,,New to camping
+PERSONAS,Novice,Income Range,"$35,000 - $75,000",Price-sensitive segment,,,
+PERSONAS,Novice,Avg Spend 12mo,$50-$300,Low spend,,,1-2 purchases per year
+PERSONAS,Novice,Return Rate,5-20%,Higher due to confusion,,,Wrong size/too complex
+,,,,,,,
+PERSONAS,Family_Socializer,Full Name,Occasional Holiday Camper,,,,The family fun seeker
+PERSONAS,Family_Socializer,Percentage,34.6%,1730 customers out of 5000,,,Holiday/weekend campers
+PERSONAS,Family_Socializer,Search Specificity,2-3,"Attributes like ""4-person tent""",,,"Knows what they need, not expert"
+PERSONAS,Family_Socializer,Spec Expansion Rate,20-50%,Some research before buying,,,Moderate engagement
+PERSONAS,Family_Socializer,Bundle Affinity,40-70%,Likes bundles for convenience,,,Not requirement though
+PERSONAS,Family_Socializer,Price Sort Frequency,30-60%,Price matters but not primary,,,Values quality too
+PERSONAS,Family_Socializer,Age Range,35-55,Family age,,,Parents with kids
+PERSONAS,Family_Socializer,Income Range,"$60,000 - $120,000",Comfortable income,,,Can afford quality
+PERSONAS,Family_Socializer,Avg Spend 12mo,$300-$1000,Moderate spend,,,2-5 purchases per year
+PERSONAS,Family_Socializer,Return Rate,3-12%,Moderate returns,,,Quality/fit issues
+,,,,,,,
+PERSONAS,Seasoned_Pro,Full Name,Seasoned Professional Camper,,,,The technical expert
+PERSONAS,Seasoned_Pro,Percentage,24.7%,1237 customers out of 5000,,,Smallest but highest value
+PERSONAS,Seasoned_Pro,Search Specificity,4-5,"Model names like ""MSR Hubba NX""",,,Knows exact products
+PERSONAS,Seasoned_Pro,Spec Expansion Rate,60-100%,ALWAYS expands specs,,,Deep research
+PERSONAS,Seasoned_Pro,Bundle Affinity,0-20%,NO interest in bundles,,,Wants to choose each piece
+PERSONAS,Seasoned_Pro,Price Sort Frequency,0-20%,Doesn't sort by price,,,Focuses on quality/specs
+PERSONAS,Seasoned_Pro,Age Range,28-60,Wide age range,,,Experience matters
+PERSONAS,Seasoned_Pro,Income Range,"$70,000 - $150,000",Can afford premium,,,
+PERSONAS,Seasoned_Pro,Avg Spend 12mo,$800-$3000,High spend,,,5-15 purchases per year
+PERSONAS,Seasoned_Pro,Return Rate,1-8%,Low returns,,,Knows what they want
+,,,,,,,
+FEATURES,Product,Setup Type,Instant Setup / Traditional / Quick,Physical product characteristic,,,Key differentiator
+FEATURES,Product,Complexity,Simple / Moderate / Technical,Design complexity level,,,Skill requirement
+FEATURES,Product,Bundle Compatible,Yes / No,Can be sold in bundle,,,Convenience factor
+FEATURES,Product,Capacity,2/4/6/8-Person,Tent/bag size,,,Family size indicator
+FEATURES,Product,Weight Class,Ultralight / Lightweight / Standard / Heavy-Duty,Portability level,,,Hiking consideration
+FEATURES,Product,Weatherproof,Basic / Resistant / All-Weather / Extreme,Weather protection level,,,Quality/reliability
+FEATURES,Product,Brand Tier,Budget / Mid-Range / Premium / Pro-Grade,Price positioning,,,Quality signal
+,,,,,,,
+LIFT_FACTORS,Novice,Instant Setup,3.0,300% lift,ln(novice_CR / global_CR),"15% vs 5% CR = ln(3.0) = 1.10","Shows as ""Easy instant setup"" in UI"
+LIFT_FACTORS,Novice,Simple Design,1.5,150% lift,ln(1.5) = 0.41,,,"Avoid technical jargon"
+LIFT_FACTORS,Novice,Bundle Compatible,2.0,200% lift,ln(2.0) = 0.69,"10% CR vs 5% global","Promote ""Complete Kit"" messaging"
+LIFT_FACTORS,Novice,Budget Brand,1.3,130% lift,ln(1.3) = 0.26,,,Highlight value/price
+LIFT_FACTORS,Novice,Quick Assembly,2.2,220% lift,ln(2.2) = 0.79,,,Speed emphasis
+LIFT_FACTORS,Novice,Traditional Setup,0.5,50% penalty (NOT a boost),ln(0.5) = -0.69,"2.5% CR vs 5% global",HIDE these products
+LIFT_FACTORS,Novice,Technical Design,0.3,70% penalty,ln(0.3) = -1.20,"1.5% CR",Confusing - avoid showing
+LIFT_FACTORS,Novice,Pro-Grade Brand,0.4,60% penalty,ln(0.4) = -0.92,,,Too expensive/complex
+,,,,,,,
+LIFT_FACTORS,Family_Socializer,4+ Person Capacity,2.0,200% lift,ln(2.0) = 0.69,"10% CR vs 5%",Family needs space
+LIFT_FACTORS,Family_Socializer,Simple Design,1.3,130% lift,ln(1.3) = 0.26,,,Ease of use matters
+LIFT_FACTORS,Family_Socializer,Moderate Design,1.3,130% lift,ln(1.3) = 0.26,,,Willing to learn some
+LIFT_FACTORS,Family_Socializer,Weather Resistant,1.4,140% lift,ln(1.4) = 0.34,,,Outdoor reliability
+LIFT_FACTORS,Family_Socializer,All-Weather,1.4,140% lift,ln(1.4) = 0.34,,,Peace of mind
+LIFT_FACTORS,Family_Socializer,Bundle Compatible,1.2,120% lift,ln(1.2) = 0.18,,,Convenience bonus
+LIFT_FACTORS,Family_Socializer,Ultralight,0.6,40% penalty,ln(0.6) = -0.51,,,Wants comfort over weight
+LIFT_FACTORS,Family_Socializer,Technical Design,0.7,30% penalty,ln(0.7) = -0.36,,,Prefers simple/moderate
+,,,,,,,
+LIFT_FACTORS,Seasoned_Pro,Technical Design,2.5,250% lift,ln(2.5) = 0.92,"12.5% CR vs 5%",PRIORITY feature
+LIFT_FACTORS,Seasoned_Pro,Ultralight,2.0,200% lift,ln(2.0) = 0.69,,,Weight critical
+LIFT_FACTORS,Seasoned_Pro,Lightweight,2.0,200% lift,ln(2.0) = 0.69,,,Backpacking focus
+LIFT_FACTORS,Seasoned_Pro,Premium Brand,1.8,180% lift,ln(1.8) = 0.59,"MSR, Big Agnes, YETI",Brand loyal
+LIFT_FACTORS,Seasoned_Pro,Pro-Grade Brand,1.8,180% lift,ln(1.8) = 0.59,,,Quality investment
+LIFT_FACTORS,Seasoned_Pro,Extreme Weather,1.6,160% lift,ln(1.6) = 0.47,,,Serious conditions
+LIFT_FACTORS,Seasoned_Pro,Instant Setup,0.2,80% penalty (STRONG),ln(0.2) = -1.61,"1% CR vs 5%",Sees as gimmick - HIDE
+LIFT_FACTORS,Seasoned_Pro,Bundle Compatible,0.1,90% penalty (VERY STRONG),ln(0.1) = -2.30,"0.5% CR",Wants custom selection - HIDE
+LIFT_FACTORS,Seasoned_Pro,Simple Design,0.5,50% penalty,ln(0.5) = -0.69,,,Wants advanced features
+,,,,,,,
+MATH_FORMULAS,Logistic_Regression,Step 1,Calculate Base Logit,,base_logit = ln(global_CR / (1 - global_CR)),,"If global CR = 5%: ln(0.05/0.95) = -2.94"
+MATH_FORMULAS,Logistic_Regression,Step 2,Sum Feature Lifts,,lift_sum = Σ ln(lift_factor) for each feature,,"Instant(1.10) + Bundle(0.69) + Simple(0.41) = 2.20"
+MATH_FORMULAS,Logistic_Regression,Step 3,Calculate Final Logit,,final_logit = base_logit + lift_sum,,"-2.94 + 2.20 = -0.74"
+MATH_FORMULAS,Logistic_Regression,Step 4,Convert to Probability,,P = 1 / (1 + e^(-final_logit)),,1 / (1 + e^0.74) = 32.2%
+MATH_FORMULAS,Logistic_Regression,Interpretation,32.2% Purchase Probability,,"If base is 5%, this product has 6.4x higher chance for this persona",,"Show as top recommendation"
+,,,,,,,
+MATH_FORMULAS,Example_1,Scenario,Novice + Magellan Instant Cabin,,,,Perfect match example
+MATH_FORMULAS,Example_1,Global CR,5%,,base_logit = ln(0.05/0.95) = -2.94,,
+MATH_FORMULAS,Example_1,Feature: Instant Setup,15% for novices,,lift = ln(15%/5%) = ln(3.0) = +1.10,,
+MATH_FORMULAS,Example_1,Feature: Simple Design,7.5% for novices,,lift = ln(7.5%/5%) = ln(1.5) = +0.41,,
+MATH_FORMULAS,Example_1,Feature: Bundle Compatible,10% for novices,,lift = ln(10%/5%) = ln(2.0) = +0.69,,
+MATH_FORMULAS,Example_1,Total z,,-2.94 + 1.10 + 0.41 + 0.69 = -0.74,,
+MATH_FORMULAS,Example_1,Final Probability,32.2%,,1 / (1 + e^0.74) = 0.322,,SHOW THIS PRODUCT
+MATH_FORMULAS,Example_1,Recommendation,"Top result with ""Perfect for beginners!"" badge",,,,
+,,,,,,,
+MATH_FORMULAS,Example_2,Scenario,Seasoned Pro + Same Magellan Instant Cabin,,,,Mismatch example
+MATH_FORMULAS,Example_2,Global CR,5%,,base_logit = -2.94,,Same base
+MATH_FORMULAS,Example_2,Feature: Instant Setup,1% for pros (sees as gimmick),,lift = ln(1%/5%) = ln(0.2) = -1.61,,PENALTY
+MATH_FORMULAS,Example_2,Feature: Simple Design,2.5% for pros (wants technical),,lift = ln(2.5%/5%) = ln(0.5) = -0.69,,PENALTY
+MATH_FORMULAS,Example_2,Feature: Bundle Compatible,0.5% for pros (wants custom),,lift = ln(0.5%/5%) = ln(0.1) = -2.30,,STRONG PENALTY
+MATH_FORMULAS,Example_2,Total z,,-2.94 + (-1.61) + (-0.69) + (-2.30) = -7.54,,Very negative
+MATH_FORMULAS,Example_2,Final Probability,0.05%,,1 / (1 + e^7.54) ≈ 0.0005,,HIDE THIS PRODUCT
+MATH_FORMULAS,Example_2,Recommendation,Do not show in results for this persona,,,,
+,,,,,,,
+CLUSTERING,K-Prototypes,Why Not K-Means,Cannot handle categorical variables,,K-Means only works with numeric data,,"We have urbanicity, brand_loyalty, etc"
+CLUSTERING,K-Prototypes,Why Not K-Modes,Cannot handle numeric variables,,K-Modes only works with categorical,,"We have age, income, spend, etc"
+CLUSTERING,K-Prototypes,Why K-Prototypes,Handles BOTH numeric AND categorical,,Best of both worlds,,Mixed data types
+CLUSTERING,K-Prototypes,Distance Formula,,,"d = Σ(numeric_diffs)² + γ × Σ(categorical_mismatches)",,"γ balances numeric vs categorical"
+CLUSTERING,K-Prototypes,Gamma Parameter,0.5,Balance factor,,"If γ=0, ignores categorical. If γ=large, ignores numeric",Tune based on data
+CLUSTERING,K-Prototypes,N Clusters,3,Number of personas to find,,,Novice + Family + Pro
+CLUSTERING,K-Prototypes,Numeric Columns,"search_specificity, spec_expansion_rate, bundle_affinity, price_sort_frequency, age, income, total_spend_12mo, etc",,,,KEY CLUSTERING VARS
+CLUSTERING,K-Prototypes,Categorical Columns,"urbanicity, climate_zone, dominant_category, brand_loyalty, channel_preference",,,,
+CLUSTERING,K-Prototypes,Validation,Compare clusters vs true_persona field,,Should achieve >85% accuracy,,Ground truth validation
+,,,,,,,
+DATA_FIELDS,customers.csv,customer_id,Unique identifier,,,CUST_00001 to CUST_05000,Primary key
+DATA_FIELDS,customers.csv,age,Customer age,22-60,,,Numeric
+DATA_FIELDS,customers.csv,income,"Annual income",,"$35,000 - $150,000",,Numeric
+DATA_FIELDS,customers.csv,distance_to_store,Miles to store,3-40,,,Numeric
+DATA_FIELDS,customers.csv,urbanicity,Location type,,,"Urban, Suburban, Rural",Categorical
+DATA_FIELDS,customers.csv,climate_zone,Geographic climate,,,"Temperate, Hot, Cold",Categorical
+DATA_FIELDS,customers.csv,search_specificity,Search detail level,1-5 scale,"1=generic, 5=model name",,**KEY CLUSTERING VAR**
+DATA_FIELDS,customers.csv,spec_expansion_rate,How often expands specs,0-1 (percentage),0=never, 1=always,,**KEY CLUSTERING VAR**
+DATA_FIELDS,customers.csv,bundle_affinity,Preference for bundles,0-1 (percentage),0=no interest, 1=loves bundles,,**KEY CLUSTERING VAR**
+DATA_FIELDS,customers.csv,price_sort_frequency,How often sorts by price,0-1 (percentage),0=never, 1=always,,**KEY CLUSTERING VAR**
+DATA_FIELDS,customers.csv,total_spend_12mo,Total spend last year,,"$50 - $3,000",,Numeric
+DATA_FIELDS,customers.csv,purchase_frequency,Number of purchases,1-15,Per year,,Numeric
+DATA_FIELDS,customers.csv,recency_days,Days since last purchase,7-365,,,Numeric
+DATA_FIELDS,customers.csv,avg_order_value,Average order size,,"$50 - $600",,Numeric
+DATA_FIELDS,customers.csv,dominant_category,Most purchased category,,,Tents + Screen Houses / etc,Categorical
+DATA_FIELDS,customers.csv,brand_loyalty,Preferred brand,,,Coleman / MSR / None / etc,Categorical
+DATA_FIELDS,customers.csv,return_rate,Percent of orders returned,0.01-0.20 (1-20%),,,Numeric
+DATA_FIELDS,customers.csv,channel_preference,Shopping channel,,,"Web, Mobile, In-Store",Categorical
+DATA_FIELDS,customers.csv,join_date,Account creation date,,,YYYY-MM-DD,Date
+DATA_FIELDS,customers.csv,true_persona,Ground truth label,,,"Novice, Family_Socializer, Seasoned_Pro",**VALIDATION ONLY**
+,,,,,,,
+DATA_FIELDS,products.csv,product_id,Unique identifier,,,PROD_00001 to PROD_00057,Primary key
+DATA_FIELDS,products.csv,product_name,Full product name,,,"Coleman 4-Person Instant Tent",,
+DATA_FIELDS,products.csv,brand,Manufacturer,,,Coleman / MSR / YETI / etc,
+DATA_FIELDS,products.csv,brand_tier,Price positioning,,,"budget, mid_range, premium, pro_grade",**LIFT FEATURE**
+DATA_FIELDS,products.csv,main_category,Academy category,,,Tents + Screen Houses / etc,
+DATA_FIELDS,products.csv,subcategory,Specific type,,,Instant Tents / Dome Tents / etc,
+DATA_FIELDS,products.csv,price,Retail price,,"$29.99 - $1,299.99",,
+DATA_FIELDS,products.csv,base_conversion_rate,Global conversion rate,0.01-0.08 (1-8%),Without personalization,,
+DATA_FIELDS,products.csv,setup_type,Assembly method,,,"Instant Setup, Traditional, Quick Assembly",**LIFT FEATURE**
+DATA_FIELDS,products.csv,complexity,Design complexity,,,"Simple, Moderate, Technical",**LIFT FEATURE**
+DATA_FIELDS,products.csv,bundle_compatible,Can be in bundle,,,Bundle Compatible / Standalone Only,**LIFT FEATURE**
+DATA_FIELDS,products.csv,capacity,Size,,,2/4/6/8-Person (or null),**LIFT FEATURE**
+DATA_FIELDS,products.csv,weight_class,Weight category,,,"Ultralight, Lightweight, Standard, Heavy-Duty",**LIFT FEATURE**
+DATA_FIELDS,products.csv,weatherproof,Weather protection,,,"Basic, Weather Resistant, All-Weather, Extreme",**LIFT FEATURE**
+DATA_FIELDS,products.csv,in_stock,Availability,,,True / False,Boolean
+DATA_FIELDS,products.csv,avg_rating,Customer rating,3.5-5.0 stars,,,
+DATA_FIELDS,products.csv,num_reviews,Review count,5-500,,,
+,,,,,,,
+DATA_FIELDS,interactions.csv,interaction_id,Unique identifier,,,INT_123456,Primary key
+DATA_FIELDS,interactions.csv,customer_id,Customer reference,,,CUST_00001,Foreign key
+DATA_FIELDS,interactions.csv,product_id,Product reference,,,PROD_00001,Foreign key
+DATA_FIELDS,interactions.csv,timestamp,Event time,,,YYYY-MM-DD HH:MM:SS,
+DATA_FIELDS,interactions.csv,interaction_type,Event type,,,view (all records),
+DATA_FIELDS,interactions.csv,time_on_page_seconds,Duration,30-600 seconds,Varies by persona,,
+DATA_FIELDS,interactions.csv,specs_expanded,Clicked to see specs,,,True / False,**KEY BEHAVIOR**
+DATA_FIELDS,interactions.csv,bundle_viewed,Viewed bundle option,,,True / False,**KEY BEHAVIOR**
+DATA_FIELDS,interactions.csv,price_checked,Viewed price,,,True / False,
+DATA_FIELDS,interactions.csv,reviews_viewed,Read reviews,,,True / False,
+,,,,,,,
+DATA_FIELDS,purchases.csv,purchase_id,Unique identifier,,,PUR_123456,Primary key
+DATA_FIELDS,purchases.csv,customer_id,Customer reference,,,CUST_00001,Foreign key
+DATA_FIELDS,purchases.csv,product_id,Product reference,,,PROD_00001,Foreign key
+DATA_FIELDS,purchases.csv,interaction_id,Originating interaction,,,INT_123456,Foreign key
+DATA_FIELDS,purchases.csv,purchase_date,Transaction time,,,YYYY-MM-DD HH:MM:SS,
+DATA_FIELDS,purchases.csv,quantity,Items purchased,,,Usually 1,
+DATA_FIELDS,purchases.csv,price_paid,Transaction amount,,Product price × quantity,,
+DATA_FIELDS,purchases.csv,discount_applied,Discount percent,0-15%,"0%, 5%, 10%, 15%",,
+,,,,,,,
+DATA_FIELDS,feature_affinity.csv,persona,Persona name,,,"Novice, Family_Socializer, Seasoned_Pro",
+DATA_FIELDS,feature_affinity.csv,feature,Feature name,,,Instant Setup / Technical Design / etc,
+DATA_FIELDS,feature_affinity.csv,lift_factor,Conversion multiplier,0.1-3.0,"<1 = penalty, >1 = boost",,**CORE SCORING**
+DATA_FIELDS,feature_affinity.csv,log_lift,Natural log of lift_factor,,For logistic regression,,ln(lift_factor)
+,,,,,,,
+IMPLEMENTATION,Phase,1. Data Generation,✅ COMPLETE,Generate 5000 customers + 57 products,,,DONE
+IMPLEMENTATION,Phase,2. K-Prototypes Clustering,⏳ NEXT,Identify 3 personas from behavior,,,Install kmodes library
+IMPLEMENTATION,Phase,3. Lift Calculation,⏳ PENDING,Calculate feature-persona lifts from data,,,Use purchases/interactions
+IMPLEMENTATION,Phase,4. Agent A Enhancement,⏳ PENDING,Update clustering + persona naming,,,Replace K-means
+IMPLEMENTATION,Phase,5. Agent B Enhancement,⏳ PENDING,Feature-based scoring recommendations,,,Logistic regression
+IMPLEMENTATION,Phase,6. Frontend Integration,⏳ PENDING,Display personas + recommendations,,,New UI components
+IMPLEMENTATION,Phase,7. Testing & Validation,⏳ PENDING,A/B test + metrics,,,Measure conversion lift
+,,,,,,,
+METRICS,Baseline,Overall Conversion Rate,5%,Current state,,,
+METRICS,Target,Overall Conversion Rate,8-12%,With personalization,,,+60-140% improvement
+METRICS,Baseline,Novice Conversion Rate,3%,Generic recommendations,,,
+METRICS,Target,Novice Conversion Rate,15-20%,Persona-matched products,,,+400-566% improvement
+METRICS,Baseline,Pro Conversion Rate,4%,Generic recommendations,,,
+METRICS,Target,Pro Conversion Rate,6-8%,Technical product focus,,,+50-100% improvement
+METRICS,Baseline,Return Rate,12%,Product mismatch issues,,,
+METRICS,Target,Return Rate,8%,Better persona-product fit,,,-33% improvement
+METRICS,Baseline,AOV (Novice),$85,Low-ticket purchases,,,
+METRICS,Target,AOV (Novice),$150,Bundle upsells,,,+76% improvement
+METRICS,Baseline,AOV (Pro),$280,Already high spenders,,,
+METRICS,Target,AOV (Pro),$350,Premium product targeting,,,+25% improvement
+,,,,,,,
+QUICK_START,Step,1,Install K-Prototypes,,pip install kmodes,,
+QUICK_START,Step,2,Load Data,,import pandas as pd; customers = pd.read_csv('data/preloaded/academy_sports/customers.csv'),,
+QUICK_START,Step,3,Prepare Clustering Data,,"Select numeric + categorical columns",,"See CLUSTERING section"
+QUICK_START,Step,4,Fit K-Prototypes,,"kproto = KPrototypes(n_clusters=3, gamma=0.5, random_state=42)",,"3 personas"
+QUICK_START,Step,5,Predict Clusters,,clusters = kproto.fit_predict(X, categorical=cat_indices),,
+QUICK_START,Step,6,Validate,,"Compare clusters vs true_persona field",,Should be >85% match
+QUICK_START,Step,7,Calculate Lifts,,"Group by (cluster, feature), calc CR, compare to global",,
+QUICK_START,Step,8,Score Products,,"Use logistic regression formula with lifts",,See MATH_FORMULAS
+QUICK_START,Step,9,Generate Recommendations,,"Rank products by score, return top N",,
+QUICK_START,Step,10,Display in UI,,"Show persona name, feature explanations, scores",,
+

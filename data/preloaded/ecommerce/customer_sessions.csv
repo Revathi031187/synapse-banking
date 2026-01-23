@@ -1,0 +1,17 @@
+session_id,customer_id,session_start,session_end,device_type,browser,os,pages_viewed,total_duration_seconds,bounce,conversion,session_value,referrer_source
+SESS_001,CUST_000001,2023-06-18 10:15:00,2023-06-18 10:22:00,desktop,Chrome,Windows,8,420,false,true,1299.99,direct
+SESS_002,CUST_000001,2023-07-14 14:30:00,2023-07-14 14:37:00,mobile,App,iOS,6,420,false,true,249.99,app
+SESS_003,CUST_000002,2023-08-20 09:20:00,2023-08-20 09:30:00,desktop,Firefox,Windows,7,600,false,false,0,google
+SESS_004,CUST_000003,2023-03-02 16:45:00,2023-03-02 17:02:00,desktop,Safari,MacOS,12,1020,false,true,1299.99,referral
+SESS_005,CUST_000004,2023-01-10 11:30:00,2023-01-10 11:34:00,mobile,Chrome,Android,5,240,true,false,0,organic
+SESS_006,CUST_000005,2023-05-15 13:20:00,2023-05-15 13:28:00,mobile,App,iOS,7,480,false,true,179.98,facebook
+SESS_007,CUST_000006,2023-02-15 08:45:00,2023-02-15 09:00:00,desktop,Chrome,Windows,10,900,false,true,899.99,email
+SESS_008,CUST_000007,2023-09-10 15:30:00,2023-09-10 15:35:00,mobile,App,iOS,5,300,false,true,49.99,instagram
+SESS_009,CUST_000008,2023-04-05 12:15:00,2023-04-05 12:25:00,desktop,Edge,Windows,6,600,false,false,0,google
+SESS_010,CUST_000010,2023-01-22 14:20:00,2023-01-22 14:38:00,desktop,Chrome,MacOS,14,1080,false,true,1299.99,referral
+SESS_011,CUST_000011,2023-05-18 16:10:00,2023-05-18 16:25:00,mobile,Safari,iOS,8,900,false,true,79.99,instagram
+SESS_012,CUST_000012,2023-03-08 10:30:00,2023-03-08 10:48:00,desktop,Chrome,Windows,11,1080,false,true,1299.99,google
+SESS_013,CUST_000013,2023-08-18 19:15:00,2023-08-18 19:30:00,mobile,App,iOS,6,900,false,true,89.99,tiktok
+SESS_014,CUST_000003,2023-03-08 09:00:00,2023-03-08 09:18:00,desktop,Safari,MacOS,9,1080,false,true,899.99,email
+SESS_015,CUST_000006,2023-03-12 11:20:00,2023-03-12 11:32:00,desktop,Chrome,Windows,7,720,false,true,59.99,direct
+

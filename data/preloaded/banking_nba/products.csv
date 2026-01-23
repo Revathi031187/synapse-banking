@@ -1,0 +1,6 @@
+product_id,product_name,product_type,category,annual_fee,interest_rate,min_credit_score,min_income,min_age,max_age,features,target_segment,life_event_match
+PROD_001,Premium Rewards Credit Card,credit_card,lending,95,16.99,720,60000,21,999,"[""cashback"", ""travel_rewards"", ""insurance""]","Young Professionals,Established Families","new_job,career_growth,travel"
+PROD_002,First-Time Home Buyer Mortgage,mortgage,lending,0,3.75,680,50000,21,65,"[""low_down_payment"", ""first_time_buyer"", ""flexible_terms""]","Young Professionals,Entry Level","first_home,home_purchase,marriage"
+PROD_003,High-Yield Savings Account,savings,deposit,0,4.5,0,0,18,999,"[""no_fees"", ""high_interest"", ""instant_access""]",All,"savings,emergency_fund,goal_setting"
+PROD_004,Retirement Investment Account,investment,wealth_management,50,0.0,0,75000,40,999,"[""tax_advantaged"", ""professional_management"", ""diversified""]","Established Families,Affluent Seniors,High Net Worth","retirement_planning,wealth_management,estate_planning"
+PROD_005,Small Business Line of Credit,business_loan,lending,100,7.25,700,80000,25,70,"[""flexible_draw"", ""business_rewards"", ""financial_tools""]","Established Families,High Net Worth","business_start,career_growth,investment"

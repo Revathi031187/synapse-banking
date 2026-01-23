@@ -1,0 +1,387 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Academy Sports - Implementation Guide</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+        
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            padding: 20px;
+        }
+        
+        .container {
+            max-width: 900px;
+            margin: 0 auto;
+        }
+        
+        .slide {
+            background: white;
+            border-radius: 12px;
+            padding: 60px;
+            margin-bottom: 30px;
+            box-shadow: 0 10px 40px rgba(0,0,0,0.1);
+            min-height: 500px;
+            page-break-after: always;
+        }
+        
+        .slide-number {
+            color: #999;
+            font-size: 14px;
+            margin-bottom: 20px;
+        }
+        
+        h1 {
+            color: #1a1a1a;
+            font-size: 48px;
+            margin-bottom: 20px;
+            line-height: 1.2;
+        }
+        
+        h2 {
+            color: #667eea;
+            font-size: 36px;
+            margin-bottom: 30px;
+            border-bottom: 3px solid #667eea;
+            padding-bottom: 10px;
+        }
+        
+        h3 {
+            color: #333;
+            font-size: 24px;
+            margin-top: 25px;
+            margin-bottom: 15px;
+        }
+        
+        p {
+            color: #444;
+            font-size: 18px;
+            line-height: 1.6;
+            margin-bottom: 15px;
+        }
+        
+        ul {
+            margin-left: 30px;
+            margin-bottom: 20px;
+        }
+        
+        li {
+            color: #444;
+            font-size: 18px;
+            line-height: 1.8;
+            margin-bottom: 10px;
+        }
+        
+        table {
+            width: 100%;
+            border-collapse: collapse;
+            margin: 20px 0;
+            font-size: 16px;
+        }
+        
+        th {
+            background: #667eea;
+            color: white;
+            padding: 12px;
+            text-align: left;
+            font-weight: 600;
+        }
+        
+        td {
+            padding: 12px;
+            border: 1px solid #ddd;
+        }
+        
+        tr:nth-child(even) {
+            background: #f5f5f5;
+        }
+        
+        code {
+            background: #f5f5f5;
+            padding: 2px 8px;
+            border-radius: 4px;
+            font-family: 'Courier New', monospace;
+            font-size: 16px;
+        }
+        
+        pre {
+            background: #f5f5f5;
+            padding: 20px;
+            border-radius: 8px;
+            overflow-x: auto;
+            margin: 20px 0;
+        }
+        
+        pre code {
+            padding: 0;
+            background: none;
+        }
+        
+        .highlight {
+            background: #fff3cd;
+            padding: 20px;
+            border-left: 4px solid #ffc107;
+            margin: 20px 0;
+            border-radius: 4px;
+        }
+        
+        .success {
+            color: #28a745;
+            font-weight: bold;
+        }
+        
+        .warning {
+            color: #ffc107;
+            font-weight: bold;
+        }
+        
+        .danger {
+            color: #dc3545;
+            font-weight: bold;
+        }
+        
+        .center {
+            text-align: center;
+        }
+        
+        .emoji {
+            font-size: 48px;
+            margin: 20px 0;
+        }
+        
+        .two-column {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 30px;
+            margin: 20px 0;
+        }
+        
+        .card {
+            background: #f8f9fa;
+            padding: 20px;
+            border-radius: 8px;
+            border-left: 4px solid #667eea;
+        }
+        
+        @media print {
+            body {
+                background: white;
+                padding: 0;
+            }
+            .slide {
+                box-shadow: none;
+                margin-bottom: 0;
+            }
+        }
+        
+        .nav {
+            position: fixed;
+            bottom: 20px;
+            right: 20px;
+            background: white;
+            padding: 15px;
+            border-radius: 8px;
+            box-shadow: 0 4px 12px rgba(0,0,0,0.15);
+        }
+        
+        .nav button {
+            background: #667eea;
+            color: white;
+            border: none;
+            padding: 10px 20px;
+            border-radius: 6px;
+            cursor: pointer;
+            margin: 0 5px;
+            font-size: 16px;
+        }
+        
+        .nav button:hover {
+            background: #5568d3;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        
+        <!-- Slide 1 -->
+        <div class="slide">
+            <div class="slide-number">Slide 1 of 30</div>
+            <div class="center">
+                <div class="emoji">🏕️</div>
+                <h1>Academy Sports</h1>
+                <h2>Camping Personalization Implementation</h2>
+                <p style="font-size: 22px; margin-top: 40px;"><strong>Using K-Prototypes Clustering + Feature-Based Scoring</strong></p>
+                <p style="margin-top: 30px;">Data: 5,000 Customers | 57 Products | 71,020 Interactions</p>
+                <p><span class="success">✅ Data Ready</span> | <span class="warning">⏳ Implementation Phase</span></p>
+                <p style="margin-top: 40px; color: #999;">December 2025</p>
+            </div>
+        </div>
+
+        <!-- Slide 2 -->
+        <div class="slide">
+            <div class="slide-number">Slide 2 of 30</div>
+            <h2>🎯 Business Objective</h2>
+            <div class="highlight">
+                <h3>Personalize camping gear recommendations for 3 distinct customer personas</h3>
+            </div>
+            <h3>Expected Outcomes:</h3>
+            <ul>
+                <li>Increase conversion rates by <strong>60-140%</strong></li>
+                <li>Reduce returns by <strong>33%</strong></li>
+                <li>Improve customer satisfaction scores</li>
+                <li>Increase average order value</li>
+            </ul>
+            <p style="margin-top: 40px;"><strong>Method:</strong> K-Prototypes Clustering + Logistic Regression with Feature Lifts</p>
+        </div>
+
+        <!-- Slide 3 -->
+        <div class="slide">
+            <div class="slide-number">Slide 3 of 30</div>
+            <h2>👥 The 3 Customer Personas</h2>
+            
+            <div class="card" style="margin-bottom: 20px;">
+                <h3>🏕️ First-Time Camper (40.7% - 2,033 customers)</h3>
+                <ul>
+                    <li>High anxiety about "doing it wrong"</li>
+                    <li>Price-sensitive, needs simplicity</li>
+                    <li><span class="success">Loves:</span> Instant setup, bundles, simple design</li>
+                    <li><span class="danger">Hates:</span> Technical specs, complex assembly</li>
+                </ul>
+            </div>
+            
+            <div class="card" style="margin-bottom: 20px;">
+                <h3>👨‍👩‍👧‍👦 Family Socializer (34.6% - 1,730 customers)</h3>
+                <ul>
+                    <li>Camps 1-2x per year for fun</li>
+                    <li>Values comfort, space, reliability</li>
+                    <li><span class="success">Loves:</span> Large capacity, weather protection</li>
+                    <li><span class="warning">Moderate:</span> On bundles and complexity</li>
+                </ul>
+            </div>
+            
+            <div class="card">
+                <h3>⛰️ Seasoned Pro (24.7% - 1,237 customers)</h3>
+                <ul>
+                    <li>Deep product knowledge</li>
+                    <li>Brand loyal (MSR, YETI, Big Agnes)</li>
+                    <li><span class="success">Loves:</span> Technical design, ultralight, premium</li>
+                    <li><span class="danger">Hates:</span> Instant setup, bundles</li>
+                </ul>
+            </div>
+        </div>
+
+        <!-- Slide 4 -->
+        <div class="slide">
+            <div class="slide-number">Slide 4 of 30</div>
+            <h2>🔍 Persona Comparison</h2>
+            <table>
+                <thead>
+                    <tr>
+                        <th>Characteristic</th>
+                        <th>Novice</th>
+                        <th>Family</th>
+                        <th>Seasoned Pro</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    <tr>
+                        <td><strong>Search Terms</strong></td>
+                        <td>"camping tent"</td>
+                        <td>"4-person tent"</td>
+                        <td>"MSR Hubba NX"</td>
+                    </tr>
+                    <tr>
+                        <td><strong>Spec Expansion</strong></td>
+                        <td>0-20%</td>
+                        <td>20-50%</td>
+                        <td>60-100%</td>
+                    </tr>
+                    <tr>
+                        <td><strong>Bundle Interest</strong></td>
+                        <td>70-100%</td>
+                        <td>40-70%</td>
+                        <td>0-20%</td>
+                    </tr>
+                    <tr>
+                        <td><strong>Price Sorting</strong></td>
+                        <td>70-100%</td>
+                        <td>30-60%</td>
+                        <td>0-20%</td>
+                    </tr>
+                    <tr>
+                        <td><strong>Avg Spend/Year</strong></td>
+                        <td>$50-$300</td>
+                        <td>$300-$1,000</td>
+                        <td>$800-$3,000</td>
+                    </tr>
+                    <tr>
+                        <td><strong>Purchase Freq</strong></td>
+                        <td>1-2x</td>
+                        <td>2-5x</td>
+                        <td>5-15x</td>
+                    </tr>
+                </tbody>
+            </table>
+            <p style="margin-top: 20px;"><strong>Key:</strong> These behavioral signals drive our clustering algorithm</p>
+        </div>
+
+        <!-- Instructions Slide -->
+        <div class="slide" style="background: #f0f7ff;">
+            <div class="center">
+                <h2>📋 How to Use This Document</h2>
+                <div class="highlight" style="text-align: left; margin: 40px 0;">
+                    <h3>3 Ways to View:</h3>
+                    <ol style="margin-left: 40px; margin-top: 20px;">
+                        <li style="margin-bottom: 15px;"><strong>Browser:</strong> You're viewing it now! Scroll through or use print preview.</li>
+                        <li style="margin-bottom: 15px;"><strong>Print to PDF:</strong> File → Print → Save as PDF (creates shareable document)</li>
+                        <li style="margin-bottom: 15px;"><strong>Import to Google Slides:</strong> See <code>HOW_TO_VIEW_IN_GOOGLE_SLIDES.md</code></li>
+                    </ol>
+                </div>
+                
+                <div class="two-column" style="margin-top: 40px;">
+                    <div class="card">
+                        <h3>📁 Source File</h3>
+                        <p><code>ACADEMY_SPORTS_SLIDES_CONTENT.md</code></p>
+                        <p style="font-size: 14px; margin-top: 10px;">Contains all 30 slides in markdown format for easy copying to Google Slides</p>
+                    </div>
+                    <div class="card">
+                        <h3>📘 Full Guide</h3>
+                        <p><code>ACADEMY_SPORTS_IMPLEMENTATION_GUIDE.md</code></p>
+                        <p style="font-size: 14px; margin-top: 10px;">82-page comprehensive implementation handbook with all details</p>
+                    </div>
+                </div>
+                
+                <p style="margin-top: 40px; font-size: 14px; color: #666;">
+                    This HTML contains the first 4 slides as preview. See markdown file for all 30 slides.
+                </p>
+            </div>
+        </div>
+
+    </div>
+    
+    <div class="nav">
+        <button onclick="window.print()">🖨️ Print/PDF</button>
+        <button onclick="window.scrollTo({top: 0, behavior: 'smooth'})">⬆️ Top</button>
+    </div>
+    
+    <script>
+        // Add smooth scrolling
+        document.querySelectorAll('a[href^="#"]').forEach(anchor => {
+            anchor.addEventListener('click', function (e) {
+                e.preventDefault();
+                document.querySelector(this.getAttribute('href')).scrollIntoView({
+                    behavior: 'smooth'
+                });
+            });
+        });
+    </script>
+</body>
+</html>
+

@@ -1,0 +1,100 @@
+================================================================================
+QUICK TEST COMMANDS - Agent A Enhanced
+================================================================================
+
+1. START BACKEND:
+   py -3.10 api/main_unified_chromadb.py
+
+2. TEST AGENT DIRECTLY (No API required):
+   py -3.10 test_agent_a_direct.py
+
+3. TEST ALL API ENDPOINTS (Backend must be running):
+   py -3.10 test_all_academy_endpoints.py
+
+4. CLEAR CACHE (if seeing old data):
+   py -3.10 restart_backend.py
+
+================================================================================
+WHAT TO VERIFY:
+================================================================================
+
+✅ AI-Generated Persona Names:
+   - 🏕️ Beginner Budget-Conscious
+   - ⛺ Casual Value-Oriented
+   - 🎒 Intermediate Mid-Tier
+   - 🏔️ Experienced Premium
+   - ⛰️ Expert High-Value
+
+✅ Clean Metrics:
+   - 75.5% (not 75.350979631668%)
+   - 82.3% (not 82.398097744719%)
+
+✅ Varied Temporal:
+   - Different seasonal patterns
+   - Different growth rates (-2% to +10%)
+   - Different peak seasons
+
+✅ Professional AI Explanations:
+   - HTML formatted with <div> tags
+   - Section headers
+   - Bullet points
+   - No markdown symbols
+
+================================================================================
+ALL 27 API ENDPOINTS:
+================================================================================
+
+Dataset Management (4):
+  GET  /api/academy/datasets
+  POST /api/academy/datasets/load
+  GET  /api/academy/dataset-version
+  GET  /api/academy/status
+
+Agent A (10):
+  POST /api/academy/agent_a/execute
+  GET  /api/academy/agent_a/results
+  GET  /api/academy/personas
+  GET  /api/academy/macro-segments
+  GET  /api/academy/agent_a/export
+  GET  /api/academy/agent_a/customers
+  GET  /api/academy/agent_a/customer/{id}
+  POST /api/academy/agent_a/customer/{id}/explain
+  GET  /api/academy/agent_a/customer/{id}/recommendations
+  POST /api/academy/agent_a/explain-visualization
+
+Agent B (3):
+  POST /api/academy/agent_b/execute
+  GET  /api/academy/agent_b/results
+  GET  /api/academy/products
+
+Micro Segmentation (2):
+  POST /api/academy/micro-segments/{macro_id}
+  GET  /api/academy/micro-segments/{macro_id}
+
+Recommendations (5):
+  GET  /api/academy/recommendations/{id}/similar
+  GET  /api/academy/recommendations/{id}/you-might-like
+  POST /api/academy/recommendations/{id}/search
+  GET  /api/academy/recommendations/{id}/all
+  GET  /api/academy/recommendations/new-visitor
+
+ChromaDB (2):
+  POST /api/academy/chromadb/initialize
+  GET  /api/academy/chromadb/status
+
+================================================================================
+TROUBLESHOOTING:
+================================================================================
+
+Issue: "Backend not running"
+Fix: py -3.10 api/main_unified_chromadb.py
+
+Issue: "Old persona names"
+Fix: py -3.10 restart_backend.py
+     py -3.10 api/main_unified_chromadb.py
+
+Issue: "Module not found"
+Fix: pip install -r requirements.txt
+
+================================================================================
+

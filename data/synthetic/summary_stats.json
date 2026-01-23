@@ -1,0 +1,66 @@
+{
+  "generation_timestamp": "2025-12-12T11:29:34.369622",
+  "customers": {
+    "total_count": 2000,
+    "active_count": 1512,
+    "by_loyalty_tier": {
+      "Bronze": 1002,
+      "Silver": 580,
+      "Gold": 327,
+      "Platinum": 91
+    },
+    "by_preferred_channel": {
+      "web": 723,
+      "mobile_app": 626,
+      "in_store": 365,
+      "phone": 198,
+      "social_media": 88
+    }
+  },
+  "products": {
+    "total_count": 100,
+    "by_category": {
+      "Electronics": 18,
+      "Beauty & Personal Care": 16,
+      "Health & Wellness": 10,
+      "Clothing": 10,
+      "Home & Garden": 9,
+      "Toys & Games": 8,
+      "Sports & Outdoors": 8,
+      "Books": 8,
+      "Automotive": 8,
+      "Food & Beverage": 5
+    },
+    "avg_price": 518.2496,
+    "featured_count": 16
+  },
+  "transactions": {
+    "total_count": 10000,
+    "total_revenue": 6924694.68,
+    "avg_transaction_value": 692.469468,
+    "by_channel": {
+      "web": 3504,
+      "mobile_app": 3029,
+      "in_store": 1971,
+      "phone": 990,
+      "social_media": 506
+    },
+    "return_rate": 0.0494
+  },
+  "behavioral_events": {
+    "total_count": 20000,
+    "by_event_type": {
+      "product_view": 6937,
+      "page_view": 6013,
+      "add_to_cart": 3051,
+      "search": 2008,
+      "filter": 998,
+      "remove_from_cart": 993
+    },
+    "by_device": {
+      "mobile": 9061,
+      "desktop": 8887,
+      "tablet": 2052
+    }
+  }
+}

@@ -1,0 +1,12 @@
+product_id,product_name,category,price,description,duration_months
+PROG_0001,Soccer - Kids Class,Soccer,75.50,Kids level Soccer training program,3
+PROG_0002,Soccer - Youth Class,Soccer,95.00,Youth level Soccer training program,3
+PROG_0003,Soccer - Adult Class,Soccer,120.00,Adult level Soccer training program,6
+PROG_0004,Basketball - Kids Class,Basketball,70.00,Kids level Basketball training program,3
+PROG_0005,Basketball - Youth Class,Basketball,90.00,Youth level Basketball training program,3
+PROG_0006,Tennis - Kids Class,Tennis,85.00,Kids level Tennis training program,6
+PROG_0007,Tennis - Adult Class,Tennis,130.00,Adult level Tennis training program,6
+PROG_0008,Swimming - Kids Class,Swimming,95.00,Kids level Swimming training program,3
+PROG_0009,Swimming - Adult Class,Swimming,140.00,Adult level Swimming training program,6
+PROG_0010,Yoga - Adult Class,Yoga,110.00,Adult level Yoga training program,12
+

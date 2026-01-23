@@ -1,0 +1,97 @@
+agent_a_persona:
+  name: "Persona Builder"
+  description: "Builds dynamic customer micro-personas from behavioral data"
+  clustering:
+    n_clusters: 8
+    algorithm: "kmeans"
+    features:
+      - recency
+      - frequency
+      - monetary
+      - avg_transaction_value
+      - product_diversity
+      - channel_preference
+  embeddings:
+    model: "all-MiniLM-L6-v2"
+    dimension: 384
+  intents:
+    - "exploring"
+    - "ready_to_buy"
+    - "comparison_shopping"
+    - "abandoned_cart"
+    - "loyalty"
+    - "dormant"
+  life_events:
+    - "new_job"
+    - "relocation"
+    - "marriage"
+    - "new_home"
+    - "new_baby"
+
+agent_b_product:
+  name: "Product Matchmaker"
+  description: "Matches customers to relevant products"
+  similarity:
+    top_k: 20
+    min_score: 0.5
+  propensity:
+    model_type: "xgboost"
+    top_products: 10
+    threshold: 0.3
+  catalog_size: 100
+
+agent_c_offer:
+  name: "Offer Engine"
+  description: "Generates personalized offers and messaging"
+  pricing:
+    discount_range: [5, 30]
+    elasticity_factor: 1.2
+  incentives:
+    types:
+      - "percentage_discount"
+      - "cashback"
+      - "free_shipping"
+      - "buy_one_get_one"
+      - "loyalty_points"
+  channels:
+    - "email"
+    - "sms"
+    - "push"
+    - "in_app"
+    - "web"
+
+agent_d_performance:
+  name: "Performance Engine"
+  description: "Real-time NBA ranking with reinforcement learning"
+  bandit:
+    algorithm: "thompson_sampling"
+    alpha: 1.0
+    beta: 1.0
+    exploration_rate: 0.1
+  metrics:
+    - "ctr"
+    - "conversion_rate"
+    - "revenue"
+    - "engagement_score"
+  feedback_loop:
+    retrain_frequency_hours: 24
+    min_samples: 100
+
+agent_e_mmm:
+  name: "MMM Strategic Advisor"
+  description: "Marketing mix optimization"
+  channels:
+    - "email"
+    - "sms"
+    - "social_media"
+    - "display_ads"
+    - "search_ads"
+    - "affiliate"
+  budget:
+    total: 100000
+    min_allocation_pct: 5
+  optimization:
+    objective: "maximize_roi"
+    constraints:
+      max_frequency_per_customer_per_week: 3
+

@@ -1,0 +1,58 @@
+product_id,product_name,brand,brand_tier,main_category,subcategory,price,base_conversion_rate,setup_type,complexity,bundle_compatible,capacity,weight_class,weatherproof,in_stock,avg_rating,num_reviews
+PROD_00001,Kelty 8-Person Instant Tents,Kelty,mid_range,Tents + Screen Houses,Instant Tents,151.37,0.0447,Traditional Setup,Technical Design,Bundle Compatible,8-Person,Heavy-Duty,Extreme Weather,True,4.6,285
+PROD_00002,Coleman 8-Person Instant Tents,Coleman,budget,Tents + Screen Houses,Instant Tents,49.16,0.0528,Instant Setup,Moderate Design,Standalone Only,8-Person,Ultralight,All-Weather,True,3.6,21
+PROD_00003,Coleman 6-Person Instant Tents,Coleman,budget,Tents + Screen Houses,Instant Tents,60.61,0.078,Traditional Setup,Moderate Design,Bundle Compatible,6-Person,Ultralight,All-Weather,True,4.7,461
+PROD_00004,Coleman 2-Person Dome Tents,Coleman,mid_range,Tents + Screen Houses,Dome Tents,141.23,0.0547,Quick Assembly,Moderate Design,Standalone Only,2-Person,Heavy-Duty,Weather Resistant,False,3.6,44
+PROD_00005,Coleman 8-Person Dome Tents,Coleman,mid_range,Tents + Screen Houses,Dome Tents,123.62,0.0337,Quick Assembly,Moderate Design,Bundle Compatible,8-Person,Standard,Extreme Weather,False,4.2,240
+PROD_00006,Coleman 2-Person Dome Tents,Coleman,budget,Tents + Screen Houses,Dome Tents,80.36,0.0544,Traditional Setup,Moderate Design,Bundle Compatible,2-Person,Ultralight,Weather Resistant,True,3.8,287
+PROD_00007,Kelty 4-Person Cabin Tents,Kelty,mid_range,Tents + Screen Houses,Cabin Tents,148.26,0.0576,Instant Setup,Moderate Design,Standalone Only,4-Person,Lightweight,Basic,True,4.6,162
+PROD_00008,Coleman 6-Person Cabin Tents,Coleman,mid_range,Tents + Screen Houses,Cabin Tents,128.88,0.0571,Instant Setup,Simple Design,Standalone Only,6-Person,Heavy-Duty,Weather Resistant,True,4.3,474
+PROD_00009,Coleman 8-Person Cabin Tents,Coleman,budget,Tents + Screen Houses,Cabin Tents,34.79,0.0446,Instant Setup,Simple Design,Bundle Compatible,8-Person,Ultralight,Basic,True,4.2,494
+PROD_00010,MSR 6-Person Backpacking Tents,MSR,premium,Tents + Screen Houses,Backpacking Tents,328.35,0.0279,Quick Assembly,Technical Design,Bundle Compatible,6-Person,Standard,Weather Resistant,True,4.7,101
+PROD_00011,Coleman 6-Person Backpacking Tents,Coleman,mid_range,Tents + Screen Houses,Backpacking Tents,157.5,0.0525,Traditional Setup,Simple Design,Standalone Only,6-Person,Heavy-Duty,All-Weather,False,4.1,145
+PROD_00012,Big Agnes 4-Person Backpacking Tents,Big Agnes,premium,Tents + Screen Houses,Backpacking Tents,448.26,0.0428,Instant Setup,Technical Design,Bundle Compatible,4-Person,Ultralight,Basic,True,4.0,299
+PROD_00013,Coleman Sleeping Bags,Coleman,budget,Sleeping Bags + Airbeds,Sleeping Bags,45.32,0.0472,Quick Assembly,Moderate Design,Bundle Compatible,,Heavy-Duty,All-Weather,True,4.4,337
+PROD_00014,Kelty Sleeping Bags,Kelty,mid_range,Sleeping Bags + Airbeds,Sleeping Bags,240.09,0.0459,Instant Setup,Simple Design,Bundle Compatible,,Heavy-Duty,Basic,True,3.8,33
+PROD_00015,The North Face Sleeping Bags,The North Face,pro_grade,Sleeping Bags + Airbeds,Sleeping Bags,1124.83,0.0315,Quick Assembly,Technical Design,Bundle Compatible,,Ultralight,Basic,True,4.3,341
+PROD_00016,MSR Sleeping Pads,MSR,pro_grade,Sleeping Bags + Airbeds,Sleeping Pads,647.29,0.0282,Instant Setup,Technical Design,Bundle Compatible,,Heavy-Duty,All-Weather,False,4.1,493
+PROD_00017,Big Agnes Sleeping Pads,Big Agnes,premium,Sleeping Bags + Airbeds,Sleeping Pads,255.98,0.0218,Instant Setup,Technical Design,Bundle Compatible,,Standard,Basic,True,3.8,284
+PROD_00018,Coleman Sleeping Pads,Coleman,mid_range,Sleeping Bags + Airbeds,Sleeping Pads,234.2,0.0584,Traditional Setup,Moderate Design,Standalone Only,,Standard,Weather Resistant,True,3.8,165
+PROD_00019,Coleman Air Mattresses,Coleman,budget,Sleeping Bags + Airbeds,Air Mattresses,58.89,0.0704,Quick Assembly,Simple Design,Bundle Compatible,,Ultralight,Extreme Weather,False,4.1,494
+PROD_00020,Coleman Air Mattresses,Coleman,mid_range,Sleeping Bags + Airbeds,Air Mattresses,228.92,0.0323,Traditional Setup,Moderate Design,Standalone Only,,Ultralight,All-Weather,True,4.1,378
+PROD_00021,Coleman Air Mattresses,Coleman,budget,Sleeping Bags + Airbeds,Air Mattresses,40.28,0.0407,Traditional Setup,Technical Design,Bundle Compatible,,Standard,Basic,False,3.6,12
+PROD_00022,Magellan Outdoors Camp Stoves,Magellan Outdoors,budget,Campsite Cooking,Camp Stoves,55.35,0.0691,Traditional Setup,Simple Design,Standalone Only,,Heavy-Duty,Weather Resistant,True,4.0,56
+PROD_00023,Kelty Camp Stoves,Kelty,mid_range,Campsite Cooking,Camp Stoves,151.4,0.0305,Quick Assembly,Simple Design,Standalone Only,,Lightweight,Weather Resistant,True,4.8,221
+PROD_00024,MSR Camp Stoves,MSR,pro_grade,Campsite Cooking,Camp Stoves,991.81,0.0208,Quick Assembly,Technical Design,Bundle Compatible,,Standard,Basic,True,4.8,245
+PROD_00025,YETI Coolers,YETI,premium,Campsite Cooking,Coolers,331.91,0.0414,Traditional Setup,Moderate Design,Standalone Only,,Ultralight,All-Weather,True,5.0,85
+PROD_00026,Coleman Coolers,Coleman,budget,Campsite Cooking,Coolers,74.08,0.0547,Instant Setup,Simple Design,Bundle Compatible,,Ultralight,All-Weather,True,4.6,367
+PROD_00027,The North Face Coolers,The North Face,pro_grade,Campsite Cooking,Coolers,793.54,0.0221,Traditional Setup,Technical Design,Standalone Only,,Ultralight,All-Weather,True,4.5,138
+PROD_00028,Magellan Outdoors Camp Cookware,Magellan Outdoors,budget,Campsite Cooking,Camp Cookware,37.62,0.0558,Instant Setup,Moderate Design,Standalone Only,,Ultralight,Weather Resistant,True,4.5,264
+PROD_00029,Coleman Camp Cookware,Coleman,mid_range,Campsite Cooking,Camp Cookware,126.55,0.0418,Instant Setup,Simple Design,Standalone Only,,Ultralight,Extreme Weather,False,4.7,62
+PROD_00030,Coleman Camp Cookware,Coleman,mid_range,Campsite Cooking,Camp Cookware,145.26,0.06,Instant Setup,Simple Design,Standalone Only,,Lightweight,All-Weather,True,3.8,392
+PROD_00031,Coleman Headlamps,Coleman,mid_range,Flashlights + Lanterns,Headlamps,123.25,0.0553,Instant Setup,Technical Design,Standalone Only,,Standard,Basic,True,4.4,441
+PROD_00032,Magellan Outdoors Headlamps,Magellan Outdoors,budget,Flashlights + Lanterns,Headlamps,54.76,0.0776,Traditional Setup,Simple Design,Standalone Only,,Ultralight,Basic,True,4.9,485
+PROD_00033,YETI Headlamps,YETI,premium,Flashlights + Lanterns,Headlamps,334.33,0.0458,Instant Setup,Moderate Design,Bundle Compatible,,Lightweight,All-Weather,False,4.1,71
+PROD_00034,YETI Flashlights,YETI,pro_grade,Flashlights + Lanterns,Flashlights,1052.42,0.0151,Quick Assembly,Technical Design,Standalone Only,,Standard,All-Weather,True,4.3,373
+PROD_00035,YETI Flashlights,YETI,premium,Flashlights + Lanterns,Flashlights,498.27,0.0449,Traditional Setup,Technical Design,Bundle Compatible,,Ultralight,Extreme Weather,True,4.6,360
+PROD_00036,Coleman Flashlights,Coleman,mid_range,Flashlights + Lanterns,Flashlights,203.67,0.0371,Traditional Setup,Moderate Design,Bundle Compatible,,Lightweight,Basic,False,3.6,431
+PROD_00037,Magellan Outdoors Lanterns,Magellan Outdoors,budget,Flashlights + Lanterns,Lanterns,37.25,0.0711,Traditional Setup,Technical Design,Bundle Compatible,,Heavy-Duty,Extreme Weather,True,4.9,105
+PROD_00038,Coleman Lanterns,Coleman,budget,Flashlights + Lanterns,Lanterns,38.34,0.0786,Traditional Setup,Simple Design,Standalone Only,,Standard,All-Weather,True,4.3,73
+PROD_00039,The North Face Lanterns,The North Face,pro_grade,Flashlights + Lanterns,Lanterns,1050.92,0.0214,Traditional Setup,Technical Design,Bundle Compatible,,Ultralight,Basic,True,4.6,290
+PROD_00040,Magellan Outdoors Day Packs,Magellan Outdoors,budget,Hiking Backpacks,Day Packs,70.52,0.051,Instant Setup,Simple Design,Bundle Compatible,,Lightweight,Extreme Weather,True,3.8,84
+PROD_00041,Kelty Day Packs,Kelty,mid_range,Hiking Backpacks,Day Packs,204.41,0.0307,Quick Assembly,Simple Design,Standalone Only,,Standard,Weather Resistant,True,3.7,8
+PROD_00042,The North Face Day Packs,The North Face,pro_grade,Hiking Backpacks,Day Packs,511.88,0.0158,Quick Assembly,Moderate Design,Standalone Only,,Heavy-Duty,Basic,True,3.9,38
+PROD_00043,The North Face Multi-Day Packs,The North Face,pro_grade,Hiking Backpacks,Multi-Day Packs,917.86,0.0131,Quick Assembly,Moderate Design,Standalone Only,,Lightweight,All-Weather,True,5.0,221
+PROD_00044,Coleman Multi-Day Packs,Coleman,budget,Hiking Backpacks,Multi-Day Packs,71.75,0.074,Quick Assembly,Simple Design,Standalone Only,,Heavy-Duty,Basic,True,4.6,101
+PROD_00045,Big Agnes Multi-Day Packs,Big Agnes,premium,Hiking Backpacks,Multi-Day Packs,384.11,0.049,Traditional Setup,Moderate Design,Standalone Only,,Lightweight,Basic,True,4.6,36
+PROD_00046,Magellan Outdoors Hiking Boots,Magellan Outdoors,budget,Hiking Boots,Hiking Boots,81.67,0.0735,Instant Setup,Technical Design,Bundle Compatible,,Heavy-Duty,Extreme Weather,True,4.7,407
+PROD_00047,Kelty Hiking Boots,Kelty,mid_range,Hiking Boots,Hiking Boots,172.16,0.0387,Quick Assembly,Technical Design,Bundle Compatible,,Lightweight,All-Weather,True,4.8,320
+PROD_00048,Big Agnes Hiking Boots,Big Agnes,premium,Hiking Boots,Hiking Boots,248.26,0.0307,Instant Setup,Simple Design,Standalone Only,,Standard,All-Weather,True,3.7,101
+PROD_00049,Kelty Hiking Shoes,Kelty,mid_range,Hiking Boots,Hiking Shoes,178.09,0.055,Quick Assembly,Technical Design,Standalone Only,,Lightweight,Basic,True,4.8,218
+PROD_00050,YETI Hiking Shoes,YETI,pro_grade,Hiking Boots,Hiking Shoes,483.77,0.0264,Quick Assembly,Technical Design,Bundle Compatible,,Lightweight,Basic,True,3.7,328
+PROD_00051,Coleman Hiking Shoes,Coleman,mid_range,Hiking Boots,Hiking Shoes,98.92,0.0398,Traditional Setup,Technical Design,Bundle Compatible,,Lightweight,Weather Resistant,True,4.7,319
+PROD_00052,Coleman Folding Chairs,Coleman,mid_range,Camp Furniture,Folding Chairs,112.28,0.0316,Quick Assembly,Simple Design,Bundle Compatible,,Lightweight,All-Weather,True,4.7,197
+PROD_00053,Kelty Folding Chairs,Kelty,mid_range,Camp Furniture,Folding Chairs,158.88,0.0402,Instant Setup,Technical Design,Bundle Compatible,,Lightweight,Weather Resistant,True,4.2,292
+PROD_00054,MSR Folding Chairs,MSR,premium,Camp Furniture,Folding Chairs,437.37,0.0437,Instant Setup,Simple Design,Standalone Only,,Lightweight,All-Weather,True,4.7,106
+PROD_00055,Coleman Camp Tables,Coleman,budget,Camp Furniture,Camp Tables,66.53,0.0483,Instant Setup,Technical Design,Standalone Only,,Heavy-Duty,Weather Resistant,True,3.9,179
+PROD_00056,Coleman Camp Tables,Coleman,mid_range,Camp Furniture,Camp Tables,101.97,0.0513,Quick Assembly,Technical Design,Standalone Only,,Standard,All-Weather,True,4.5,303
+PROD_00057,YETI Camp Tables,YETI,pro_grade,Camp Furniture,Camp Tables,719.47,0.0163,Instant Setup,Simple Design,Standalone Only,,Ultralight,Basic,True,4.0,161
