@@ -34,6 +34,7 @@
 }
 
 @layer components {
+  /* Default/Academy Colors */
   .btn-primary {
     @apply bg-blue-600 hover:bg-blue-700 text-white font-semibold px-6 py-3 rounded-lg transition-all duration-200 shadow-md hover:shadow-lg disabled:opacity-50 disabled:cursor-not-allowed;
   }
@@ -44,6 +45,27 @@
   
   .btn-success {
     @apply bg-green-600 hover:bg-green-700 text-white font-semibold px-6 py-3 rounded-lg transition-all duration-200 shadow-md hover:shadow-lg;
+  }
+  
+  /* Banking-Specific Colors */
+  .banking-gradient {
+    background: linear-gradient(135deg, #1e3a8a 0%, #3b82f6 50%, #fbbf24 100%);
+  }
+  
+  .banking-primary {
+    @apply bg-blue-700 hover:bg-blue-800 text-white;
+  }
+  
+  .banking-secondary {
+    @apply bg-amber-500 hover:bg-amber-600 text-white;
+  }
+  
+  .banking-card {
+    @apply bg-white rounded-xl shadow-md hover:shadow-lg transition-all duration-300 border border-blue-200;
+  }
+  
+  .banking-badge {
+    @apply bg-blue-100 text-blue-800 px-3 py-1 rounded-full text-sm font-medium;
   }
   
   .card {

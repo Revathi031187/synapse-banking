@@ -144,7 +144,7 @@ export default function AcademyAgentB() {
           </div>
           {/* View Macro Segments Button */}
           <a
-            href="/nba-platform/v3/academy/macro-dashboard"
+            href="/academy/macro-dashboard"
             className="flex items-center gap-2 px-4 py-2 bg-gradient-to-r from-blue-600 to-indigo-600 text-white rounded-lg hover:from-blue-700 hover:to-indigo-700 transition-all shadow-md hover:shadow-lg"
           >
             <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">

@@ -1,12 +1,17 @@
 @echo off
 echo ========================================
-echo   RESTARTING BACKEND SERVER
+echo   RESTART BACKEND WITH DYNAMIC SYSTEM
 echo ========================================
 echo.
-echo Please press Ctrl+C in your backend terminal, then run:
-echo   cd api
-echo   py -3.10 main_unified_chromadb.py
+echo This will restart the backend to apply:
+echo   - Dynamic segment names
+echo   - Real transaction calculations
+echo   - Gamma parameter from frontend
+echo   - Essential churn features
 echo.
+echo Press Ctrl+C to cancel, or
 pause
-
-
+echo.
+echo Starting backend...
+echo.
+python api/main_unified_chromadb.py

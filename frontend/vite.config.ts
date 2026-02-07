@@ -3,9 +3,10 @@ import react from '@vitejs/plugin-react'
 
 export default defineConfig({
   plugins: [react()],
-  base: '/nba-platform/v3/',  // Version 3 - new path under allowed /nba-platform/
+  // Use base path only in production, root path for dev
+  base: process.env.NODE_ENV === 'production' ? '/nba-platform/v3/' : '/',
   server: {
-    port: 3000,
+    port: 5173,  // Standard Vite port
     proxy: {
       '/api': {
         target: 'http://localhost:8002',

@@ -65,6 +65,11 @@ class LogitRecommendationModel:
         """
         logger.info("Extracting features for logit model...")
         
+        # DOMAIN DETECTION: Check if it's Banking or Academy Sports
+        is_banking = 'customer_segment' in customers_df.columns and 'credit_score' in customers_df.columns
+        domain_name = "BANKING" if is_banking else "ACADEMY SPORTS"
+        logger.info(f"   🔍 Detected domain: {domain_name}")
+        
         # Create all possible customer-product pairs
         customer_ids = customers_df['customer_id'].unique()
         product_ids = products_df['product_id'].unique()
@@ -81,7 +86,7 @@ class LogitRecommendationModel:
         
         features_df = pd.DataFrame(pairs)
         
-        # Add target: did customer purchase this product?
+        # Add target: did customer purchase/use this product?
         purchases_set = set(zip(purchases_df['customer_id'], purchases_df['product_id']))
         features_df['purchased'] = features_df.apply(
             lambda row: 1 if (row['customer_id'], row['product_id']) in purchases_set else 0,
@@ -90,15 +95,48 @@ class LogitRecommendationModel:
         
         logger.info(f"Total pairs: {len(features_df)}, Positive rate: {features_df['purchased'].mean():.2%}")
         
-        # Merge customer data (using actual column names from Academy Sports data)
-        customer_cols = ['customer_id', 'purchase_frequency', 'avg_order_value', 'dominant_category']
+        # ⚡ CRITICAL: Adapt data BEFORE any merges!
+        customers_df = customers_df.copy()
+        products_df = products_df.copy()
         
-        # Add total_spend_12mo if it exists (renamed to total_spend for compatibility)
-        if 'total_spend_12mo' in customers_df.columns:
-            customers_df = customers_df.copy()
-            customers_df['total_spend'] = customers_df['total_spend_12mo']
-            customer_cols.append('total_spend')
+        if is_banking:
+            logger.info("   🏦 BANKING: Adapting ALL columns for compatibility")
+            
+            # Adapt CUSTOMER columns
+            if 'purchase_frequency' not in customers_df.columns:
+                customers_df['purchase_frequency'] = customers_df.get('monthly_transaction_volume', 0.5) * 12
+            if 'avg_order_value' not in customers_df.columns:
+                customers_df['avg_order_value'] = customers_df.get('annual_transaction_value', 1000) / customers_df['purchase_frequency'].clip(lower=1)
+            if 'dominant_category' not in customers_df.columns:
+                customers_df['dominant_category'] = customers_df.get('customer_segment', 'Personal')
+            if 'total_spend' not in customers_df.columns:
+                customers_df['total_spend'] = customers_df.get('annual_transaction_value', customers_df.get('total_deposits', 50000) * 0.01)
+            
+            # Adapt PRODUCT columns (MUST happen before any product merges!)
+            if 'price' not in products_df.columns:
+                products_df['price'] = products_df.get('annual_fee', 0)
+            if 'main_category' not in products_df.columns:
+                products_df['main_category'] = products_df.get('category', 'Personal')
+            if 'subcategory' not in products_df.columns:
+                products_df['subcategory'] = products_df.get('subcategory', 'General')
+            if 'avg_rating' not in products_df.columns:
+                products_df['avg_rating'] = 4.0
+            if 'brand' not in products_df.columns:
+                products_df['brand'] = 'F&M Bank'
+            if 'complexity' not in products_df.columns:
+                products_df['complexity'] = 'Moderate'
+            
+            logger.info("   ✅ Banking columns adapted: purchase_frequency, avg_order_value, main_category, price")
+            customer_cols = ['customer_id', 'purchase_frequency', 'avg_order_value', 'dominant_category', 'total_spend']
+        else:
+            logger.info("   🏃 ACADEMY SPORTS: Using original columns")
+            customer_cols = ['customer_id', 'purchase_frequency', 'avg_order_value', 'dominant_category']
+            
+            if 'total_spend_12mo' in customers_df.columns:
+                customers_df['total_spend'] = customers_df['total_spend_12mo']
+                customer_cols.append('total_spend')
         
+        # Now merge customer data
         features_df = features_df.merge(
             customers_df[customer_cols],
             on='customer_id',
@@ -109,10 +147,11 @@ class LogitRecommendationModel:
         if 'dominant_category' in features_df.columns:
             features_df['favorite_category'] = features_df['dominant_category']
         
-        # Merge product data
+        # Merge product data (products_df is already adapted above!)
+        product_cols = ['product_id', 'price', 'main_category', 'subcategory', 'avg_rating', 'brand', 'complexity']
+        
         features_df = features_df.merge(
-            products_df[['product_id', 'price', 'main_category', 'subcategory', 
-                        'avg_rating', 'brand', 'complexity']],
+            products_df[product_cols],
             on='product_id',
             how='left'
         )

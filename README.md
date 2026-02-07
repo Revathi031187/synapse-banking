@@ -1,4 +1,4 @@
-# 🎯 Agentic AI Personalization Platform for Academy Sports
+# 🎯 Multi-Industry Agentic AI Personalization Platform
 
 > **An enterprise-grade, AI-powered personalization platform featuring intelligent customer segmentation and robust product recommendations with multi-agent orchestration.**
 
@@ -11,7 +11,14 @@
 
 ## 🌟 Overview
 
-This platform implements a sophisticated **two-agent system** for customer personalization and product recommendations in the outdoor/camping retail industry. Using advanced machine learning techniques and AI-powered insights, it delivers targeted product recommendations that match individual customer preferences, spending patterns, and expertise levels.
+This platform implements a sophisticated **two-agent system** for customer personalization and product recommendations across multiple industries. Using advanced machine learning techniques and AI-powered insights, it delivers targeted recommendations that match individual customer preferences, financial profiles, and behavioral patterns.
+
+### Supported Industries
+
+- **🏦 Banking & Financial Services** - Customer segmentation and product recommendations for banking (credit cards, loans, accounts, investments, mortgages)
+- **🏕️ Academy Sports - Camping Gear** - Product personalization for outdoor/camping retail
+
+Both implementations use the same core technology: K-Prototypes clustering + 12-factor recommendation engine.
 
 ### **Key Capabilities**
 
@@ -90,6 +97,30 @@ This platform implements a sophisticated **two-agent system** for customer perso
 - **Node.js 18+** with npm
 - **Git**
 - 8GB+ RAM recommended
+
+### **Quick Start - Banking Platform** (NEW)
+
+```bash
+# 1. Generate banking data
+generate_banking_data.bat
+
+# 2. Start backend
+uvicorn api.main_unified_chromadb:app --port 8002 --reload
+
+# 3. Start frontend
+cd frontend
+npm install
+npm run dev
+
+# 4. Access banking demo
+# http://localhost:3000/banking
+```
+
+See **[BANKING_QUICK_START.md](BANKING_QUICK_START.md)** for detailed instructions.
+
+---
+
+### **Quick Start - Academy Sports**
 
 ### **1. Clone Repository**
 

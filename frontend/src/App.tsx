@@ -2,7 +2,14 @@ import { BrowserRouter as Router, Routes, Route, Navigate } from 'react-router-d
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import UnifiedLayout from './components/UnifiedLayout';
 
-// Academy Sports pages only
+// Banking pages (NEW - Primary Demo)
+import BankingDashboard from './pages/banking/BankingDashboard';
+import BankingDataLoader from './pages/banking/BankingDataLoader';
+import BankingAgentA from './pages/banking/BankingAgentA';
+import BankingAgentB from './pages/banking/BankingAgentB';
+import BankingMacroDashboard from './pages/banking/BankingMacroDashboard';
+
+// Academy Sports pages (Keep for reference)
 import AcademyDashboard from './pages/academy/AcademyDashboard';
 import AcademyAgentA from './pages/academy/AcademyAgentA';
 import AcademyAgentB from './pages/academy/AcademyAgentB';
@@ -23,15 +30,28 @@ const queryClient = new QueryClient({
   },
 });
 
+// Use basename only in production, not in development
+const basename = import.meta.env.MODE === 'production' ? '/nba-platform/v3' : '/';
+
 function App() {
   return (
     <QueryClientProvider client={queryClient}>
-      <Router basename="/nba-platform/v3">
+      <Router basename={basename}>
         <Routes>
-          {/* Redirect root to Academy Sports */}
-          <Route path="/" element={<Navigate to="/academy" replace />} />
+          {/* Redirect root to Banking (primary demo) */}
+          <Route path="/" element={<Navigate to="/banking" replace />} />
           
-          {/* Academy Sports Routes */}
+          {/* Banking Routes (NEW - Primary Demo) */}
+          <Route path="/banking" element={<UnifiedLayout industry="banking" />}>
+            <Route index element={<BankingDashboard />} />
+            <Route path="data-loader" element={<BankingDataLoader />} />
+            <Route path="macro-dashboard" element={<BankingMacroDashboard />} />
+            <Route path="agent-a" element={<BankingAgentA />} />
+            <Route path="agent-b" element={<BankingAgentB />} />
+            <Route path="customer/:customerId/recommendations" element={<AcademyRecommendations />} />
+          </Route>
+          
+          {/* Academy Sports Routes (Keep for reference) */}
           <Route path="/academy" element={<UnifiedLayout industry="academy" />}>
             <Route index element={<AcademyDashboard />} />
             <Route path="segmentation-overview" element={<AcademySegmentationOverview />} />
@@ -42,8 +62,8 @@ function App() {
             <Route path="customer/:customerId/recommendations" element={<AcademyRecommendations />} />
           </Route>
 
-          {/* Catch all - redirect to Academy */}
-          <Route path="*" element={<Navigate to="/academy" replace />} />
+          {/* Catch all - redirect to Banking */}
+          <Route path="*" element={<Navigate to="/banking" replace />} />
         </Routes>
       </Router>
     </QueryClientProvider>

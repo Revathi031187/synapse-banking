@@ -1,7 +1,7 @@
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { motion, AnimatePresence } from 'framer-motion';
 import { useState } from 'react';
-import { FolderOpen, Database, CheckCircle2, AlertCircle, Eye, X } from 'lucide-react';
+import { FolderOpen, Database, CheckCircle2, AlertCircle, Eye, X, Upload } from 'lucide-react';
 
 export default function BankingDataLoader() {
   const queryClient = useQueryClient();
@@ -9,11 +9,13 @@ export default function BankingDataLoader() {
   const [viewingTable, setViewingTable] = useState<string | null>(null);
   const [tableData, setTableData] = useState<any | null>(null);
   
+  const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || 'http://localhost:8002';
+  
   // Fetch available datasets
   const { data: datasetsData, isLoading } = useQuery({
     queryKey: ['banking-datasets'],
     queryFn: async () => {
-      const res = await fetch('http://localhost:8002/api/banking/datasets');
+      const res = await fetch(`${API_BASE_URL}/api/banking/datasets`);
       return res.json();
     }
   });
@@ -21,7 +23,7 @@ export default function BankingDataLoader() {
   // Load dataset mutation
   const loadMutation = useMutation({
     mutationFn: async (datasetName: string) => {
-      const res = await fetch('http://localhost:8002/api/banking/datasets/load', {
+      const res = await fetch(`${API_BASE_URL}/api/banking/datasets/load`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ dataset_name: datasetName })
@@ -31,18 +33,30 @@ export default function BankingDataLoader() {
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['banking-status'] });
+      // Clear Agent A results when new dataset is loaded
+      queryClient.removeQueries({ queryKey: ['banking-agent-a-results'] });
     }
   });
   
   // Function to view table data
   const handleViewTable = async (tableName: string) => {
     try {
-      const res = await fetch(`http://localhost:8002/api/banking/datasets/view/${selectedDataset}/${tableName}`);
+      const datasetToUse = selectedDataset || datasetsData?.datasets?.[0]?.name || 'banking_v1';
+      const res = await fetch(`${API_BASE_URL}/api/banking/datasets/view/${datasetToUse}/${tableName}`);
+      
+      if (!res.ok) {
+        console.error('Failed to fetch table:', res.status, res.statusText);
+        alert(`Failed to load table: ${res.statusText}`);
+        return;
+      }
+      
       const data = await res.json();
+      console.log('✅ Table data loaded:', tableName, data);
       setTableData(data);
       setViewingTable(tableName);
     } catch (error) {
       console.error('Error loading table:', error);
+      alert(`Error loading table: ${error}`);
     }
   };
   
@@ -52,7 +66,7 @@ export default function BankingDataLoader() {
     return (
       <div className="flex items-center justify-center h-64">
         <div className="text-center">
-          <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-blue-600 mx-auto mb-4"></div>
+          <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-blue-700 mx-auto mb-4"></div>
           <div className="text-gray-900 text-xl font-semibold">Loading datasets...</div>
         </div>
       </div>
@@ -64,10 +78,10 @@ export default function BankingDataLoader() {
       {/* Header */}
       <div>
         <h1 className="text-4xl font-bold text-gray-900 mb-2 flex items-center space-x-3">
-          <FolderOpen className="w-10 h-10 text-blue-600" />
-          <span>Banking Data Loader</span>
+          <FolderOpen className="w-10 h-10 text-blue-700" />
+          <span>🏦 Banking Data Loader</span>
         </h1>
-        <p className="text-gray-600 text-lg">Select and load a banking dataset to begin persona analysis</p>
+        <p className="text-gray-600 text-lg">Select and load the banking customer dataset to begin persona analysis</p>
       </div>
       
       {/* Dataset Selection */}
@@ -75,19 +89,20 @@ export default function BankingDataLoader() {
         <h2 className="text-2xl font-bold text-gray-900">Available Datasets</h2>
         
         {datasets.length === 0 && (
-          <div className="card bg-yellow-50 border-yellow-300">
-            <div className="card-body">
-              <div className="flex items-start space-x-3">
-                <AlertCircle className="w-6 h-6 text-yellow-600 flex-shrink-0 mt-1" />
-                <div>
-                  <div className="text-yellow-900 font-semibold mb-2">No Datasets Found</div>
-                  <p className="text-yellow-800 text-sm mb-3">
-                    No pre-loaded datasets detected. Generate data by running:
-                  </p>
-                  <code className="block bg-gray-900 text-gray-100 p-3 rounded-lg text-sm font-mono">
-                    py -3.10 utils/banking_data_generator.py
-                  </code>
-                </div>
+          <div className="bg-amber-50 border-2 border-amber-300 rounded-xl p-6">
+            <div className="flex items-start space-x-3">
+              <AlertCircle className="w-6 h-6 text-amber-600 flex-shrink-0 mt-1" />
+              <div>
+                <div className="text-amber-900 font-semibold mb-2">No Datasets Found</div>
+                <p className="text-amber-800 text-sm mb-3">
+                  No pre-loaded datasets detected. Generate banking data by running:
+                </p>
+                <code className="block bg-gray-900 text-gray-100 p-3 rounded-lg text-sm font-mono">
+                  python utils/banking_data_generator.py
+                </code>
+                <p className="text-amber-800 text-xs mt-2">
+                  This will generate 5,000 banking customers with realistic profiles and transactions
+                </p>
               </div>
             </div>
           </div>
@@ -99,68 +114,95 @@ export default function BankingDataLoader() {
               key={dataset.name}
               initial={{ opacity: 0, y: 20 }}
               animate={{ opacity: 1, y: 0 }}
-              className={`card cursor-pointer transition-all duration-300 ${
+              className={`bg-white rounded-xl shadow-sm border-2 cursor-pointer transition-all duration-300 ${
                 selectedDataset === dataset.name
                   ? 'border-blue-500 shadow-lg bg-blue-50'
-                  : 'hover:border-blue-300 hover:shadow-md'
+                  : 'border-blue-200 hover:border-blue-400 hover:shadow-md'
               }`}
               onClick={() => setSelectedDataset(dataset.name)}
             >
-              <div className="card-body">
+              <div className="p-6">
                 <div className="flex items-start justify-between mb-4">
-                  <div>
-                    <h3 className="text-2xl font-bold text-gray-900 mb-2 flex items-center space-x-2">
-                      <span>🏦</span>
-                      <span>{dataset.display_name}</span>
-                    </h3>
-                    <p className="text-gray-600 text-sm">{dataset.description}</p>
-                  </div>
-                  <div className="text-5xl">💰</div>
-                </div>
-                
-                {/* Tables */}
-                <div className="grid md:grid-cols-2 gap-3 mb-4">
-                  {dataset.tables.map((table: string) => (
-                    <div key={table} className="flex items-center justify-between bg-gray-50 border border-gray-200 px-4 py-3 rounded-lg">
-                      <div className="flex items-center space-x-2">
-                        <Database className="w-4 h-4 text-gray-500" />
-                        <span className="text-gray-900 text-sm font-medium">{table}</span>
-                      </div>
-                      {loadMutation.isSuccess && selectedDataset === dataset.name && (
-                        <button
-                          onClick={(e) => {
-                            e.stopPropagation();
-                            handleViewTable(table);
-                          }}
-                          className="text-blue-600 hover:text-blue-700 font-medium transition-colors flex items-center space-x-1 text-sm"
-                        >
-                          <Eye className="w-4 h-4" />
-                          <span>View</span>
-                        </button>
+                  <div className="flex-1">
+                    <div className="flex items-center space-x-2 mb-2">
+                      <h3 className="text-2xl font-bold text-gray-900 flex items-center space-x-2">
+                        <span>🏦</span>
+                        <span>{dataset.display_name || dataset.name}</span>
+                      </h3>
+                      {dataset.status === 'ready' && (
+                        <span className="inline-flex items-center px-3 py-1 bg-green-100 text-green-800 rounded-full text-sm font-semibold">
+                          <CheckCircle2 className="w-4 h-4 mr-1" />
+                          Ready
+                        </span>
+                      )}
+                      {dataset.status === 'not_generated' && (
+                        <span className="inline-flex items-center px-3 py-1 bg-amber-100 text-amber-800 rounded-full text-sm font-semibold">
+                          <AlertCircle className="w-4 h-4 mr-1" />
+                          Generate First
+                        </span>
                       )}
                     </div>
-                  ))}
+                    <p className="text-gray-600 text-sm mb-3">{dataset.description}</p>
+                    
+                    {/* Tables Info */}
+                    {dataset.tables && (
+                      <div className="grid md:grid-cols-3 gap-3 mt-4">
+                        {dataset.tables.map((table: any) => (
+                          <div key={table.name} className="bg-white rounded-lg border border-blue-100 p-3">
+                            <div className="flex items-center justify-between mb-1">
+                              <div className="text-sm font-semibold text-gray-900">{table.display_name}</div>
+                              {table.loaded && (
+                                <button
+                                  onClick={(e) => {
+                                    e.stopPropagation();
+                                    handleViewTable(table.name);
+                                  }}
+                                  className="text-blue-700 hover:text-blue-800 p-1"
+                                  title="View data"
+                                >
+                                  <Eye className="w-4 h-4" />
+                                </button>
+                              )}
+                            </div>
+                            <div className="text-xs text-gray-600">
+                              {table.loaded ? (
+                                <span className="flex items-center gap-1">
+                                  <CheckCircle2 className="w-3 h-3 text-green-600" />
+                                  {table.row_count?.toLocaleString() || 0} rows
+                                </span>
+                              ) : (
+                                <span className="text-amber-600">Not loaded</span>
+                              )}
+                            </div>
+                          </div>
+                        ))}
+                      </div>
+                    )}
+                  </div>
                 </div>
                 
-                {/* Stats */}
-                <div className="flex items-center justify-between pt-4 border-t border-gray-200">
-                  <div className="flex items-center space-x-6 text-sm">
-                    <div>
-                      <span className="text-gray-600">Customers:</span>
-                      <span className="text-gray-900 ml-2 font-bold">{dataset.customer_count?.toLocaleString()}</span>
-                    </div>
-                    <div>
-                      <span className="text-gray-600">Products:</span>
-                      <span className="text-blue-600 ml-2 font-bold">{dataset.product_count}</span>
-                    </div>
-                  </div>
-                  
-                  {selectedDataset === dataset.name && (
-                    <div className="badge badge-blue flex items-center space-x-1">
-                      <CheckCircle2 className="w-4 h-4" />
-                      <span>Selected</span>
-                    </div>
-                  )}
+                {/* Load Button */}
+                <div className="mt-4 pt-4 border-t border-blue-100">
+                  <button
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      loadMutation.mutate(dataset.name);
+                    }}
+                    disabled={loadMutation.isPending || dataset.status !== 'ready'}
+                    className="btn-primary w-full flex items-center justify-center gap-2 disabled:opacity-50 disabled:cursor-not-allowed"
+                  >
+                    {loadMutation.isPending ? (
+                      <>
+                        <div className="animate-spin rounded-full h-5 w-5 border-b-2 border-white"></div>
+                        <span>Loading Dataset...</span>
+                      </>
+                    ) : (
+                      <>
+                        <Upload className="w-5 h-5" />
+                        <span>Load Dataset into System</span>
+                      </>
+                    )}
+                  </button>
                 </div>
               </div>
             </motion.div>
@@ -168,59 +210,44 @@ export default function BankingDataLoader() {
         </div>
       </div>
       
-      {/* Load Button */}
-      {selectedDataset && (
+      {loadMutation.isSuccess && (
         <motion.div
-          initial={{ opacity: 0, y: 20 }}
-          animate={{ opacity: 1, y: 0 }}
-          className="card bg-gradient-to-br from-blue-50 to-purple-50 border-blue-300"
+          initial={{ opacity: 0, scale: 0.95 }}
+          animate={{ opacity: 1, scale: 1 }}
+          className="bg-green-50 border-2 border-green-300 rounded-xl p-6"
         >
-          <div className="card-body">
-            <div className="flex items-center justify-between">
-              <div>
-                <h3 className="text-gray-900 font-bold text-xl mb-2">Ready to Load Dataset</h3>
-                <p className="text-gray-700 text-sm">
-                  Dataset is pre-loaded in ChromaDB and ready for persona analysis
-                </p>
-              </div>
-              <button
-                onClick={() => loadMutation.mutate(selectedDataset)}
-                disabled={loadMutation.isPending}
-                className="btn-primary flex items-center space-x-2"
+          <div className="flex items-start space-x-3">
+            <CheckCircle2 className="w-6 h-6 text-green-600 flex-shrink-0 mt-1" />
+            <div>
+              <div className="text-green-900 font-bold text-lg mb-2">✅ Dataset Loaded Successfully!</div>
+              <p className="text-green-800 text-sm mb-3">
+                The banking dataset has been loaded into ChromaDB. You can now proceed to run Agent A for customer segmentation.
+              </p>
+              <a
+                href="/banking/agent-a"
+                className="inline-flex items-center gap-2 bg-blue-700 text-white px-4 py-2 rounded-lg font-semibold hover:bg-blue-800 transition-colors text-sm"
               >
-                <CheckCircle2 className="w-5 h-5" />
-                <span>{loadMutation.isPending ? 'Confirming...' : 'Confirm Dataset'}</span>
-              </button>
+                Proceed to Agent A →
+              </a>
             </div>
-            
-            {loadMutation.isSuccess && (
-              <motion.div
-                initial={{ opacity: 0, height: 0 }}
-                animate={{ opacity: 1, height: 'auto' }}
-                className="mt-4 pt-4 border-t border-blue-300"
-              >
-                <div className="flex items-center space-x-3 mb-3">
-                  <CheckCircle2 className="w-6 h-6 text-blue-600" />
-                  <span className="font-semibold text-blue-900 text-lg">Dataset Confirmed!</span>
-                </div>
-                <p className="text-gray-700 text-sm">
-                  You can now proceed to Agent A to identify customer personas, or use the agent navigation above.
-                </p>
-              </motion.div>
-            )}
-            
-            {loadMutation.isError && (
-              <motion.div
-                initial={{ opacity: 0, height: 0 }}
-                animate={{ opacity: 1, height: 'auto' }}
-                className="mt-4 pt-4 border-t border-red-300"
-              >
-                <div className="flex items-center space-x-3">
-                  <AlertCircle className="w-6 h-6 text-red-600" />
-                  <span className="font-semibold text-red-900">Failed to load dataset</span>
-                </div>
-              </motion.div>
-            )}
+          </div>
+        </motion.div>
+      )}
+      
+      {loadMutation.isError && (
+        <motion.div
+          initial={{ opacity: 0, scale: 0.95 }}
+          animate={{ opacity: 1, scale: 1 }}
+          className="bg-red-50 border-2 border-red-300 rounded-xl p-6"
+        >
+          <div className="flex items-start space-x-3">
+            <AlertCircle className="w-6 h-6 text-red-600 flex-shrink-0 mt-1" />
+            <div>
+              <div className="text-red-900 font-bold text-lg mb-2">Failed to Load Dataset</div>
+              <p className="text-red-800 text-sm">
+                {(loadMutation.error as Error).message}
+              </p>
+            </div>
           </div>
         </motion.div>
       )}
@@ -232,62 +259,78 @@ export default function BankingDataLoader() {
             initial={{ opacity: 0 }}
             animate={{ opacity: 1 }}
             exit={{ opacity: 0 }}
-            className="fixed inset-0 bg-black/50 backdrop-blur-sm z-50 flex items-center justify-center p-4"
-            onClick={() => setViewingTable(null)}
+            className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4"
+            onClick={() => {
+              setViewingTable(null);
+              setTableData(null);
+            }}
           >
             <motion.div
-              initial={{ scale: 0.95, y: 20 }}
-              animate={{ scale: 1, y: 0 }}
-              exit={{ scale: 0.95, y: 20 }}
-              className="bg-white border border-gray-300 rounded-xl shadow-2xl max-w-6xl w-full max-h-[85vh] overflow-hidden"
+              initial={{ scale: 0.9, opacity: 0 }}
+              animate={{ scale: 1, opacity: 1 }}
+              exit={{ scale: 0.9, opacity: 0 }}
+              className="bg-white rounded-xl shadow-2xl max-w-6xl w-full max-h-[90vh] overflow-hidden"
               onClick={(e) => e.stopPropagation()}
             >
               {/* Modal Header */}
-              <div className="border-b border-gray-200 p-6 bg-gray-50">
-                <div className="flex items-center justify-between">
-                  <div>
-                    <h3 className="text-2xl font-bold text-gray-900 mb-1 flex items-center space-x-2">
-                      <Database className="w-6 h-6 text-blue-600" />
-                      <span>{viewingTable}</span>
-                    </h3>
-                    <p className="text-gray-600 text-sm">
-                      Showing {tableData.preview_count} of {tableData.record_count} records
-                    </p>
-                  </div>
-                  <button
-                    onClick={() => setViewingTable(null)}
-                    className="text-gray-500 hover:text-gray-900 transition-colors p-2 hover:bg-gray-200 rounded-lg"
-                  >
-                    <X className="w-6 h-6" />
-                  </button>
+              <div className="bg-gradient-to-r from-blue-700 to-blue-800 text-white p-6 flex items-center justify-between">
+                <div>
+                  <h3 className="text-2xl font-bold flex items-center gap-2">
+                    <Database className="w-6 h-6" />
+                    {viewingTable}
+                  </h3>
+                  <p className="text-blue-100 text-sm mt-1">
+                    Showing {tableData.data?.length || 0} of {tableData.total_rows?.toLocaleString() || 0} rows
+                  </p>
                 </div>
+                <button
+                  onClick={() => {
+                    setViewingTable(null);
+                    setTableData(null);
+                  }}
+                  className="text-white hover:bg-blue-600 p-2 rounded-lg transition-colors"
+                >
+                  <X className="w-6 h-6" />
+                </button>
               </div>
               
-              {/* Table Content */}
-              <div className="overflow-auto max-h-[calc(85vh-140px)] p-6">
-                <table className="w-full text-sm border-collapse">
-                  <thead className="sticky top-0 bg-gray-50 border-b-2 border-gray-300">
-                    <tr>
-                      {tableData.records.length > 0 &&
-                        Object.keys(tableData.records[0]).map((key) => (
-                          <th key={key} className="text-left px-4 py-3 text-gray-900 font-semibold whitespace-nowrap bg-gray-50">
-                            {key}
+              {/* Modal Body */}
+              <div className="p-6 overflow-auto max-h-[calc(90vh-120px)]">
+                <div className="overflow-x-auto">
+                  <table className="min-w-full divide-y divide-gray-200">
+                    <thead className="bg-gray-50 sticky top-0">
+                      <tr>
+                        {tableData.columns?.map((col: string) => (
+                          <th
+                            key={col}
+                            className="px-4 py-3 text-left text-xs font-semibold text-gray-700 uppercase tracking-wider whitespace-nowrap"
+                          >
+                            {col}
                           </th>
                         ))}
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {tableData.records.map((record: any, idx: number) => (
-                      <tr key={idx} className="border-b border-gray-200 hover:bg-gray-50 transition-colors">
-                        {Object.values(record).map((value: any, vidx: number) => (
-                          <td key={vidx} className="px-4 py-3 text-gray-700 whitespace-nowrap">
-                            {typeof value === 'object' ? JSON.stringify(value) : String(value)}
-                          </td>
-                        ))}
                       </tr>
-                    ))}
-                  </tbody>
-                </table>
+                    </thead>
+                    <tbody className="bg-white divide-y divide-gray-200">
+                      {tableData.data?.map((row: any, idx: number) => (
+                        <tr key={idx} className="hover:bg-gray-50">
+                          {tableData.columns?.map((col: string) => (
+                            <td
+                              key={col}
+                              className="px-4 py-3 text-sm text-gray-900 whitespace-nowrap"
+                            >
+                              {typeof row[col] === 'number' 
+                                ? row[col].toLocaleString()
+                                : row[col] !== null && row[col] !== undefined
+                                  ? String(row[col])
+                                  : '-'
+                              }
+                            </td>
+                          ))}
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
               </div>
             </motion.div>
           </motion.div>

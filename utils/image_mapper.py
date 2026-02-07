@@ -66,6 +66,47 @@ class ImageMapper:
             {'url': 'https://images.unsplash.com/photo-1476610182048-b716b8518aae?w=800&q=80', 'color_theme': '#0284c7'},
             {'url': 'https://images.unsplash.com/photo-1682687220742-aba13b6e50ba?w=800&q=80', 'color_theme': '#0369a1'},
             {'url': 'https://images.unsplash.com/photo-1559827260-dc66d52bef19?w=800&q=80', 'color_theme': '#075985'}
+        ],
+        # Banking-specific categories
+        'wealth_management': [
+            {'url': 'https://images.unsplash.com/photo-1454165804606-c3d57bc86b40?w=800&q=80', 'color_theme': '#1e40af'},
+            {'url': 'https://images.unsplash.com/photo-1551836022-deb4988cc6c0?w=800&q=80', 'color_theme': '#1e3a8a'},
+            {'url': 'https://images.unsplash.com/photo-1559056199-641a0ac8b55e?w=800&q=80', 'color_theme': '#1e3a8a'}
+        ],
+        'business_banking': [
+            {'url': 'https://images.unsplash.com/photo-1559526324-4b87b5e36e44?w=800&q=80', 'color_theme': '#059669'},
+            {'url': 'https://images.unsplash.com/photo-1554224311-beee4f640552?w=800&q=80', 'color_theme': '#047857'},
+            {'url': 'https://images.unsplash.com/photo-1542744173-8e7e53415bb0?w=800&q=80', 'color_theme': '#065f46'}
+        ],
+        'digital_banking': [
+            {'url': 'https://images.unsplash.com/photo-1551288049-bebda4e38f71?w=800&q=80', 'color_theme': '#7c3aed'},
+            {'url': 'https://images.unsplash.com/photo-1563986768609-322da13575f3?w=800&q=80', 'color_theme': '#6d28d9'},
+            {'url': 'https://images.unsplash.com/photo-1526628953301-3e589a6a8b74?w=800&q=80', 'color_theme': '#5b21b6'}
+        ],
+        'investment': [
+            {'url': 'https://images.unsplash.com/photo-1611974789855-9c2a0a7236a3?w=800&q=80', 'color_theme': '#0891b2'},
+            {'url': 'https://images.unsplash.com/photo-1460925895917-afdab827c52f?w=800&q=80', 'color_theme': '#0e7490'},
+            {'url': 'https://images.unsplash.com/photo-1579532537598-459ecdaf39cc?w=800&q=80', 'color_theme': '#155e75'}
+        ],
+        'traditional_banking': [
+            {'url': 'https://images.unsplash.com/photo-1560472355-536de3962603?w=800&q=80', 'color_theme': '#dc2626'},
+            {'url': 'https://images.unsplash.com/photo-1541354329998-f4d9a9f9297f?w=800&q=80', 'color_theme': '#b91c1c'},
+            {'url': 'https://images.unsplash.com/photo-1556742049-0cfed4f6a45d?w=800&q=80', 'color_theme': '#991b1b'}
+        ],
+        'financial_planning': [
+            {'url': 'https://images.unsplash.com/photo-1554224311-beee4f640552?w=800&q=80', 'color_theme': '#d97706'},
+            {'url': 'https://images.unsplash.com/photo-1573496359142-b8d87734a5a2?w=800&q=80', 'color_theme': '#c2410c'},
+            {'url': 'https://images.unsplash.com/photo-1450101499163-c8848c66ca85?w=800&q=80', 'color_theme': '#ea580c'}
+        ],
+        'entrepreneurship': [
+            {'url': 'https://images.unsplash.com/photo-1521791136064-7986c2920216?w=800&q=80', 'color_theme': '#ea580c'},
+            {'url': 'https://images.unsplash.com/photo-1600880292203-757bb62b4baf?w=800&q=80', 'color_theme': '#f97316'},
+            {'url': 'https://images.unsplash.com/photo-1551836022-d5d88e9218df?w=800&q=80', 'color_theme': '#fb923c'}
+        ],
+        'retirement': [
+            {'url': 'https://images.unsplash.com/photo-1573497019940-1c28c88b4f3e?w=800&q=80', 'color_theme': '#65a30d'},
+            {'url': 'https://images.unsplash.com/photo-1560264280-88b68371db39?w=800&q=80', 'color_theme': '#4d7c0f'},
+            {'url': 'https://images.unsplash.com/photo-1516733725897-1aa73b87c8e8?w=800&q=80', 'color_theme': '#3f6212'}
         ]
     }
     
@@ -118,7 +159,43 @@ class ImageMapper:
         persona_lower = persona_name.lower()
         
         # Match persona to image category (prioritize most specific first)
-        if any(word in persona_lower for word in ['backpack', 'pack']):
+        # Banking-specific categories first
+        if any(word in persona_lower for word in ['digital', 'tech', 'mobile', 'app', 'online', 'fintech']):
+            category = 'digital_banking'
+            emoji = '📱'
+        elif any(word in persona_lower for word in ['business', 'entrepreneur', 'smb', 'enterprise', 'corporate']):
+            category = 'business_banking'
+            emoji = '💼'
+        elif any(word in persona_lower for word in ['wealth', 'premium', 'affluent', 'high-value', 'elite', 'vip']):
+            category = 'wealth_management'
+            emoji = '💎'
+        elif any(word in persona_lower for word in ['investment', 'growth', 'portfolio', 'investor', 'asset']):
+            category = 'investment'
+            emoji = '📈'
+        elif any(word in persona_lower for word in ['traditional', 'branch', 'conservative', 'classic']):
+            category = 'traditional_banking'
+            emoji = '🏦'
+        elif any(word in persona_lower for word in ['planning', 'advisor', 'goals', 'financial']):
+            category = 'financial_planning'
+            emoji = '📊'
+        elif any(word in persona_lower for word in ['retiree', 'senior', 'retirement', 'pension']):
+            category = 'retirement'
+            emoji = '👴'
+        elif any(word in persona_lower for word in ['startup', 'founder', 'venture']):
+            category = 'entrepreneurship'
+            emoji = '🚀'
+        # F&M Bank Agricultural categories
+        elif any(word in persona_lower for word in ['farm', 'farmer', 'crop', 'row', 'grower', 'valley']):
+            category = 'california_agriculture'
+            emoji = '🌾'
+        elif any(word in persona_lower for word in ['vineyard', 'orchard', 'wine', 'grape', 'fruit']):
+            category = 'vineyard_orchard'
+            emoji = '🍇'
+        elif any(word in persona_lower for word in ['livestock', 'cattle', 'rancher', 'ranch', 'dairy']):
+            category = 'livestock_farming'
+            emoji = '🐄'
+        # Academy Sports categories
+        elif any(word in persona_lower for word in ['backpack', 'pack']):
             category = 'backpack'
             emoji = '🎒'
         elif any(word in persona_lower for word in ['angl', 'fish', 'water', 'boat']):
@@ -149,12 +226,17 @@ class ImageMapper:
             category = 'hiking'
             emoji = '⛰️'
         else:
-            # Default to outdoor for general sports
-            category = 'outdoor'
-            emoji = '🏕️'
+            # Default based on context - banking vs sports
+            if any(word in persona_lower for word in ['bank', 'finance', 'customer', 'account', 'saving', 'deposit']):
+                category = 'business_banking'
+                emoji = '💼'
+            else:
+                # Default to outdoor for general sports
+                category = 'outdoor'
+                emoji = '🏕️'
         
         # Get image variants for this category
-        image_variants = self.MACRO_PERSONA_IMAGES.get(category, self.MACRO_PERSONA_IMAGES['outdoor'])
+        image_variants = self.MACRO_PERSONA_IMAGES.get(category, self.MACRO_PERSONA_IMAGES.get('business_banking', self.MACRO_PERSONA_IMAGES['outdoor']))
         
         # Use MD5 hash for better distribution and uniqueness
         # This ensures different personas get different images even in same category

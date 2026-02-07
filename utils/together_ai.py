@@ -344,6 +344,107 @@ Be concise and actionable."""
             max_tokens=200,
             temperature=0.7
         ).strip()
+    
+    def generate_banking_product_explanation(
+        self,
+        customer_profile: Dict[str, Any],
+        product: Dict[str, Any],
+        persona_name: str,
+        score_breakdown: Dict[str, Any]
+    ) -> str:
+        """
+        Generate AI explanation for why this banking product is recommended.
+        
+        Args:
+            customer_profile: Customer financial data
+            product: Product details
+            persona_name: Customer's segment name
+            score_breakdown: Detailed scoring factors
+            
+        Returns:
+            AI-generated explanation (2-3 sentences)
+        """
+        prompt = f"""Explain in 2-3 sentences why "{product.get('product_name', 'this product')}" is an excellent match for this customer.
+
+Customer Profile:
+- Segment: {persona_name}
+- Credit Score: {customer_profile.get('credit_score', 'N/A')}
+- Income: ${customer_profile.get('income', 0):,.0f}/year
+- Deposits: ${customer_profile.get('total_deposits', 0):,.0f}
+- Current Products: {customer_profile.get('num_products', 0)}
+- Age: {customer_profile.get('age', 'N/A')}
+
+Product: {product.get('product_name', 'Unknown Product')}
+- Category: {product.get('category', 'N/A')}
+- Annual Fee: ${product.get('annual_fee', 0)}
+- Min Balance: ${product.get('min_balance', 0):,.0f}
+- Interest Rate: {product.get('interest_rate_apy', product.get('interest_rate', 'N/A'))}%
+
+Why Recommended (scoring breakdown):
+- Eligibility: {score_breakdown.get('eligibility_score', {}).get('score', 0):.0%} - {score_breakdown.get('eligibility_score', {}).get('explanation', 'N/A')}
+- Financial Need: {score_breakdown.get('financial_need_match', {}).get('score', 0):.0%} - {score_breakdown.get('financial_need_match', {}).get('explanation', 'N/A')}
+- Relationship Fit: {score_breakdown.get('relationship_depth', {}).get('score', 0):.0%}
+
+Write a clear, professional explanation focusing on:
+1. Why they qualify and it's a good fit
+2. How it addresses their specific financial needs
+3. The tangible benefit they'll gain
+
+Be conversational but professional. No markdown formatting."""
+
+        system_message = """You are a financial advisor at Farmers & Merchants Bank explaining personalized product recommendations. Be helpful, clear, and customer-focused. Avoid jargon."""
+
+        return self.generate_text(
+            prompt=prompt,
+            system_message=system_message,
+            max_tokens=200,
+            temperature=0.7
+        )
+    
+    def generate_segment_product_reasoning(
+        self,
+        persona_name: str,
+        persona_characteristics: Dict[str, Any],
+        products: List[Dict[str, Any]]
+    ) -> str:
+        """
+        Generate explanation of why these products fit this segment.
+        
+        Args:
+            persona_name: Segment name
+            persona_characteristics: Segment characteristics
+            products: List of recommended products
+            
+        Returns:
+            AI-generated segment-level reasoning (2-3 sentences)
+        """
+        prompt = f"""Explain why these banking products are ideal for the "{persona_name}" customer segment.
+
+Segment Profile:
+- Average Deposits: ${persona_characteristics.get('avg_deposits', 0):,.0f}
+- Average Income: ${persona_characteristics.get('avg_income', 0):,.0f}
+- Average Age: {persona_characteristics.get('avg_age', 0):.0f}
+- Digital Engagement: {persona_characteristics.get('avg_digital', 0)*100:.0f}%
+- Product Ownership: {persona_characteristics.get('avg_products', 0):.1f} products
+
+Recommended Products:
+{chr(10).join([f"- {p.get('product_name', 'Unknown')} ({p.get('category', 'N/A')})" for p in products[:3]])}
+
+Provide a 2-3 sentence explanation of:
+1. What financial needs this segment has
+2. Why these specific products address those needs
+3. Expected value/benefit to segment
+
+Be professional and strategic."""
+
+        system_message = "You are a banking strategy consultant explaining segment-based product recommendations."
+
+        return self.generate_text(
+            prompt=prompt,
+            system_message=system_message,
+            max_tokens=150,
+            temperature=0.7
+        )
 
 
 # Global instance

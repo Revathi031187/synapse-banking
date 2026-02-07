@@ -1,9 +1,10 @@
 """
-Academy Sports NBA Platform API
-K-Prototypes clustering + feature-based personalization for camping products
+Multi-Industry NBA Platform API
+K-Prototypes clustering + feature-based personalization
 
 Endpoints:
 - /api/academy/* - All Academy Sports endpoints
+- /api/banking/* - All Banking endpoints (NEW)
 - /api/chromadb/stats - Get ChromaDB statistics
 """
 import sys
@@ -25,6 +26,8 @@ from pydantic import BaseModel
 from typing import Optional, Dict, Any, List
 import traceback
 from datetime import datetime
+import pandas as pd
+import numpy as np
 
 # Import logger
 from utils.logger import get_logger
@@ -71,15 +74,75 @@ academy_data_path = project_root / 'data' / 'preloaded' / 'academy_sports'
 academy_agent_a = AgentA_Academy_Enhanced(data_path=str(academy_data_path))
 academy_agent_b = AgentB_Academy(data_path=str(academy_data_path), agent_a=academy_agent_a)
 
+# F&M Bank agents
+from agents.agent_a_banking_enhanced import AgentA_Banking_Enhanced
+from agents.agent_b_banking_enhanced_v2 import AgentB_Banking_Enhanced
+from agents.agent_b_banking_chromadb import AgentB_Banking  # Rule-based chromadb agent
+from agents.agent_b_banking_logit_enhanced import AgentB_Banking_LogitEnhanced  # Hybrid ML agent
+from agents.agent_b_banking_enhanced import AgentB_Banking_Enhanced as AgentB_Banking_Modal  # Customer modal agent
+
+fmb_data_path = project_root / 'data' / 'preloaded' / 'fmb_bank'  # F&M Bank data
+banking_agent_a = AgentA_Banking_Enhanced(data_path=str(fmb_data_path))
+banking_agent_b = None  # Lazy init after Agent A runs
+banking_agent_b_chromadb = None  # Rule-based agent (lazy init)
+banking_agent_b_logit = None  # Hybrid ML agent (lazy init)
+banking_agent_b_modal = None  # Customer modal agent (lazy init)
+
+def init_banking_agent_b():
+    """Initialize Banking Agent B after Agent A has created personas"""
+    global banking_agent_b, banking_agent_b_chromadb, banking_agent_b_logit, banking_agent_b_modal
+    if banking_agent_b is None and system_state['banking']['agent_a_results']:
+        try:
+            # Legacy agent
+            banking_agent_b = AgentB_Banking_Enhanced(
+                customers_df=banking_agent_a.customers_df,
+                products_df=banking_agent_a.products_df,
+                transactions_df=banking_agent_a.transactions_df,
+                personas=banking_agent_a.personas
+            )
+            
+            # Rule-based chromadb agent
+            banking_agent_b_chromadb = AgentB_Banking(
+                data_path=str(fmb_data_path),
+                agent_a=banking_agent_a
+            )
+            
+            # Hybrid ML agent
+            banking_agent_b_logit = AgentB_Banking_LogitEnhanced(
+                products_df=banking_agent_a.products_df,
+                customers_df=banking_agent_a.customers_df,
+                transactions_df=banking_agent_a.transactions_df,
+                personas=banking_agent_a.personas
+            )
+            
+            # Customer modal agent
+            banking_agent_b_modal = AgentB_Banking_Modal(
+                customers_df=banking_agent_a.customers_df,
+                products_df=banking_agent_a.products_df,
+                transactions_df=banking_agent_a.transactions_df,
+                personas=banking_agent_a.personas
+            )
+            
+            logger.info("✅ All Banking Agent B variants initialized with persona data")
+        except Exception as e:
+            logger.error(f"Error initializing Banking Agent B: {e}")
+            raise
+
 chroma_client = get_chroma_client()
 
-# System state - Academy Sports only
+# System state - Academy Sports and Banking
 system_state = {
     'academy': {
         'agent_a_results': None,
         'agent_b_results': None,
         'agent_b_logit_results': None,
         'agent_b_nested_logit_results': None,
+        'academy_micro_segments': {}
+    },
+    'banking': {
+        'agent_a_results': None,
+        'agent_b_results': None,
+        'banking_micro_segments': {}
     }
 }
 
@@ -336,7 +399,7 @@ async def get_together_api_key():
 
 @app.get("/api/industries")
 async def list_industries():
-    """List available industries - Academy Sports only"""
+    """List available industries - Academy Sports and Banking"""
     return {
         "industries": [
             {
@@ -345,6 +408,13 @@ async def list_industries():
                 "description": "K-Prototypes clustering + feature-based personalization for camping products",
                 "icon": "🏕️",
                 "use_cases": ["Persona Identification", "Feature-Based Recommendations", "Micro-Segmentation"]
+            },
+            {
+                "id": "banking",
+                "name": "Banking Platform",
+                "description": "K-Prototypes clustering + personalized product recommendations for banking customers",
+                "icon": "🏦",
+                "use_cases": ["Customer Segmentation", "Product Recommendations", "Cross-Sell & Up-Sell", "Churn Prediction"]
             }
         ]
     }
@@ -802,11 +872,11 @@ async def execute_academy_agent_a(config: AgentAConfigAcademy):
         
         start_time = datetime.now()
         
-        # Execute NEW Enhanced Agent A (with business constraints)
+        # Execute NEW Enhanced Agent A (with business constraints) - USE USER'S GAMMA
         results = academy_agent_a.execute({
             'dataset_version': academy_dataset_version,
             'n_clusters': config.n_clusters,
-            'gamma': 0.5
+            'gamma': config.gamma  # USE USER INPUT, NOT HARDCODED
         })
         
         # Store results
@@ -2177,6 +2247,994 @@ async def get_new_visitor_recommendations():
 
 
 # ============================================================================
+# BANKING PLATFORM ENDPOINTS
+# ============================================================================
+
+@app.get("/api/banking/datasets")
+async def list_banking_datasets():
+    """List available Banking datasets"""
+    import pandas as pd
+    from pathlib import Path
+    
+    try:
+        project_root = Path(__file__).parent.parent
+        data_path = project_root / "data" / "preloaded" / "fmb_bank"
+        
+        logger.info(f"📂 Checking for F&M Bank datasets in: {data_path}")
+        
+        data_path.mkdir(parents=True, exist_ok=True)
+        
+        datasets = []
+        
+        # Check what files exist
+        customers_file = data_path / "customers.csv"
+        products_file = data_path / "products.csv"
+        transactions_file = data_path / "transactions.csv"
+        
+        if customers_file.exists():
+            try:
+                customers_df = pd.read_csv(customers_file)
+                customer_count = len(customers_df)
+                
+                product_count = 0
+                if products_file.exists():
+                    products_df = pd.read_csv(products_file)
+                    product_count = len(products_df)
+                
+                transaction_count = 0
+                if transactions_file.exists():
+                    transactions_df = pd.read_csv(transactions_file)
+                    transaction_count = len(transactions_df)
+                
+                datasets.append({
+                    "name": "banking_v1",
+                    "display_name": "Banking Platform V1",
+                    "version": "v1",
+                    "description": f"Banking dataset with {customer_count} customers and financial products",
+                    "tables": [
+                        {
+                            "name": "customers",
+                            "display_name": "Customers",
+                            "row_count": customer_count,
+                            "loaded": True
+                        },
+                        {
+                            "name": "products",
+                            "display_name": "Products",
+                            "row_count": product_count,
+                            "loaded": True
+                        },
+                        {
+                            "name": "transactions",
+                            "display_name": "Transactions",
+                            "row_count": transaction_count,
+                            "loaded": True
+                        }
+                    ],
+                    "loaded": True,
+                    "status": "ready",
+                    "customer_count": customer_count,
+                    "product_count": product_count,
+                    "transaction_count": transaction_count,
+                    "path": str(data_path)
+                })
+                logger.info(f"✅ Banking dataset: {customer_count} customers, {product_count} products, {transaction_count} transactions")
+            except Exception as e:
+                logger.error(f"❌ Error reading banking dataset: {e}")
+        else:
+            datasets.append({
+                "name": "banking_v1",
+                "display_name": "Banking Platform V1",
+                "version": "v1",
+                "description": "Banking dataset - Generate by running: generate_banking_data_5000.bat",
+                "tables": [
+                    {
+                        "name": "customers",
+                        "display_name": "Customers",
+                        "row_count": 5000,
+                        "loaded": False
+                    },
+                    {
+                        "name": "products",
+                        "display_name": "Products",
+                        "row_count": 20,
+                        "loaded": False
+                    },
+                    {
+                        "name": "transactions",
+                        "display_name": "Transactions",
+                        "row_count": 25000,
+                        "loaded": False
+                    }
+                ],
+                "loaded": False,
+                "status": "not_generated",
+                "customer_count": 5000,
+                "product_count": 20,
+                "path": str(data_path)
+            })
+            logger.warning(f"⚠️ Banking dataset not found at {customers_file}")
+        
+        logger.info(f"📊 Returning {len(datasets)} banking datasets")
+        return {"datasets": datasets}
+        
+    except Exception as e:
+        logger.error(f"❌ Error listing banking datasets: {e}")
+        import traceback
+        logger.error(traceback.format_exc())
+        return {"datasets": [], "error": str(e)}
+
+
+@app.get("/api/banking/datasets/view/{dataset_name}/{table_name}")
+async def view_banking_dataset_table(dataset_name: str, table_name: str):
+    """View a specific table from the banking dataset"""
+    import pandas as pd
+    import numpy as np
+    from pathlib import Path
+    
+    try:
+        project_root = Path(__file__).parent.parent
+        data_path = project_root / "data" / "preloaded" / "fmb_bank"
+        
+        # Map table names to file names
+        table_files = {
+            "customers": "customers.csv",
+            "products": "products.csv",
+            "transactions": "transactions.csv"
+        }
+        
+        if table_name not in table_files:
+            raise HTTPException(status_code=404, detail=f"Table {table_name} not found")
+        
+        file_path = data_path / table_files[table_name]
+        
+        if not file_path.exists():
+            raise HTTPException(status_code=404, detail=f"File {file_path} not found")
+        
+        # Read the CSV
+        df = pd.read_csv(file_path)
+        
+        # Get first 100 rows for preview
+        preview_df = df.head(100)
+        
+        # Replace NaN/Inf values with None for JSON compatibility
+        preview_df = preview_df.replace([np.inf, -np.inf], np.nan)
+        preview_df = preview_df.where(pd.notnull(preview_df), None)
+        
+        return {
+            "columns": df.columns.tolist(),
+            "data": preview_df.to_dict(orient='records'),
+            "total_rows": len(df),
+            "preview_rows": len(preview_df)
+        }
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"❌ Error viewing table {table_name}: {e}")
+        import traceback
+        logger.error(traceback.format_exc())
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.post("/api/banking/datasets/load")
+async def load_banking_dataset(request: dict):
+    """Load Banking dataset"""
+    dataset_name = request.get("dataset_name", "banking_v1")
+    
+    logger.info(f"📊 Loading Banking dataset: {dataset_name}")
+    
+    try:
+        from pathlib import Path
+        project_root = Path(__file__).parent.parent
+        data_path = project_root / "data" / "preloaded" / "fmb_bank"
+        
+        customers_file = data_path / "customers.csv"
+        products_file = data_path / "products.csv"
+        transactions_file = data_path / "transactions.csv"
+        
+        if not customers_file.exists():
+            raise HTTPException(status_code=404, detail="Banking dataset not found. Run generate_banking_data.bat first.")
+        
+        import pandas as pd
+        customers_df = pd.read_csv(customers_file)
+        products_df = pd.read_csv(products_file)
+        transactions_df = pd.read_csv(transactions_file)
+        
+        # Store in system_state for Agent B
+        system_state['banking']['products'] = products_df
+        system_state['banking']['transactions'] = transactions_df
+        system_state['banking']['customers'] = customers_df
+        
+        logger.info(f"✅ Banking dataset loaded successfully")
+        
+        return {
+            "status": "success",
+            "message": "Banking dataset loaded",
+            "dataset": dataset_name,
+            "customer_count": len(customers_df),
+            "product_count": len(products_df),
+            "transaction_count": len(transactions_df)
+        }
+        
+    except Exception as e:
+        logger.error(f"❌ Error loading banking dataset: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/api/banking/status")
+async def get_banking_status():
+    """Get Banking system status"""
+    try:
+        from pathlib import Path
+        project_root = Path(__file__).parent.parent
+        data_path = project_root / "data" / "preloaded" / "fmb_bank"
+        
+        customers_path = data_path / "customers.csv"
+        data_loaded = customers_path.exists()
+        
+        customer_count = 0
+        if data_loaded:
+            import pandas as pd
+            df = pd.read_csv(customers_path)
+            customer_count = len(df)
+        
+        return {
+            "data_loaded": data_loaded,
+            "current_dataset": "banking_v1",
+            "agent_a_complete": system_state['banking']['agent_a_results'] is not None,
+            "agent_b_complete": system_state['banking']['agent_b_results'] is not None,
+            "customers_count": customer_count,
+            "backend": "CSV Files (On-Demand Processing)"
+        }
+    except Exception as e:
+        logger.error(f"Error getting Banking status: {e}")
+        return {
+            "data_loaded": False,
+            "current_dataset": None,
+            "agent_a_complete": False,
+            "agent_b_complete": False,
+            "customers_count": 0,
+            "backend": "CSV Files"
+        }
+
+
+@app.post("/api/banking/agent_a/execute")
+async def execute_banking_agent_a(config: AgentAConfigAcademy):
+    """Execute Banking Agent A - Customer Segmentation"""
+    try:
+        logger.info("="*80)
+        logger.info(f"🏦 BANKING AGENT A - CUSTOMER SEGMENTATION")
+        logger.info(f"   Requested clusters: {config.n_clusters}")
+        logger.info("="*80)
+        
+        start_time = datetime.now()
+        
+        # Execute Banking Agent A with user's gamma selection
+        results = banking_agent_a.execute({
+            'dataset_version': 'v1',
+            'n_clusters': config.n_clusters,
+            'gamma': config.gamma  # USE USER INPUT, NOT HARDCODED
+        })
+        
+        execution_time = (datetime.now() - start_time).total_seconds()
+        logger.info(f"✅ Banking Agent A completed in {execution_time:.2f}s")
+        logger.info(f"   Generated {results.get('n_clusters', 0)} personas")
+        
+        # Convert numpy types BEFORE storing (converts DataFrames to dicts)
+        results = numpy_to_python_types(results)
+        
+        # Store converted results
+        system_state['banking']['agent_a_results'] = results
+        
+        return {
+            "success": True,
+            "result": results,
+            "execution_time_seconds": execution_time,
+            "timestamp": datetime.now().isoformat()
+        }
+        
+    except Exception as e:
+        logger.error(f"❌ Banking Agent A failed: {e}")
+        logger.error(traceback.format_exc())
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/api/banking/agent_a/results")
+async def get_banking_agent_a_results():
+    """Get Banking Agent A results"""
+    if not system_state['banking']['agent_a_results']:
+        raise HTTPException(status_code=404, detail="No Agent A results available. Please execute Agent A first.")
+    
+    results = system_state['banking']['agent_a_results']
+    results = numpy_to_python_types(results)
+    return {"success": True, "results": results}
+
+
+@app.get("/api/banking/macro-segments")
+async def get_banking_macro_segments():
+    """Get Banking macro segments"""
+    try:
+        if not system_state['banking']['agent_a_results']:
+            raise HTTPException(status_code=404, detail="No segments available. Please execute Agent A first.")
+        
+        results = system_state['banking']['agent_a_results']
+        personas = results.get('personas', {})
+        
+        segments = []
+        for cluster_id, persona in personas.items():
+            segment = {
+                'cluster_id': cluster_id,
+                'segment_name': persona['persona_name'],
+                'short_name': persona['short_name'],
+                'description': persona['description'],
+                'size': persona['size'],
+                'percentage': persona['percentage'],
+                'characteristics': persona['characteristics'],
+                'revenue_metrics': persona['revenue_metrics'],
+                'special_flags': persona.get('special_flags', [])
+            }
+            segments.append(segment)
+        
+        return {
+            "success": True,
+            "segments": segments,
+            "total_customers": results.get('total_customers', 0),
+            "total_deposits": results.get('total_deposits', 0)
+        }
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error getting banking macro segments: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+# ============================================================================
+# BANKING MICRO SEGMENTATION ENDPOINTS (NEW - Matching Academy Sports)
+# ============================================================================
+
+@app.post("/api/banking/micro-segments/{macro_segment_id}")
+async def create_banking_micro_segments(macro_segment_id: int, n_micro_segments: int = 4):
+    """
+    Create micro segments for a specific banking macro segment
+    
+    Args:
+        macro_segment_id: ID of macro segment to sub-segment
+        n_micro_segments: Number of micro segments to create (default 4)
+    """
+    try:
+        logger.info(f"🚀 Creating banking micro segments for macro segment {macro_segment_id}")
+        
+        # Check if Agent A has been executed
+        if not system_state['banking']['agent_a_results']:
+            raise HTTPException(
+                status_code=400,
+                detail="Agent A must be executed first. Please run macro segmentation."
+            )
+        
+        # Get Agent A results
+        agent_a_results = system_state['banking']['agent_a_results']
+        customers_df = pd.DataFrame(agent_a_results['customers_with_clusters'])
+        personas = agent_a_results['personas']
+        
+        # Validate macro segment exists (check both int and str versions)
+        if macro_segment_id not in personas and str(macro_segment_id) not in personas:
+            # Try converting personas keys to int
+            int_personas = {int(k) if isinstance(k, str) and k.isdigit() else k: v for k, v in personas.items()}
+            if macro_segment_id not in int_personas:
+                available_segments = list(personas.keys())
+                raise HTTPException(
+                    status_code=404,
+                    detail=f"Macro segment {macro_segment_id} not found. Available segments: {available_segments}"
+                )
+        
+        # Initialize micro segmentation agent
+        from agents.agent_a_banking_micro import AgentA_Banking_Micro
+        micro_agent = AgentA_Banking_Micro(customers_df, personas)
+        
+        # Execute micro segmentation
+        logger.info(f"  Executing banking micro segmentation agent...")
+        result = micro_agent.execute(macro_segment_id, n_micro_segments)
+        
+        # Store in system state
+        if 'banking_micro_segments' not in system_state['banking']:
+            system_state['banking']['banking_micro_segments'] = {}
+        
+        system_state['banking']['banking_micro_segments'][macro_segment_id] = result
+        
+        micro_count = len(result.get('micro_segments', []))
+        logger.info(f"✅ Successfully created {micro_count} banking micro segments for macro segment {macro_segment_id}")
+        
+        # Convert numpy types
+        result = numpy_to_python_types(result)
+        
+        return {
+            "success": True,
+            "result": result
+        }
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error creating banking micro segments: {e}")
+        logger.error(traceback.format_exc())
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/api/banking/micro-segments/{macro_segment_id}")
+async def get_banking_micro_segments(macro_segment_id: int):
+    """
+    Get micro segments for a specific banking macro segment
+    """
+    try:
+        logger.info(f"📊 Getting banking micro segments for macro segment {macro_segment_id}")
+        
+        # Check if micro segments exist
+        if 'banking_micro_segments' not in system_state['banking']:
+            system_state['banking']['banking_micro_segments'] = {}
+        
+        if macro_segment_id not in system_state['banking']['banking_micro_segments']:
+            # Auto-create micro segments if Agent A results exist
+            if system_state['banking']['agent_a_results']:
+                await create_banking_micro_segments(macro_segment_id)
+            else:
+                raise HTTPException(status_code=404, detail=f"No micro segments found for macro segment {macro_segment_id}")
+        
+        result = system_state['banking']['banking_micro_segments'][macro_segment_id]
+        
+        # Convert numpy types
+        result = numpy_to_python_types(result)
+        
+        return {
+            "success": True,
+            "result": result
+        }
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error getting banking micro segments: {e}")
+        logger.error(traceback.format_exc())
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/api/banking/agent_a/customers")
+async def get_banking_customers(
+    skip: int = 0,
+    limit: int = 50,
+    persona_filter: str = None,
+    search: str = None
+):
+    """Get paginated list of banking customers"""
+    try:
+        customers_data = banking_agent_a.get_all_customers(
+            skip=skip,
+            limit=limit,
+            persona_filter=persona_filter,
+            search_query=search
+        )
+        
+        customers_data = numpy_to_python_types(customers_data)
+        
+        return {
+            "success": True,
+            "data": customers_data
+        }
+        
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    except Exception as e:
+        logger.error(f"Error getting banking customers: {e}")
+        logger.error(traceback.format_exc())
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/api/banking/agent_a/customer/{customer_id}")
+async def get_banking_customer_details(customer_id: str):
+    """Get detailed information for a specific banking customer"""
+    try:
+        customer_details = banking_agent_a.get_customer_details(customer_id)
+        customer_details = numpy_to_python_types(customer_details)
+        
+        return {
+            "success": True,
+            "data": customer_details
+        }
+        
+    except ValueError as e:
+        raise HTTPException(status_code=404, detail=str(e))
+    except Exception as e:
+        logger.error(f"Error getting banking customer details: {e}")
+        logger.error(traceback.format_exc())
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/api/banking/personas")
+async def get_banking_personas():
+    """Get available banking personas for Agent B dropdown"""
+    try:
+        if not system_state['banking']['agent_a_results']:
+            return {'personas': []}
+        
+        # Access personas directly (not nested under 'results')
+        personas_dict = system_state['banking']['agent_a_results'].get('personas', {})
+        personas_list = []
+        
+        # Calculate total customers for percentage
+        total_customers = sum(p['size'] for p in personas_dict.values())
+        
+        for cluster_id, persona_data in personas_dict.items():
+            size = persona_data['size']
+            percentage = (size / total_customers * 100) if total_customers > 0 else 0
+            personas_list.append({
+                'id': str(cluster_id),
+                'name': persona_data['persona_name'],
+                'size': size,
+                'percentage': percentage,
+                'emoji': persona_data.get('emoji', '🏦')
+            })
+        
+        logger.info(f"✅ Returning {len(personas_list)} personas for Agent B")
+        return {'personas': personas_list}
+    except Exception as e:
+        logger.error(f"Error getting banking personas: {e}")
+        logger.error(traceback.format_exc())
+        return {'personas': []}
+
+
+@app.get("/api/banking/customers")
+async def get_banking_customers():
+    """Get list of all banking customers (alias for agent_a/customers for Agent B compatibility)"""
+    try:
+        if not system_state['banking']['agent_a_results']:
+            raise HTTPException(status_code=404, detail="No Agent A results available. Please execute Agent A first.")
+        
+        customers_with_clusters = system_state['banking']['agent_a_results'].get('customers_with_clusters', [])
+        
+        # Convert DataFrame to list of dictionaries if needed
+        if hasattr(customers_with_clusters, 'to_dict'):
+            # It's a DataFrame - convert to records
+            customers = customers_with_clusters.to_dict('records')
+        else:
+            # Already a list
+            customers = customers_with_clusters
+        
+        customers = [numpy_to_python_types(c) for c in customers]
+        
+        return {
+            "success": True,
+            "total_customers": len(customers),
+            "customers": customers
+        }
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error getting banking customers: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.post("/api/banking/agent_b/execute")
+async def execute_banking_agent_b(request: dict = Body(...)):
+    """Execute Banking Agent B - Product Recommendations (MATCHES Academy Sports)"""
+    try:
+        customer_id = request.get('customer_id')
+        persona = request.get('persona')  # NEW: Accept persona parameter
+        top_n = request.get('top_n', 5)  # NEW: Number of recommendations
+        explain = request.get('explain', True)  # NEW: Generate explanations
+        
+        # MATCHES ACADEMY SPORTS: Accept either customer_id OR persona
+        if not customer_id and not persona:
+            raise HTTPException(status_code=400, detail="Either customer_id or persona is required")
+        
+        # Check if Agent A has been executed
+        if not system_state['banking']['agent_a_results']:
+            raise HTTPException(
+                status_code=400, 
+                detail="Agent A must be executed first to create personas"
+            )
+        
+        # If persona provided, get a random customer from that persona
+        if persona and not customer_id:
+            customers_with_clusters = system_state['banking']['agent_a_results'].get('customers_with_clusters', [])
+            if hasattr(customers_with_clusters, 'to_dict'):
+                customers_list = customers_with_clusters.to_dict('records')
+            else:
+                customers_list = customers_with_clusters
+            
+            # Find customers in this persona (use 'cluster' column)
+            persona_customers = [c for c in customers_list if c.get('cluster', c.get('macro_segment_id')) == int(persona)]
+            
+            if not persona_customers:
+                raise HTTPException(status_code=404, detail=f"No customers found for persona {persona}")
+            
+            # Pick first customer from persona
+            customer_id = persona_customers[0]['customer_id']
+            logger.info(f"📊 Persona mode: Selected customer {customer_id} from persona {persona}")
+        
+        logger.info("="*80)
+        logger.info(f"🏦 BANKING AGENT B - RULE-BASED RECOMMENDATIONS")
+        logger.info(f"   Customer ID: {customer_id}")
+        logger.info(f"   Persona: {persona}")
+        logger.info(f"   Top N: {top_n}")
+        logger.info(f"   Explain: {explain}")
+        logger.info("="*80)
+        
+        # Initialize Agent B if needed
+        init_banking_agent_b()
+        
+        if banking_agent_b_chromadb is None:
+            raise HTTPException(
+                status_code=500,
+                detail="Failed to initialize Banking Agent B (Rule-Based)"
+            )
+        
+        # Use the RULE-BASED chromadb agent with execute()
+        result = banking_agent_b_chromadb.execute({
+            'customer_id': customer_id,
+            'persona': persona,
+            'search_query': request.get('search_query', ''),
+            'category': request.get('category'),
+            'top_n': top_n,
+            'explain': explain
+        })
+        
+        if not isinstance(result, dict):
+            raise ValueError(f"Agent returned invalid result type: {type(result)}")
+        
+        # Check if agent returned error
+        if 'error' in result:
+            logger.error(f"❌ Agent B returned error: {result['error']}")
+            raise HTTPException(status_code=500, detail=result['error'])
+        
+        # Store in system state
+        if system_state['banking']['agent_b_results'] is None:
+            system_state['banking']['agent_b_results'] = {}
+        system_state['banking']['agent_b_results'][customer_id] = result
+        
+        recommendations = result.get('recommendations', [])
+        logger.info(f"✅ Banking Agent B (Rule-Based): {len(recommendations)} recommendations")
+        
+        # Convert numpy types to Python types for JSON serialization
+        result = numpy_to_python_types(result)
+        
+        # Return in frontend-compatible format
+        return {
+            'success': True,
+            'customer_id': customer_id,
+            'results': result  # Wrap in 'results' key for frontend
+        }
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error in Banking Agent B: {e}")
+        import traceback
+        logger.error(traceback.format_exc())
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.post("/api/banking/agent_b/logit")
+async def execute_banking_agent_b_logit(config: AgentBLogitConfig):
+    """
+    Execute Banking Agent B with Hybrid ML Model
+    
+    Uses 50% ML (Logistic Regression) + 50% Banking 12-Factor Rules
+    """
+    try:
+        logger.info("="*80)
+        logger.info(f"🤖 BANKING AGENT B - HYBRID ML MODEL")
+        if config.customer_id:
+            logger.info(f"   Customer: {config.customer_id}")
+        else:
+            logger.info(f"   Persona: {config.persona}")
+        logger.info("="*80)
+        
+        start_time = datetime.now()
+        
+        # Check if Agent A has been executed
+        if not system_state['banking']['agent_a_results']:
+            raise HTTPException(
+                status_code=400,
+                detail="Agent A must be executed first to create personas"
+            )
+        
+        # Get personas from Agent A results
+        personas = system_state['banking']['agent_a_results'].get('personas', {})
+        
+        # Initialize Banking Agent B if needed
+        init_banking_agent_b()
+        
+        if banking_agent_b_logit is None:
+            raise HTTPException(
+                status_code=500,
+                detail="Failed to initialize Banking Hybrid ML Agent"
+            )
+        
+        # Get recommendations
+        try:
+            results = banking_agent_b_logit.recommend(
+                customer_id=config.customer_id,
+                persona_name=config.persona,
+                search_query=config.search_query or '',
+                category=config.category or '',
+                top_n=config.top_n
+            )
+        except (FileNotFoundError, ValueError) as e:
+            # Model not trained yet - train it now
+            logger.warning("⚠️ Banking ML model not found or untrained. Training now (first time only)...")
+            banking_agent_b_logit.train_logit_model()
+            logger.info("✅ Banking model trained successfully. Generating recommendations...")
+            
+            # Try again
+            results = banking_agent_b_logit.recommend(
+                customer_id=config.customer_id,
+                persona_name=config.persona,
+                search_query=config.search_query or '',
+                category=config.category or '',
+                top_n=config.top_n
+            )
+        
+        # Extract recommendations and metrics (agent returns full banking metrics)
+        recommendations = results.get('recommendations', [])
+        metrics = results.get('metrics', {}) or {}
+        
+        # Fee range from recommendations if not in metrics
+        fee_range = metrics.get('fee_range', '')
+        if not fee_range and recommendations:
+            min_fee = min([r.get('annual_fee', 0) for r in recommendations])
+            max_fee = max([r.get('annual_fee', 0) for r in recommendations])
+            fee_range = f"${min_fee:.0f} - ${max_fee:.0f}"
+        
+        # Pass through ALL agent metrics so UI shows Match Quality, Annual Cost, Earning Potential, Easy Access
+        metrics_for_ui = dict(metrics)
+        metrics_for_ui['fee_range'] = fee_range
+        metrics_for_ui['total_recommendations'] = len(recommendations)
+        if 'avg_fee' not in metrics_for_ui and 'avg_annual_fee' in metrics_for_ui:
+            metrics_for_ui['avg_fee'] = metrics_for_ui['avg_annual_fee']
+        
+        # Algorithm explanation from agent (how ML probability + 50/50 hybrid work)
+        scoring_methodology = results.get('scoring_methodology') or results.get('algorithm_explanation') or {}
+        
+        # Format results to match rule-based structure (include full insights for value_proposition etc.)
+        formatted_results = {
+            'recommendations': recommendations,
+            'customer_id': config.customer_id,
+            'persona': results.get('persona'),
+            'model_performance': results.get('model_performance', {}),
+            'metrics': metrics_for_ui,
+            'scoring_methodology': scoring_methodology,
+            'algorithm_explanation': scoring_methodology,
+            'insights': {
+                'total_recommendations': len(recommendations),
+                'scoring_method': 'Banking Hybrid ML (50% ML + 50% Rules)',
+                'ml_weight': 0.5,
+                'rule_weight': 0.5,
+                'persona_summary': 'Tailored to your financial profile',
+                'avg_match_score': metrics.get('avg_match_score'),
+                'free_products': metrics.get('free_products'),
+                'total_annual_cost': metrics.get('total_annual_cost'),
+                'estimated_annual_earnings': metrics.get('estimated_annual_earnings'),
+                'earning_products': metrics.get('earning_products'),
+                'avg_apy': metrics.get('avg_apy'),
+                'no_minimum_products': metrics.get('no_minimum_products'),
+                'total_products': metrics.get('total_products'),
+                'how_ml_works': scoring_methodology.get('how_ml_probability_works', ''),
+                'how_rules_work': scoring_methodology.get('how_rules_work', ''),
+                'formula': scoring_methodology.get('formula', 'Final Score = 0.5 × ML + 0.5 × Rules'),
+            }
+        }
+        
+        execution_time = (datetime.now() - start_time).total_seconds()
+        avg_match = metrics.get('avg_match_score', 0)
+        avg_fee = metrics.get('avg_annual_fee', metrics.get('avg_fee', 0))
+        logger.info(f"✅ Banking Hybrid Agent B completed in {execution_time:.2f}s")
+        logger.info(f"   Avg Match Score: {avg_match}%")
+        logger.info(f"   Avg Fee: ${avg_fee:.2f}")
+        logger.info(f"   Recommendations: {len(recommendations)}")
+        
+        return {
+            "success": True,
+            "results": numpy_to_python_types(formatted_results),
+            "execution_time_seconds": execution_time,
+            "timestamp": datetime.now().isoformat()
+        }
+        
+    except Exception as e:
+        logger.error(f"❌ Banking Hybrid Agent B failed: {e}")
+        logger.error(traceback.format_exc())
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.post("/api/banking/agent_b/explain")
+async def explain_banking_recommendation(request: dict = Body(...)):
+    """Generate AI explanation for a specific product recommendation (on-demand)"""
+    try:
+        customer_id = request.get('customer_id')
+        product_id = request.get('product_id')
+        
+        if not customer_id or not product_id:
+            raise HTTPException(
+                status_code=400,
+                detail="Both customer_id and product_id are required"
+            )
+        
+        logger.info(f"💡 Generating AI explanation: {customer_id} + {product_id}")
+        
+        # Check if Agent A has been executed
+        if not system_state['banking']['agent_a_results']:
+            raise HTTPException(
+                status_code=400,
+                detail="Agent A must be executed first"
+            )
+        
+        # Initialize Agent B if needed
+        init_banking_agent_b()
+        
+        if banking_agent_b is None:
+            raise HTTPException(
+                status_code=500,
+                detail="Banking Agent B not initialized"
+            )
+        
+        # Get customer data
+        customer = banking_agent_b.customers_df[
+            banking_agent_b.customers_df['customer_id'] == customer_id
+        ]
+        
+        if len(customer) == 0:
+            raise HTTPException(status_code=404, detail="Customer not found")
+        
+        customer = customer.iloc[0]
+        
+        # Get product data
+        product = banking_agent_b.products_df[
+            banking_agent_b.products_df['product_id'] == product_id
+        ]
+        
+        if len(product) == 0:
+            raise HTTPException(status_code=404, detail="Product not found")
+        
+        product = product.iloc[0]
+        
+        # Get persona (use 'cluster' column)
+        persona_id = customer.get('cluster', customer.get('macro_segment_id', 0))
+        persona = banking_agent_b.personas.get(persona_id, {})
+        
+        if not persona:
+            raise HTTPException(status_code=404, detail="Persona not found")
+        
+        # Get score breakdown using banking 12-factor scorer
+        score_breakdown = banking_agent_b.scorer.score_product(
+            customer=customer.to_dict(),
+            product=product.to_dict(),
+            persona=persona
+        )
+        
+        # Generate AI explanation using Together AI
+        from utils.together_ai import together_ai
+        
+        explanation = together_ai.generate_banking_product_explanation(
+            customer_profile=customer.to_dict(),
+            product=product.to_dict(),
+            persona_name=persona['persona_name'],
+            score_breakdown=score_breakdown
+        )
+        
+        logger.info(f"✅ Generated AI explanation ({len(explanation)} chars)")
+        
+        return {
+            'success': True,
+            'customer_id': customer_id,
+            'product_id': product_id,
+            'explanation': explanation,
+            'score_breakdown': score_breakdown
+        }
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error explaining recommendation: {e}")
+        import traceback
+        logger.error(traceback.format_exc())
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/api/banking/recommendations/{customer_id}/all")
+async def get_all_banking_recommendations(customer_id: str, search_term: str = None):
+    """Get all types of recommendations for a banking customer"""
+    try:
+        result = banking_agent_b.get_all_recommendations(
+            customer_id,
+            search_term,
+            None  # No ChromaDB for now
+        )
+        
+        if not isinstance(result, dict):
+            raise ValueError(f"Agent returned invalid result type: {type(result)}")
+        
+        logger.info(f"📊 Recommendations generated for customer {customer_id}")
+        
+        # Separate in-stock and out-of-stock products
+        def separate_by_stock(products):
+            in_stock = []
+            out_of_stock = []
+            
+            for product in products:
+                is_in_stock = product.get('in_stock', True)
+                if isinstance(is_in_stock, str):
+                    is_in_stock = is_in_stock.lower() in ['true', '1', 'yes']
+                
+                if is_in_stock:
+                    in_stock.append(product)
+                else:
+                    out_of_stock.append(product)
+            
+            return in_stock, out_of_stock
+        
+        tailored_in_stock, tailored_out_of_stock = separate_by_stock(
+            result.get('tailored_recommendations', [])
+        )
+        similar_in_stock, similar_out_of_stock = separate_by_stock(
+            result.get('similar_products', [])
+        )
+        segment_in_stock, segment_out_of_stock = separate_by_stock(
+            result.get('segment_recommendations', [])
+        )
+        
+        return {
+            "success": True,
+            "result": {
+                "tailored_recommendations": numpy_to_python_types(tailored_in_stock),
+                "similar_products": numpy_to_python_types(similar_in_stock),
+                "segment_recommendations": numpy_to_python_types(segment_in_stock),
+                "out_of_stock_tailored": numpy_to_python_types(tailored_out_of_stock),
+                "out_of_stock_similar": numpy_to_python_types(similar_out_of_stock),
+                "out_of_stock_segment": numpy_to_python_types(segment_out_of_stock),
+                "customer_info": result.get('customer_info', {}),
+                "recommendation_metadata": result.get('recommendation_metadata', {})
+            }
+        }
+        
+    except Exception as e:
+        logger.error(f"Error getting banking recommendations: {e}")
+        logger.error(traceback.format_exc())
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/api/banking/products")
+async def list_banking_products():
+    """List all banking products"""
+    try:
+        import pandas as pd
+        from pathlib import Path
+        
+        project_root = Path(__file__).parent.parent
+        products_path = project_root / "data" / "preloaded" / "banking" / "products.csv"
+        
+        if not products_path.exists():
+            raise HTTPException(status_code=404, detail="Products catalog not found. Generate data first.")
+        
+        products_df = pd.read_csv(products_path)
+        products = products_df.to_dict('records')
+        products = [numpy_to_python_types(product) for product in products]
+        
+        category_counts = products_df['category'].value_counts().to_dict()
+        
+        return {
+            "success": True,
+            "total_products": len(products),
+            "categories": category_counts,
+            "products": products
+        }
+        
+    except Exception as e:
+        logger.error(f"Error listing banking products: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+# ============================================================================
 # STATIC FILES - Serve Frontend
 # ============================================================================
 frontend_dist = os.path.join(os.path.dirname(os.path.dirname(__file__)), "frontend", "dist")
@@ -2264,26 +3322,37 @@ async def get_chromadb_status():
 async def startup_event():
     """Initialize ChromaDB and print startup banner"""
     logger.info("\n" + "="*80)
-    logger.info("🏕️ ACADEMY SPORTS NBA PLATFORM API")
+    logger.info("🏦 MULTI-INDUSTRY NBA PLATFORM API (Academy Sports + Banking)")
     logger.info("="*80)
     
-    # Check for Academy Sports data files
+    # Check for data files
     try:
         from pathlib import Path
         project_root = Path(__file__).parent.parent
-        data_path = project_root / "data" / "preloaded" / "academy_sports"
         
-        if (data_path / "customers.csv").exists():
-            logger.info(f"✓ Academy Sports data files found at: {data_path}")
+        # Check Academy Sports data
+        academy_path = project_root / "data" / "preloaded" / "academy_sports"
+        if (academy_path / "customers.csv").exists():
+            logger.info(f"✓ Academy Sports data: {academy_path}")
         else:
-            logger.warning(f"⚠️  Academy Sports data files not found. Run: py -3.10 utils/academy_sports_data_generator_fast.py")
+            logger.warning(f"⚠️  Academy Sports data not found")
+        
+        # Check Banking data
+        banking_path = project_root / "data" / "preloaded" / "banking"
+        if (banking_path / "customers.csv").exists():
+            logger.info(f"✓ Banking data: {banking_path}")
+        else:
+            logger.warning(f"⚠️  Banking data not found. Run: generate_banking_data_5000.bat")
     except Exception as e:
-        logger.warning(f"⚠️  Could not check Academy data: {e}")
+        logger.warning(f"⚠️  Could not check data files: {e}")
     
-    logger.info(f"📍 Academy Sports API: http://localhost:8002/api/academy/*")
+    logger.info(f"\n📍 Academy Sports API: http://localhost:8002/api/academy/*")
+    logger.info(f"📍 Banking API: http://localhost:8002/api/banking/*")
     logger.info(f"📍 ChromaDB stats: http://localhost:8002/api/chromadb/stats")
-    logger.info(f"📍 Frontend UI: http://localhost:3000/academy")
     logger.info(f"📍 API Docs: http://localhost:8002/docs")
+    logger.info(f"\n📍 Frontend UI: http://localhost:5173/")
+    logger.info(f"   - Academy: http://localhost:5173/academy/agent-a")
+    logger.info(f"   - Banking: http://localhost:5173/banking/agent-a")
     logger.info("="*80 + "\n")
 
 

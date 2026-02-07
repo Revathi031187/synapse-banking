@@ -1,0 +1,6 @@
+AGENT B VALUE VERIFICATION TEST RESULTS
+================================================================================
+
+expected_calculations: PASS
+rule_based: PASS
+hybrid_ml: PASS

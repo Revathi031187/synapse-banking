@@ -29,7 +29,9 @@ export default function UnifiedLayout({ industry }: UnifiedLayoutProps) {
   
   const industryConfig = {
     banking: {
-      name: 'Banking & Financial Services',
+      name: 'F&M Bank',
+      subtitle: 'Farmers & Merchants Bank of Central California',
+      tagline: 'Where Banking Is Easy - Since 1916',
       icon: '🏦',
       color: 'blue',
       bgColor: 'bg-blue-50',
@@ -65,7 +67,18 @@ export default function UnifiedLayout({ industry }: UnifiedLayoutProps) {
   
   const config = industryConfig[industry];
   
-  const navLinks = [
+  const navLinks = industry === 'banking' ? [
+    { path: `/${industry}`, label: 'Dashboard', icon: Home },
+    { path: `/${industry}/data-loader`, label: 'Data Loader', icon: Database },
+    { path: `/${industry}/macro-dashboard`, label: 'Segments View', icon: BarChart3 },
+    { path: `/${industry}/agent-a`, label: 'Agent A: Personas', icon: Users },
+    { path: `/${industry}/agent-b`, label: 'Agent B: Products', icon: Target }
+  ] : industry === 'academy' ? [
+    { path: `/${industry}`, label: 'Dashboard', icon: Home },
+    { path: `/${industry}/macro-dashboard`, label: 'Visual Dashboard', icon: BarChart3 },
+    { path: `/${industry}/agent-a`, label: 'Agent A: Personas', icon: Users },
+    { path: `/${industry}/agent-b`, label: 'Agent B: Products', icon: Target }
+  ] : [
     { path: `/${industry}`, label: 'Dashboard', icon: Home },
     { path: `/${industry}/agent-a`, label: 'Agent A: Personas', icon: Users },
     { path: `/${industry}/agent-b`, label: 'Agent B: Products', icon: Target }
