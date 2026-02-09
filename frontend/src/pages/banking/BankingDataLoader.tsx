@@ -1,4 +1,5 @@
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
+import { Link } from 'react-router-dom';
 import { motion, AnimatePresence } from 'framer-motion';
 import { useState } from 'react';
 import { FolderOpen, Database, CheckCircle2, AlertCircle, Eye, X, Upload } from 'lucide-react';
@@ -223,12 +224,12 @@ export default function BankingDataLoader() {
               <p className="text-green-800 text-sm mb-3">
                 The banking dataset has been loaded into ChromaDB. You can now proceed to run Agent A for customer segmentation.
               </p>
-              <a
-                href="/banking/agent-a"
+              <Link
+                to="/banking/agent-a"
                 className="inline-flex items-center gap-2 bg-blue-700 text-white px-4 py-2 rounded-lg font-semibold hover:bg-blue-800 transition-colors text-sm"
               >
                 Proceed to Agent A →
-              </a>
+              </Link>
             </div>
           </div>
         </motion.div>
