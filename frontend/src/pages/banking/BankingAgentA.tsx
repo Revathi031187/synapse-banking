@@ -23,11 +23,12 @@ import {
   Pie
 } from 'recharts';
 
-const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || 'http://localhost:8002';
+import { getBankingApiBase } from '../../utils/apiBase';
 
 const BANKING_COLORS = ['#1e40af', '#0891b2', '#059669', '#f59e0b', '#dc2626'];
 
 export default function BankingAgentA() {
+  const API_BASE_URL = getBankingApiBase();
   const [nClusters, setNClusters] = useState(5);
   const [gamma, setGamma] = useState(0.5);
   const queryClient = useQueryClient();

@@ -1,8 +1,7 @@
 import React, { useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { X, User, TrendingUp, CreditCard, Target, DollarSign, Award, Briefcase, AlertCircle } from 'lucide-react';
-
-const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || 'http://localhost:8002';
+import { getBankingApiBase } from '../utils/apiBase';
 
 interface CustomerInsightModalBankingProps {
   customerId: string;
@@ -17,6 +16,7 @@ export default function CustomerInsightModalBanking({
   segmentName,
   onClose
 }: CustomerInsightModalBankingProps) {
+  const API_BASE_URL = getBankingApiBase();
   const [expandedExplanations, setExpandedExplanations] = useState<{[key: number]: boolean}>({});
   const [showAllFactors, setShowAllFactors] = useState<{[key: number]: boolean}>({});
 

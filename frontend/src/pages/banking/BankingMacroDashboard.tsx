@@ -6,7 +6,7 @@ import {
   Activity, Layers, AlertCircle, Sparkles
 } from 'lucide-react';
 
-const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || 'http://localhost:8002';
+import { getBankingApiBase } from '../../utils/apiBase';
 
 interface MacroPersona {
   cluster_id: number;
@@ -55,6 +55,7 @@ interface MicroSegment {
 }
 
 export default function BankingMacroDashboard() {
+  const API_BASE_URL = getBankingApiBase();
   const [expandedMacro, setExpandedMacro] = useState<number | null>(null);
   const [loadingMicro, setLoadingMicro] = useState<number[]>([]);
   const [microSegments, setMicroSegments] = useState<Record<number, MicroSegment[]>>({});

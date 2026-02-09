@@ -2,8 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { Link } from 'react-router-dom';
 import { useQuery, useMutation } from '@tanstack/react-query';
 import { Search, CreditCard, TrendingUp, AlertCircle, CheckCircle2, Star, DollarSign, ChevronDown, Briefcase } from 'lucide-react';
-
-const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || 'http://localhost:8002';
+import { getBankingApiBase } from '../../utils/apiBase';
 
 const MATCH_LEVEL_COLORS = {
   'Perfect Match': 'bg-green-100 text-green-800 border-green-300',
@@ -13,6 +12,7 @@ const MATCH_LEVEL_COLORS = {
 };
 
 export default function BankingAgentB() {
+  const API_BASE_URL = getBankingApiBase();
   const [scoringMethod, setScoringMethod] = useState<'rules' | 'logit'>('rules'); // Toggle between rule-based and hybrid ML
   const [mode, setMode] = useState<'persona' | 'customer'>('persona'); // Toggle between persona and customer mode
   const [persona, setPersona] = useState('');
