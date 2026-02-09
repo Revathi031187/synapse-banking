@@ -30,8 +30,8 @@ const queryClient = new QueryClient({
   },
 });
 
-// Use basename only in production, not in development
-const basename = import.meta.env.MODE === 'production' ? '/nba-platform/v3' : '/';
+// Basename: VITE_BASE_PATH for deployment (e.g. /banking-platform/v1), else /nba-platform/v3 in prod
+const basename = import.meta.env.VITE_BASE_PATH || (import.meta.env.MODE === 'production' ? '/nba-platform/v3' : '/');
 
 function App() {
   return (
