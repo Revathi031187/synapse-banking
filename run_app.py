@@ -15,4 +15,6 @@ if str(REPO_ROOT) not in sys.path:
 if __name__ == "__main__":
     import uvicorn
     from api.main_unified_chromadb import app
-    uvicorn.run(app, host="0.0.0.0", port=8080)
+    # Databricks Apps proxy forwards to the port in DATABRICKS_APP_PORT; use it or 8080 locally
+    port = int(os.environ.get("DATABRICKS_APP_PORT", "8080"))
+    uvicorn.run(app, host="0.0.0.0", port=port)
