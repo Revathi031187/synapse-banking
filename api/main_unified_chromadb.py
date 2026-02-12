@@ -3211,7 +3211,7 @@ async def list_banking_products():
         from pathlib import Path
         
         project_root = Path(__file__).parent.parent
-        products_path = project_root / "data" / "preloaded" / "banking" / "products.csv"
+        products_path = project_root / "data" / "preloaded" / "fmb_bank" / "products.csv"
         
         if not products_path.exists():
             raise HTTPException(status_code=404, detail="Products catalog not found. Generate data first.")
@@ -3344,12 +3344,12 @@ async def startup_event():
         else:
             logger.warning(f"⚠️  Academy Sports data not found")
         
-        # Check Banking data
-        banking_path = project_root / "data" / "preloaded" / "banking"
+        # Check Banking data (fmb_bank folder)
+        banking_path = project_root / "data" / "preloaded" / "fmb_bank"
         if (banking_path / "customers.csv").exists():
             logger.info(f"✓ Banking data: {banking_path}")
         else:
-            logger.warning(f"⚠️  Banking data not found. Run: generate_banking_data_5000.bat")
+            logger.warning(f"⚠️  Banking data not found at {banking_path}. Add data/preloaded/fmb_bank/ with customers.csv, products.csv, transactions.csv")
     except Exception as e:
         logger.warning(f"⚠️  Could not check data files: {e}")
     
