@@ -375,16 +375,19 @@ def numpy_to_python_types(obj):
 # ============================================================================
 # GENERAL ENDPOINTS
 # ============================================================================
-@app.get("/")
-async def root():
-    """API root - health check"""
-    return {
-        "name": "Academy Sports NBA Platform API",
-        "version": "4.0.0",
-        "status": "operational",
-        "industry": "Academy Sports - Camping Gear",
-        "docs": "/docs"
-    }
+# Only register JSON root when not serving frontend (so single-port deploy serves React at /)
+_frontend_dist = os.path.join(os.path.dirname(os.path.dirname(__file__)), "frontend", "dist")
+if not os.path.exists(_frontend_dist):
+    @app.get("/")
+    async def root():
+        """API root - health check (used when frontend/dist is not built)"""
+        return {
+            "name": "Academy Sports NBA Platform API",
+            "version": "4.0.0",
+            "status": "operational",
+            "industry": "Academy Sports - Camping Gear",
+            "docs": "/docs"
+        }
 
 
 @app.get("/api/config/together-api-key")
