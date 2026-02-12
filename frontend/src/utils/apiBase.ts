@@ -4,7 +4,8 @@
  * deployed under e.g. /banking-platform/v1 so requests hit the same origin.
  */
 export function getBankingApiBase(): string {
-  if (import.meta.env.VITE_API_BASE_URL) {
+  // Empty string = same-origin (single-port deployment e.g. Databricks)
+  if (typeof import.meta.env.VITE_API_BASE_URL === 'string') {
     return import.meta.env.VITE_API_BASE_URL;
   }
   if (typeof window !== 'undefined') {

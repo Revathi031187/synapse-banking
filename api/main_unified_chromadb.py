@@ -3242,10 +3242,17 @@ if os.path.exists(frontend_dist):
     # Mount static assets
     app.mount("/assets", StaticFiles(directory=os.path.join(frontend_dist, "assets")), name="assets")
     
-    # Serve index.html for root and SPA routes
+    # Serve index.html for root and SPA routes (single-port deployment)
     @app.get("/")
     async def serve_root():
         """Serve frontend root"""
+        return FileResponse(os.path.join(frontend_dist, "index.html"))
+
+    @app.get("/{full_path:path}")
+    async def serve_spa(full_path: str):
+        """Serve index.html for all non-API, non-asset routes (SPA client-side routing)"""
+        if full_path.startswith("api/") or full_path.startswith("api\\"):
+            raise HTTPException(status_code=404, detail="Not Found")
         return FileResponse(os.path.join(frontend_dist, "index.html"))
 
 

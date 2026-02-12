@@ -1,0 +1,10 @@
+# Databricks Apps: run FastAPI on one port serving API + React frontend (same port).
+# Build (handled by Databricks): npm install, pip install -r requirements.txt, npm run build.
+# This command runs after build.
+command:
+  - uvicorn
+  - api.main_unified_chromadb:app
+  - --host
+  - "0.0.0.0"
+  - --port
+  - "8080"
