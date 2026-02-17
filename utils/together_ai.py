@@ -446,6 +446,68 @@ Be professional and strategic."""
             temperature=0.7
         )
 
+    def generate_marketing_opportunities(
+        self,
+        persona_name: str,
+        segment_definition: str,
+        key_behaviors: List[str],
+        metrics: Dict[str, Any]
+    ) -> List[str]:
+        """
+        Generate 3-4 unique, actionable marketing opportunities for a single segment.
+        Used so each macro/micro segment gets truthful, strategy-ready recommendations.
+        Returns list of strings; empty list on failure.
+        """
+        try:
+            m = metrics
+            prompt = f"""Segment name: {persona_name}
+
+Segment definition:
+{segment_definition}
+
+Key behaviors:
+{chr(10).join('- ' + b for b in key_behaviors[:4])}
+
+Key metrics (use these to keep recommendations truthful):
+- Avg deposits: ${m.get('avg_deposits', 0):,.0f}
+- Avg income: ${m.get('avg_income', 0):,.0f}/year
+- Digital engagement: {m.get('avg_digital', 0)*100:.0f}%
+- Avg products: {m.get('avg_products', 0):.1f}
+- Monthly transactions: {m.get('avg_transactions', 0):.0f}
+- Cross-sell receptivity: {m.get('avg_cross_sell', 0)*100:.0f}%
+- Avg age: {m.get('avg_age', 45):.0f}
+
+Generate exactly 3 or 4 opportunities. RULES: Each bullet MUST be one short sentence, max 12–15 words. Start with one action verb: Run, Offer, Propose, Target, Launch. Include segment name or one key number (e.g. 72% digital, $4M deposits). No long explanations. Output only the bullets, one per line, no numbering."""
+
+            system_message = "You are a banking strategy consultant. Output 3-4 very short bullets for marketers. Each bullet: max 15 words, one action verb, one number or segment name. No long sentences. Easy to scan."
+
+            text = self.generate_text(
+                prompt=prompt,
+                system_message=system_message,
+                max_tokens=280,
+                temperature=0.6
+            )
+            if not text or "Error generating" in text:
+                return []
+            # Parse into list: split by newline, strip bullets/numbers, keep non-empty
+            lines = [ln.strip() for ln in text.strip().split("\n") if ln.strip()]
+            cleaned = []
+            max_len = 100  # keep bullets scannable
+            for ln in lines:
+                ln = ln.lstrip("0123456789.-*•) ")
+                if len(ln) > 20:
+                    # Use first sentence only, or truncate to max_len
+                    first_sentence = ln.split(".")[0].strip()
+                    if first_sentence and len(first_sentence) <= max_len + 10:
+                        ln = first_sentence + ("." if not first_sentence.endswith(".") else "")
+                    elif len(ln) > max_len:
+                        ln = ln[: max_len - 3].rsplit(" ", 1)[0] + "..."
+                    cleaned.append(ln)
+            return cleaned[:4] if cleaned else []
+        except Exception as e:
+            logger.warning(f"generate_marketing_opportunities failed: {e}")
+            return []
+
 
 # Global instance
 together_ai = TogetherAIService()

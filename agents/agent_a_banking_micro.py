@@ -17,7 +17,7 @@ from sklearn.preprocessing import StandardScaler
 import sys
 import os
 
-# Add utils to path for image mapper
+# Add utils to path for image mapper and optional LLM
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 try:
     from utils.image_mapper import get_image_mapper
@@ -25,6 +25,12 @@ try:
 except ImportError:
     IMAGE_MAPPER_AVAILABLE = False
     print("⚠️  Warning: Image mapper not available")
+try:
+    from utils.together_ai import together_ai
+    TOGETHER_AI_AVAILABLE = True
+except ImportError:
+    TOGETHER_AI_AVAILABLE = False
+    together_ai = None
 
 logger = logging.getLogger(__name__)
 
@@ -560,47 +566,118 @@ class AgentA_Banking_Micro:
         segment_definition.append(f"⚡ Activity: {transaction_velocity*100:.0f} velocity | {credit_utilization*100:.0f}% credit utilization")
         
         # KEY BEHAVIORS - COMPLETELY UNIQUE based on segment name + metrics
-        # Use segment name as prefix to guarantee uniqueness
+        # MARKETING OPPORTUNITIES - Actionable directives for sales/marketing (what to DO), unique per micro segment
         if 'Multi-Product' in segment_name:
             key_behaviors.append(f"{segment_name}: {portfolio_depth*10:.0f}+ products totaling {deposits_range} in {ltv_tier} tier")
             key_behaviors.append(f"Deep product relationships with {digital_engagement*100:.0f}% digital usage and {transaction_velocity*100:.0f} activity")
             key_behaviors.append(f"Consolidated banking across checking, savings, loans, investments - {segment_size} customers")
-            recommendations.append(f"Loyalty rewards for {segment_name}: Fee waivers for maintaining {portfolio_depth*10:.0f}+ products")
-            recommendations.append(f"Relationship pricing for {deposits_range} consolidated across multiple accounts")
-            recommendations.append(f"Cross-product features targeting {segment_size} customers in this micro segment")
+            recommendations.append(f"Offer relationship-based fee waivers for customers maintaining {portfolio_depth*10:.0f}+ products; run a retention campaign to this micro segment.")
+            recommendations.append(f"Propose consolidated relationship pricing and assign a single point of contact for the {segment_size} customers in this micro segment.")
+            recommendations.append(f"Cross-sell one complementary product (e.g. investment or insurance) via personalized outreach; use deposit and product data to tailor the offer.")
         
         elif 'Diversified' in segment_name:
             key_behaviors.append(f"{segment_name}: Spread {deposits_range} across {portfolio_depth*10:.0f} different products - {segment_size} customers")
             key_behaviors.append(f"Diversification strategy with {ltv_tier} tier status, {transaction_velocity*100:.0f} activity, {digital_engagement*100:.0f}% digital")
             key_behaviors.append(f"Balanced portfolio approach minimizes risk while maximizing banking relationship value")
-            recommendations.append(f"Portfolio optimization for {segment_name}: Suggest complementary products")
-            recommendations.append(f"Consolidated reporting showing all {portfolio_depth*10:.0f} products in unified dashboard")
-            recommendations.append(f"Bundle discounts for {segment_size} diversified customers in {ltv_tier} tier")
+            recommendations.append(f"Launch a consolidated dashboard or reporting offer for this micro segment; use it to recommend one next product that fits their portfolio.")
+            recommendations.append(f"Run a bundle campaign (e.g. discount or rate incentive) for adding one more product; target the {segment_size} diversified customers with clear benefit.")
+            recommendations.append(f"Send segment-specific messaging linking their current {portfolio_depth*10:.0f} products to one logical add-on (e.g. savings if they have checking only).")
         
         elif 'Growing' in segment_name:
             key_behaviors.append(f"{segment_name}: Expanding portfolios from {deposits_range} baseline in {ltv_tier} tier - {segment_size} customers")
             key_behaviors.append(f"Growth trajectory customers increasing products from current {portfolio_depth*10:.0f} level")
             key_behaviors.append(f"High potential segment with {credit_utilization*100:.0f}% credit usage and {digital_engagement*100:.0f}% digital engagement")
-            recommendations.append(f"Growth incentives for {segment_name}: Product adoption bonuses")
-            recommendations.append(f"Pathway programs helping {segment_size} customers expand from {ltv_tier} to next tier")
-            recommendations.append(f"Educational campaigns showing benefits of growing from {portfolio_depth*10:.0f} to more products")
+            recommendations.append(f"Run a product-adoption campaign with a small incentive (e.g. bonus rate or waiver) for adding one more product; target this micro segment first.")
+            recommendations.append(f"Create a pathway program (e.g. step-up to next tier) and invite the {segment_size} customers with personalized next-step offers.")
+            recommendations.append(f"Send educational content (e.g. benefits of savings or credit) followed by a soft product offer; use digital channel if {digital_engagement*100:.0f}%+ digital.")
         
         elif 'Active' in segment_name or 'Frequent' in segment_name or 'Power' in segment_name:
             key_behaviors.append(f"{segment_name}: High-activity users with {transaction_velocity*100:.0f} velocity managing {deposits_range} - {segment_size} customers")
             key_behaviors.append(f"Conduct frequent transactions across {portfolio_depth*10:.0f} products with {digital_engagement*100:.0f}% digital adoption")
             key_behaviors.append(f"Generate significant engagement in {ltv_tier} tier through consistent banking activity")
-            recommendations.append(f"Activity rewards for {segment_name}: Cashback for {transaction_velocity*100:.0f}+ velocity")
-            recommendations.append(f"Fee waivers for {segment_size} high-activity customers in {ltv_tier} tier")
-            recommendations.append(f"Premium service tier unlocked by maintaining {transaction_velocity*100:.0f} activity level")
+            recommendations.append(f"Offer an activity-based rewards tier (e.g. cashback or fee waivers) for maintaining this transaction level; promote to the {segment_size} customers in this micro segment.")
+            recommendations.append(f"Run a campaign that rewards high-activity customers with premium features or a dedicated service option; use preferred channel (app if high digital).")
+            recommendations.append(f"Propose a premium checking or payment product that matches their transaction profile; use behavioral triggers to time the offer.")
         
-        # Ensure we have at least some behaviors and recommendations
+        elif 'Digital' in segment_name or 'Tech' in segment_name:
+            key_behaviors.append(f"{segment_name}: {digital_engagement*100:.0f}% digital engagement with {deposits_range} in {ltv_tier} tier - {segment_size} customers")
+            key_behaviors.append(f"Digital-first with {portfolio_depth*10:.0f} products and {transaction_velocity*100:.0f} transaction velocity")
+            recommendations.append(f"Deploy in-app and email campaigns for this micro segment; offer one next-best product with a one-tap or instant-apply flow.")
+            recommendations.append(f"Invite to beta features or digital-only events; use feedback to refine offers and then roll out to the full {segment_size} customers.")
+            recommendations.append(f"Run A/B tests on product and messaging for digital-first users; prioritize app push and in-app placement.")
+        
+        elif 'Traditional' in segment_name or 'Branch' in segment_name or 'Establish' in segment_name:
+            key_behaviors.append(f"{segment_name}: Lower digital adoption ({digital_engagement*100:.0f}%), {deposits_range} in {ltv_tier} tier - {segment_size} customers")
+            key_behaviors.append(f"Prefer branch or phone with {portfolio_depth*10:.0f} products and {transaction_velocity*100:.0f} activity")
+            recommendations.append(f"Use outbound call or branch-led outreach for this micro segment; offer one product with a simple application process.")
+            recommendations.append(f"Run a direct mail or branch poster campaign with a clear CTA (e.g. call or visit) for the {segment_size} customers in this micro segment.")
+            recommendations.append(f"Train branch staff on a single next-best offer for this profile; track conversion and refine messaging.")
+        
+        elif 'Affluent' in segment_name or 'Elite' in segment_name or 'Wealth' in segment_name:
+            key_behaviors.append(f"{segment_name}: High value {deposits_range} in {ltv_tier} tier - {segment_size} customers")
+            key_behaviors.append(f"Strong portfolio ({portfolio_depth*10:.0f} products) and {digital_engagement*100:.0f}% digital; {transaction_velocity*100:.0f} velocity")
+            recommendations.append(f"Propose a relationship manager or premium tier for this micro segment; book discovery calls or invite to an exclusive event.")
+            recommendations.append(f"Run a wealth-advisory or investment onboarding campaign; target the {segment_size} customers with personalized, high-touch outreach.")
+            recommendations.append(f"Offer an affluent-only benefit (e.g. preferred rates, concierge) and use it to cross-sell one high-value product.")
+        
+        elif 'Emerging' in segment_name or 'Growth' in segment_name:
+            key_behaviors.append(f"{segment_name}: Growth potential with {deposits_range}, {portfolio_depth*10:.0f} products in {ltv_tier} tier - {segment_size} customers")
+            key_behaviors.append(f"{digital_engagement*100:.0f}% digital, {transaction_velocity*100:.0f} velocity, {credit_utilization*100:.0f}% credit utilization")
+            recommendations.append(f"Run a first-product or next-product campaign with a small incentive to move this micro segment to the next tier.")
+            recommendations.append(f"Send educational content and a single product recommendation (e.g. savings or credit) tailored to their profile; measure conversion.")
+            recommendations.append(f"Assign light-touch outbound or in-app follow-up to the {segment_size} customers; test offer and channel.")
+        
+        # Data-driven fallback: unique actionable recommendations from metrics (no generic "targeted campaigns")
         if len(key_behaviors) == 0:
             key_behaviors.append(f"{segment_name}: {segment_size} customers managing {deposits_range} in {ltv_tier} tier")
-            key_behaviors.append(f"Moderate banking activity with {digital_engagement*100:.0f}% digital and {portfolio_depth*10:.0f} products")
+            key_behaviors.append(f"Portfolio {portfolio_depth*10:.0f} products, {digital_engagement*100:.0f}% digital, {transaction_velocity*100:.0f} velocity")
         
         if len(recommendations) == 0:
-            recommendations.append(f"Personalized offers for {segment_name}: Tailored to {segment_size} customers")
-            recommendations.append(f"Targeted campaigns for {ltv_tier} tier with {deposits_range} average balance")
+            if digital_engagement >= 0.6:
+                recommendations.append(f"Run in-app and email offers for the {segment_size} customers in this micro segment; recommend one product that fits {deposits_range} and {ltv_tier} tier.")
+            else:
+                recommendations.append(f"Use outbound or branch-led outreach for the {segment_size} customers; offer one product with a simple application and clear benefit.")
+            if portfolio_depth < 0.8:
+                recommendations.append(f"Campaign to add one more product (e.g. savings or credit) for customers at {portfolio_depth*10:.0f} products; use incentive to test conversion.")
+            else:
+                recommendations.append(f"Offer relationship rewards (e.g. fee waiver or preferred rate) for maintaining {portfolio_depth*10:.0f}+ products; use retention messaging.")
+            recommendations.append(f"Tailor next-best action for this micro segment using {ltv_tier} tier and {deposits_range}; measure by segment and iterate.")
+        
+        # UNIQUE marketing opportunities: try LLM first, else personalize so each micro segment is unique
+        recommendations = recommendations[:4]
+        segment_def_text = "\n".join(segment_definition)
+        metrics_for_llm = {
+            'avg_deposits': characteristics.get('avg_deposits', 0),
+            'avg_income': characteristics.get('avg_income', 0),
+            'avg_digital': digital_engagement,
+            'avg_products': portfolio_depth * 10,
+            'avg_transactions': transaction_velocity * 100,
+            'avg_cross_sell': credit_utilization,
+            'avg_age': characteristics.get('avg_age', 45),
+        }
+        used_llm_recs = False
+        if TOGETHER_AI_AVAILABLE and together_ai and os.getenv("TOGETHER_API_KEY"):
+            try:
+                llm_recs = together_ai.generate_marketing_opportunities(
+                    persona_name=segment_name,
+                    segment_definition=segment_def_text,
+                    key_behaviors=key_behaviors[:4],
+                    metrics=metrics_for_llm
+                )
+                if llm_recs and len(llm_recs) >= 3:
+                    recommendations = llm_recs[:4]
+                    used_llm_recs = True
+            except Exception as e:
+                logger.debug(f"LLM marketing opportunities failed for micro {segment_name}, using personalized fallback: {e}")
+        if not used_llm_recs:
+            # Short bullets for scannability: segment name + one sentence max ~90 chars
+            short_recs = []
+            for r in recommendations:
+                s = r.split(".")[0].strip() + "." if "." in r else r
+                if len(s) > 95:
+                    s = s[:92].rsplit(" ", 1)[0] + "."
+                short_recs.append(f"**{segment_name}:** {s}")
+            recommendations = short_recs
         
         # Generate detailed name explanation
         name_explanation = self._generate_name_explanation(
@@ -612,9 +689,9 @@ class AgentA_Banking_Micro:
         
         return {
             'name_explanation': name_explanation,  # NEW: Explains why this name
-            'segment_definition': "\n".join(segment_definition),
+            'segment_definition': segment_def_text,
             'key_behaviors': key_behaviors[:4],  # Top 4
-            'marketing_recommendations': recommendations[:4],  # Top 4
+            'marketing_recommendations': recommendations,
             'segment_size': segment_size,
             'avg_customer_value': avg_customer_value
         }

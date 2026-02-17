@@ -18,7 +18,7 @@ except ImportError:
     print("⚠️  Warning: kmodes not installed. Run: pip install kmodes")
     KMODES_AVAILABLE = False
 
-# Add utils to path for image mapper
+# Add utils to path for image mapper and optional LLM
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 try:
     from utils.image_mapper import get_image_mapper
@@ -26,6 +26,12 @@ try:
 except ImportError:
     IMAGE_MAPPER_AVAILABLE = False
     print("⚠️  Warning: Image mapper not available")
+try:
+    from utils.together_ai import together_ai
+    TOGETHER_AI_AVAILABLE = True
+except ImportError:
+    TOGETHER_AI_AVAILABLE = False
+    together_ai = None
 
 logger = logging.getLogger(__name__)
 
@@ -1087,129 +1093,150 @@ class AgentA_Banking_Enhanced:
         if trait_combo == 'deposits_digital':
             key_behaviors.append(f"{segment_identifier} segment: ${avg_deposits:,.0f} deposits with {avg_digital*100:.0f}% digital adoption (ranks {primary_rank:.0f}th deposits, {secondary_rank:.0f}th digital)")
             key_behaviors.append(f"Age {avg_age:.0f}, income ${avg_income:,.0f}, holding {avg_products:.1f} products with {avg_transactions:.0f} monthly transactions")
-            marketing_recommendations.append(f"{segment_identifier} digital platform: Target ${avg_deposits:,.0f} balance tier with {avg_digital*100:.0f}% app users earning ${avg_income:,.0f}")
-            marketing_recommendations.append(f"Investment features for {segment_identifier} segment: {avg_products:.1f} products, {avg_transactions:.0f} transactions, age {avg_age:.0f}")
+            marketing_recommendations.append(f"Offer a dedicated wealth-management webinar and in-app premium investment onboarding for high-balance digital users in this segment.")
+            marketing_recommendations.append(f"Propose a relationship manager introduction for top digital adopters; run targeted in-app campaigns for investment and savings products.")
+            marketing_recommendations.append(f"Launch an exclusive digital-only tier (e.g. fee waivers, priority support) for customers who maintain this balance and digital engagement level.")
         
         elif trait_combo == 'deposits_products':
             key_behaviors.append(f"{segment_identifier} portfolio: ${avg_deposits:,.0f} across {avg_products:.1f} products ({primary_rank:.0f}th deposits, {secondary_rank:.0f}th products)")
             key_behaviors.append(f"{segment_identifier} customers: Age {avg_age:.0f}, ${avg_income:,.0f} income, {avg_transactions:.0f} transactions, {avg_digital*100:.0f}% digital")
-            marketing_recommendations.append(f"{segment_identifier} loyalty: Reward {avg_products:.1f}-product tier with ${avg_deposits:,.0f} balances at age {avg_age:.0f}")
-            marketing_recommendations.append(f"{segment_identifier} discounts: Target {avg_transactions:.0f} monthly transactions with {avg_cross_sell*100:.0f}% receptivity")
+            marketing_recommendations.append(f"Assign a relationship manager and propose private banking or premium tier for multi-product, high-balance customers in this segment.")
+            marketing_recommendations.append(f"Run a loyalty campaign: offer relationship-based fee waivers and exclusive rates for customers holding {avg_products:.0f}+ products with consolidated balances.")
+            marketing_recommendations.append(f"Create a cross-sell playbook for this segment: prioritize investment and insurance products given high receptivity ({avg_cross_sell*100:.0f}%).")
         
         elif trait_combo == 'deposits_transactions':
             key_behaviors.append(f"{segment_identifier} active wealth: ${avg_deposits:,.0f} deposits, {avg_transactions:.0f} transactions ({deposit_rank:.0f}th wealth, {trans_rank:.0f}th activity)")
             key_behaviors.append(f"{segment_identifier} profile: Age {avg_age:.0f}, income ${avg_income:,.0f}, {avg_products:.1f} products, {avg_digital*100:.0f}% digital")
-            marketing_recommendations.append(f"{segment_identifier} VIP service: ${avg_deposits:,.0f}+ accounts with {avg_transactions:.0f} monthly transactions")
-            marketing_recommendations.append(f"{segment_identifier} rewards: {avg_transactions:.0f}+ activity at age {avg_age:.0f} with ${avg_income:,.0f} income")
+            marketing_recommendations.append(f"Create a VIP recognition program (e.g. concierge banking, dedicated line) for high-balance customers with high transaction volume in this segment.")
+            marketing_recommendations.append(f"Offer an activity-based rewards tier (cashback or fee waivers) for customers who maintain this transaction level; use it to deepen product adoption.")
+            marketing_recommendations.append(f"Run a campaign promoting premium checking or wealth services tailored to busy, high-value customers in this segment.")
         
         elif trait_combo == 'deposits_cross_sell':
             key_behaviors.append(f"{segment_identifier} growth segment: ${avg_deposits:,.0f} with {avg_cross_sell*100:.0f}% receptivity ({deposit_rank:.0f}th deposits, {cross_rank:.0f}th openness)")
             key_behaviors.append(f"{segment_identifier} ready to expand: Age {avg_age:.0f}, ${avg_income:,.0f} income, {avg_transactions:.0f} transactions, {avg_products:.1f} products")
-            marketing_recommendations.append(f"{segment_identifier} upsell: Target ${avg_deposits:,.0f} tier with {avg_cross_sell*100:.0f}% receptivity at age {avg_age:.0f}")
-            marketing_recommendations.append(f"{segment_identifier} advisory: {avg_age:.0f}-year-olds earning ${avg_income:,.0f} with {avg_products:.1f} current products")
+            marketing_recommendations.append(f"Proactively offer wealth-advisory and investment onboarding for this high-balance, high-receptivity segment; book discovery calls.")
+            marketing_recommendations.append(f"Run a targeted upsell campaign for premium products (e.g. investment, insurance) using personalized messaging; A/B test by age band.")
+            marketing_recommendations.append(f"Assign outbound sales to propose the next best product (e.g. add 1–2 products) for customers currently at {avg_products:.0f} products.")
         
         elif trait_combo == 'digital_deposits':
             key_behaviors.append(f"{segment_identifier} tech-wealthy: {avg_digital*100:.0f}% digital with ${avg_deposits:,.0f} deposits ({digital_rank:.0f}th digital, {deposit_rank:.0f}th wealth)")
             key_behaviors.append(f"{segment_identifier} demographics: Age {avg_age:.0f}, ${avg_income:,.0f} income, {avg_products:.1f} products, {avg_transactions:.0f} transactions")
-            marketing_recommendations.append(f"{segment_identifier} premium app: ${avg_deposits:,.0f} balance tier with {avg_digital*100:.0f}% usage earning ${avg_income:,.0f}")
-            marketing_recommendations.append(f"{segment_identifier} security: Mobile features for age {avg_age:.0f} with {avg_transactions:.0f} monthly transactions")
+            marketing_recommendations.append(f"Launch in-app premium features (e.g. investing, budgeting) and invite this segment to exclusive digital-only events or webinars.")
+            marketing_recommendations.append(f"Run in-app and email campaigns for high-value digital users: promote security features, premium support, and next-product recommendations.")
+            marketing_recommendations.append(f"Offer a digital-first relationship option (video/chat) and one-click applications for products that match this segment's profile.")
         
         elif trait_combo == 'digital_products':
             key_behaviors.append(f"{segment_identifier} digital portfolios: {avg_digital*100:.0f}% online, {avg_products:.1f} products ({digital_rank:.0f}th digital, {products_rank:.0f}th products)")
             key_behaviors.append(f"{segment_identifier} behavior: Age {avg_age:.0f}, ${avg_income:,.0f} income, ${avg_deposits:,.0f} deposits, {avg_transactions:.0f} transactions")
-            marketing_recommendations.append(f"{segment_identifier} dashboard: {avg_products:.1f} products at {avg_digital*100:.0f}% digital for age {avg_age:.0f}")
-            marketing_recommendations.append(f"{segment_identifier} bundles: ${avg_deposits:,.0f} across accounts with {avg_transactions:.0f} monthly activity")
+            marketing_recommendations.append(f"Send in-app bundle offers (e.g. savings + investment, or checking + credit) to multi-product digital users in this segment.")
+            marketing_recommendations.append(f"Create a digital-only loyalty tier with fee waivers or rewards for customers holding {avg_products:.0f}+ products; promote via app and email.")
+            marketing_recommendations.append(f"Launch a consolidated dashboard and smart alerts in the app; use it to cross-sell the next best product for this segment.")
         
         elif trait_combo == 'digital_transactions':
             key_behaviors.append(f"{segment_identifier} mobile champions: {avg_digital*100:.0f}% digital with {avg_transactions:.0f} transactions ({digital_rank:.0f}th digital, {trans_rank:.0f}th activity)")
             key_behaviors.append(f"{segment_identifier} users: Age {avg_age:.0f}, ${avg_income:,.0f} income, ${avg_deposits:,.0f} deposits, {avg_products:.1f} products")
-            marketing_recommendations.append(f"{segment_identifier} gamification: {avg_transactions:.0f}+ transactions at {avg_digital*100:.0f}% digital for ${avg_income:,.0f} earners")
-            marketing_recommendations.append(f"{segment_identifier} tools: Age {avg_age:.0f} mobile users with ${avg_deposits:,.0f} deposits and {avg_cross_sell*100:.0f}% receptivity")
+            marketing_recommendations.append(f"Run a gamified rewards or cashback campaign in the app for high-transaction digital users; use milestones to nudge next product adoption.")
+            marketing_recommendations.append(f"Offer premium app features (e.g. instant notifications, spending insights) and promote credit or savings products in-app to this segment.")
+            marketing_recommendations.append(f"Invite this segment to beta features or early access; use their engagement to refine offers and messaging for similar customers.")
         
         elif trait_combo == 'digital_cross_sell':
             key_behaviors.append(f"Digital converters: {avg_digital*100:.0f}% online with {avg_cross_sell*100:.0f}% receptivity scoring {cross_rank:.0f}th percentile")
             key_behaviors.append(f"Currently hold {avg_products:.1f} products with ${avg_deposits:,.0f} deposits, seeking expansion digitally")
-            marketing_recommendations.append(f"In-app offers for {avg_digital*100:.0f}% digital segment with {avg_cross_sell*100:.0f}% openness")
-            marketing_recommendations.append(f"One-tap applications targeting {avg_age:.0f}-year-olds with {avg_transactions:.0f} monthly activity")
+            marketing_recommendations.append(f"Deploy in-app personalized offers (e.g. pre-approved credit, savings goals) with one-tap apply; prioritize products that complement current holdings.")
+            marketing_recommendations.append(f"Run a short campaign promoting one additional product (e.g. credit card or savings) via app push and in-app banners for this receptive segment.")
+            marketing_recommendations.append(f"Test one-tap application flows and follow up with a light-touch call or chat for high-intent users in this segment.")
         
         elif trait_combo == 'products_deposits':
             key_behaviors.append(f"{segment_identifier} diversified: {avg_products:.1f} products with ${avg_deposits:,.0f} deposits ({products_rank:.0f}th products, {deposit_rank:.0f}th deposits)")
             key_behaviors.append(f"{segment_identifier} engagement: Age {avg_age:.0f}, ${avg_income:,.0f} income, {avg_transactions:.0f} transactions, {avg_digital*100:.0f}% digital, {avg_cross_sell*100:.0f}% receptive")
-            marketing_recommendations.append(f"{segment_identifier} relationship rewards: {avg_products:.1f} products + ${avg_deposits:,.0f} for age {avg_age:.0f} earning ${avg_income:,.0f}")
-            marketing_recommendations.append(f"{segment_identifier} fee waivers: {avg_products:.1f}+ accounts managing ${avg_deposits:,.0f} with {avg_transactions:.0f} transactions")
+            marketing_recommendations.append(f"Offer relationship-based rewards (e.g. fee waivers, preferred rates) for customers with {avg_products:.0f}+ products and high consolidated balances; communicate via preferred channel.")
+            marketing_recommendations.append(f"Propose a dedicated relationship manager or premium tier for this segment; use a warm outbound campaign tied to their current product mix.")
+            marketing_recommendations.append(f"Run a retention and next-best-action campaign: highlight benefits of current products and suggest one complementary product (e.g. investment or insurance).")
         
         elif trait_combo == 'products_digital':
             key_behaviors.append(f"Digital portfolio managers: {avg_products:.1f} products all managed via {avg_digital*100:.0f}% digital channels")
             key_behaviors.append(f"Use mobile app to monitor multiple accounts, investments, and loans simultaneously")
-            marketing_recommendations.append("Consolidated digital dashboard with cross-product analytics and insights")
-            marketing_recommendations.append("Automated transfers between accounts and smart savings rules")
+            marketing_recommendations.append(f"Launch and promote a consolidated digital dashboard for this segment; use in-app messaging to cross-sell one additional product that fits their portfolio.")
+            marketing_recommendations.append(f"Offer automated transfers and smart savings rules in the app; bundle with a high-value product (e.g. savings or investment) and run an in-app campaign.")
+            marketing_recommendations.append(f"Create a segment-specific campaign highlighting multi-product benefits (e.g. fee waivers, single view) and invite them to exclusive digital events.")
         
         elif trait_combo == 'products_transactions':
             key_behaviors.append(f"{segment_identifier} power users: {avg_products:.1f} products, {avg_transactions:.0f} transactions ({products_rank:.0f}th products, {trans_rank:.0f}th activity)")
             key_behaviors.append(f"{segment_identifier} profile: Age {avg_age:.0f}, ${avg_income:,.0f} income, ${avg_deposits:,.0f} deposits, {avg_digital*100:.0f}% digital")
-            marketing_recommendations.append(f"{segment_identifier} activity program: {avg_transactions:.0f}+ transactions with {avg_products:.1f} products for age {avg_age:.0f}")
-            marketing_recommendations.append(f"{segment_identifier} premium unlock: ${avg_deposits:,.0f} customers at {trans_rank:.0f}th activity earning ${avg_income:,.0f}")
+            marketing_recommendations.append(f"Create an activity-based rewards program (e.g. cashback or tier benefits) for customers with high transaction volume and multiple products; promote in-app and email.")
+            marketing_recommendations.append(f"Offer a premium tier (e.g. free wire transfers, concierge) unlocked by transaction and product thresholds; target this segment with a dedicated campaign.")
+            marketing_recommendations.append(f"Run a campaign promoting convenience products (e.g. premium checking, payment solutions) that match this segment's high usage and multi-product profile.")
         
         elif trait_combo == 'products_cross_sell':
             key_behaviors.append(f"{segment_identifier} expansion ready: {avg_products:.1f} products, {avg_cross_sell*100:.0f}% receptive ({products_rank:.0f}th products, {cross_rank:.0f}th receptivity)")
             key_behaviors.append(f"{segment_identifier} base: Age {avg_age:.0f}, ${avg_income:,.0f} income, ${avg_deposits:,.0f} deposits, {avg_transactions:.0f} transactions, {avg_digital*100:.0f}% digital")
-            marketing_recommendations.append(f"{segment_identifier} cross-sell: {avg_products:.1f} products + {avg_cross_sell*100:.0f}% receptivity with ${avg_deposits:,.0f} at age {avg_age:.0f}")
-            marketing_recommendations.append(f"{segment_identifier} bundles: Expand {avg_products:.1f} to more products for ${avg_income:,.0f} earners with {avg_transactions:.0f} transactions")
+            marketing_recommendations.append(f"Execute a structured cross-sell campaign: recommend the next best product (e.g. credit, investment, or insurance) based on current {avg_products:.0f} products; use sales or automated triggers.")
+            marketing_recommendations.append(f"Offer bundle discounts or package pricing for adding one more product; target this segment with personalized messaging and a clear CTA.")
+            marketing_recommendations.append(f"Assign outbound or in-app follow-up to high-receptivity customers in this segment; prioritize those with room to grow product count.")
         
         elif trait_combo == 'transactions_deposits':
             key_behaviors.append(f"{segment_identifier} high-touch: {avg_transactions:.0f} transactions with ${avg_deposits:,.0f} deposits ({trans_rank:.0f}th activity, {deposit_rank:.0f}th wealth)")
             key_behaviors.append(f"{segment_identifier} details: Age {avg_age:.0f}, ${avg_income:,.0f} income, {avg_products:.1f} products, {avg_digital*100:.0f}% digital, {avg_cross_sell*100:.0f}% receptive")
-            marketing_recommendations.append(f"{segment_identifier} unlimited transactions: ${avg_deposits:,.0f}+ with {avg_transactions:.0f} monthly volume for age {avg_age:.0f}")
-            marketing_recommendations.append(f"{segment_identifier} dedicated support: {trans_rank:.0f}th activity + {deposit_rank:.0f}th wealth earning ${avg_income:,.0f}")
+            marketing_recommendations.append(f"Offer an unlimited-transactions or premium checking tier for high-balance, high-activity customers; use a direct mail or outbound campaign.")
+            marketing_recommendations.append(f"Propose dedicated support or a relationship manager for this segment; highlight convenience and recognition in all touchpoints.")
+            marketing_recommendations.append(f"Run a campaign promoting wealth or cash-management features (e.g. sweep, higher limits) that match this segment's transaction and balance profile.")
         
         elif trait_combo == 'transactions_digital':
             key_behaviors.append(f"{segment_identifier} app leaders: {avg_transactions:.0f} transactions at {avg_digital*100:.0f}% digital ({trans_rank:.0f}th activity, {digital_rank:.0f}th digital)")
             key_behaviors.append(f"{segment_identifier} demographics: Age {avg_age:.0f}, ${avg_income:,.0f} income, ${avg_deposits:,.0f} deposits, {avg_products:.1f} products")
-            marketing_recommendations.append(f"{segment_identifier} digital rewards: {avg_transactions:.0f}+ tier at {avg_digital*100:.0f}% adoption earning ${avg_income:,.0f}")
-            marketing_recommendations.append(f"{segment_identifier} beta access: Age {avg_age:.0f} users at {trans_rank:.0f}th activity with ${avg_deposits:,.0f} deposits")
+            marketing_recommendations.append(f"Launch a digital-only rewards tier (e.g. cashback, points) for high-transaction app users; promote in-app and via push notifications.")
+            marketing_recommendations.append(f"Invite this segment to beta features or new app capabilities; use feedback to refine and then roll out next-product offers.")
+            marketing_recommendations.append(f"Run an in-app campaign for payment or credit products that fit high transaction volume and digital-first behavior.")
         
         elif trait_combo == 'transactions_products':
             key_behaviors.append(f"Power portfolio users: {avg_transactions:.0f} transactions ({trans_rank:.0f}th) across {avg_products:.1f} products ({products_rank:.0f}th)")
             key_behaviors.append(f"${avg_deposits:,.0f} deposits with {avg_digital*100:.0f}% digital, age {avg_age:.0f}, income ${avg_income:,.0f}")
-            marketing_recommendations.append(f"VIP tier for {avg_transactions:.0f}+ transactions across {avg_products:.1f} product relationships")
-            marketing_recommendations.append(f"Premium unlocks at {trans_rank:.0f}th activity percentile with {products_rank:.0f}th portfolio depth")
+            marketing_recommendations.append(f"Create a VIP or premium tier for customers with high transaction volume and multiple products; offer fee waivers, priority service, or exclusive benefits.")
+            marketing_recommendations.append(f"Run a recognition campaign (e.g. thank-you offers, referral incentives) for this segment; use it to introduce one more high-value product.")
+            marketing_recommendations.append(f"Propose a consolidated view and premium service package that rewards both activity and product depth; target via preferred channel.")
         
         elif trait_combo == 'transactions_cross_sell':
             key_behaviors.append(f"{segment_identifier} active receptive: {avg_transactions:.0f} transactions, {avg_cross_sell*100:.0f}% receptive ({trans_rank:.0f}th activity, {cross_rank:.0f}th receptivity)")
             key_behaviors.append(f"{segment_identifier} state: Age {avg_age:.0f}, ${avg_income:,.0f} income, ${avg_deposits:,.0f} deposits, {avg_products:.1f} products, {avg_digital*100:.0f}% digital")
-            marketing_recommendations.append(f"{segment_identifier} peak campaigns: {avg_transactions:.0f}+ peaks with {avg_cross_sell*100:.0f}% receptivity at age {avg_age:.0f}")
-            marketing_recommendations.append(f"{segment_identifier} timing strategy: ${avg_income:,.0f} earners with {avg_digital*100:.0f}% digital and {avg_products:.1f} current products")
+            marketing_recommendations.append(f"Time a cross-sell campaign to peak transaction periods; offer one relevant product (e.g. credit, savings) with a clear, low-friction CTA.")
+            marketing_recommendations.append(f"Use behavioral triggers (e.g. after N transactions or login) to show personalized in-app or email offers for this receptive segment.")
+            marketing_recommendations.append(f"Assign sales or retargeting to high-activity, high-receptivity customers; test incentive (e.g. bonus rate or waiver) to convert.")
         
         elif trait_combo == 'cross_sell_deposits':
             key_behaviors.append(f"{segment_identifier} affluent receptive: {avg_cross_sell*100:.0f}% openness with ${avg_deposits:,.0f} wealth ({cross_rank:.0f}th receptivity, {deposit_rank:.0f}th wealth)")
             key_behaviors.append(f"{segment_identifier} status: Age {avg_age:.0f}, ${avg_income:,.0f} income, {avg_products:.1f} products, {avg_transactions:.0f} transactions, {avg_digital*100:.0f}% digital")
-            marketing_recommendations.append(f"{segment_identifier} affluent program: ${avg_deposits:,.0f} tier + {avg_cross_sell*100:.0f}% receptivity at age {avg_age:.0f}")
-            marketing_recommendations.append(f"{segment_identifier} wealth advisory: {avg_age:.0f}-year-olds earning ${avg_income:,.0f} with {avg_products:.1f} products and {avg_transactions:.0f} transactions")
+            marketing_recommendations.append(f"Proactively offer wealth-advisory or private-banking introduction for high-balance, high-receptivity customers; book discovery meetings.")
+            marketing_recommendations.append(f"Run a premium product campaign (e.g. investment, insurance, or lending) for this segment; use personalized outreach and preferred channel.")
+            marketing_recommendations.append(f"Create an affluent segment program (e.g. exclusive rates, dedicated contact) and invite this segment with a clear next-step offer.")
         
         elif trait_combo == 'cross_sell_digital':
             key_behaviors.append(f"{segment_identifier} digital growth: {avg_cross_sell*100:.0f}% receptive at {avg_digital*100:.0f}% digital ({cross_rank:.0f}th receptivity, {digital_rank:.0f}th digital)")
             key_behaviors.append(f"{segment_identifier} metrics: Age {avg_age:.0f}, ${avg_income:,.0f} income, ${avg_deposits:,.0f} deposits, {avg_products:.1f} products, {avg_transactions:.0f} transactions")
-            marketing_recommendations.append(f"{segment_identifier} instant approvals: {avg_cross_sell*100:.0f}% receptive at {avg_digital*100:.0f}% digital earning ${avg_income:,.0f}")
-            marketing_recommendations.append(f"{segment_identifier} app campaigns: ${avg_deposits:,.0f} tier with {avg_transactions:.0f} transactions at age {avg_age:.0f}")
+            marketing_recommendations.append(f"Deploy in-app and email offers with instant-apply or one-tap flow for this digital, receptive segment; prioritize one next-best product per customer.")
+            marketing_recommendations.append(f"Run a short A/B test of product offers (e.g. credit, savings) in the app; use segment behavior to tailor messaging and placement.")
+            marketing_recommendations.append(f"Follow up high-intent in-app actions with a light-touch call or chat to convert; keep messaging consistent with digital experience.")
         
         elif trait_combo == 'cross_sell_products':
             key_behaviors.append(f"Portfolio expanders: {avg_cross_sell*100:.0f}% receptive with {avg_products:.1f} products seeking more ({products_rank:.0f}th percentile)")
             key_behaviors.append(f"${avg_deposits:,.0f} deposits, {avg_transactions:.0f} transactions, age {avg_age:.0f} wanting product expansion")
-            marketing_recommendations.append(f"Ecosystem expansion for {avg_products:.1f}-product customers with {avg_cross_sell*100:.0f}% openness")
-            marketing_recommendations.append(f"Synergy campaigns showing connections between {avg_products:.1f} existing products and new offerings")
+            marketing_recommendations.append(f"Run an ecosystem expansion campaign: recommend the next best product (e.g. investment, insurance) that complements current {avg_products:.0f} products; use sales or triggered outreach.")
+            marketing_recommendations.append(f"Create synergy messaging that links existing products to one new offering (e.g. 'Add savings to your checking'); target this segment with clear benefit and CTA.")
+            marketing_recommendations.append(f"Assign a cross-sell playbook for this segment: prioritize one product per customer and measure conversion; iterate on offer and channel.")
         
         elif trait_combo == 'cross_sell_transactions':
             key_behaviors.append(f"{segment_identifier} active prospects: {avg_cross_sell*100:.0f}% receptive with {avg_transactions:.0f} transactions ({cross_rank:.0f}th receptivity, {trans_rank:.0f}th activity)")
             key_behaviors.append(f"{segment_identifier} snapshot: Age {avg_age:.0f}, ${avg_income:,.0f} income, ${avg_deposits:,.0f} deposits, {avg_products:.1f} products, {avg_digital*100:.0f}% digital")
-            marketing_recommendations.append(f"{segment_identifier} peak offers: {avg_transactions:.0f}+ months with {avg_cross_sell*100:.0f}% receptivity at age {avg_age:.0f}")
-            marketing_recommendations.append(f"{segment_identifier} incentives: Age {avg_age:.0f}, ${avg_income:,.0f} income, {avg_digital*100:.0f}% digital, {avg_products:.1f} products")
+            marketing_recommendations.append(f"Time offers to high-activity periods; run a campaign promoting one product (e.g. credit or savings) with a limited-time incentive for this receptive segment.")
+            marketing_recommendations.append(f"Use transaction or login triggers to show personalized next-product offers in-app or via email; test incentive (e.g. bonus or waiver) to improve conversion.")
+            marketing_recommendations.append(f"Assign outbound or retargeting to high-activity, high-receptivity customers; use a clear single-product offer and measure by segment.")
         
         # DEFAULT CATCH-ALL for any other combinations
         else:
             key_behaviors.append(f"{segment_identifier} balanced profile: {primary_trait} strength at {primary_rank:.0f}th percentile, {secondary_trait} at {secondary_rank:.0f}th")
             key_behaviors.append(f"{segment_identifier} specifics: Age {avg_age:.0f}, ${avg_income:,.0f} income, ${avg_deposits:,.0f} deposits, {avg_products:.1f} products, {avg_transactions:.0f} transactions")
-            marketing_recommendations.append(f"{segment_identifier} optimization: Focus on {primary_trait} for age {avg_age:.0f} earning ${avg_income:,.0f}")
-            marketing_recommendations.append(f"{segment_identifier} education: {secondary_trait} benefits for ${avg_deposits:,.0f} tier with {avg_digital*100:.0f}% digital")
+            marketing_recommendations.append(f"Design a segment-specific campaign that leads with {primary_trait} (e.g. product, channel, or benefit); include a single clear next-step offer.")
+            marketing_recommendations.append(f"Test one targeted action: either outbound for high-value customers or in-app/email for digital-first; measure conversion and refine by sub-cohort.")
+            marketing_recommendations.append(f"Offer education or value content (e.g. how-to, tips) tied to {secondary_trait}, then follow with a soft product or service recommendation.")
         
         # Add SPECIFIC metrics to make each segment even more unique
         if avg_age < 35:
@@ -1227,6 +1254,42 @@ class AgentA_Banking_Enhanced:
         key_behaviors = key_behaviors[:4]
         marketing_recommendations = marketing_recommendations[:4]
         
+        # UNIQUE marketing opportunities: try LLM first, else personalize fallback so no two segments are identical
+        metrics_for_llm = {
+            'avg_deposits': avg_deposits,
+            'avg_income': avg_income,
+            'avg_digital': avg_digital,
+            'avg_products': avg_products,
+            'avg_transactions': avg_transactions,
+            'avg_cross_sell': avg_cross_sell,
+            'avg_age': avg_age,
+        }
+        segment_def_text = "\n".join(segment_definition)
+        used_llm_recs = False
+        if TOGETHER_AI_AVAILABLE and together_ai and os.getenv("TOGETHER_API_KEY"):
+            try:
+                llm_recs = together_ai.generate_marketing_opportunities(
+                    persona_name=persona_name,
+                    segment_definition=segment_def_text,
+                    key_behaviors=key_behaviors,
+                    metrics=metrics_for_llm
+                )
+                if llm_recs and len(llm_recs) >= 3:
+                    marketing_recommendations = llm_recs[:4]
+                    used_llm_recs = True
+            except Exception as e:
+                logger.debug(f"LLM marketing opportunities failed for {persona_name}, using personalized fallback: {e}")
+        # Fallback: short prefix + truncate long bullets so marketers can scan quickly
+        if not used_llm_recs:
+            short_recs = []
+            for r in marketing_recommendations:
+                # One short sentence max ~90 chars for scannability
+                s = r.split(".")[0].strip() + "." if "." in r else r
+                if len(s) > 95:
+                    s = s[:92].rsplit(" ", 1)[0] + "."
+                short_recs.append(f"**{persona_name}:** {s}")
+            marketing_recommendations = short_recs
+        
         # Generate name explanation for macro segment
         name_explanation = self._generate_macro_name_explanation(
             persona_name=persona_name,
@@ -1240,7 +1303,7 @@ class AgentA_Banking_Enhanced:
         
         return {
             'name_explanation': name_explanation,  # NEW: Explains why this name
-            'segment_definition': "\n".join(segment_definition),
+            'segment_definition': segment_def_text,
             'key_behaviors': key_behaviors,
             'marketing_recommendations': marketing_recommendations
         }
