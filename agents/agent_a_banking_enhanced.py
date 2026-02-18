@@ -1279,15 +1279,19 @@ class AgentA_Banking_Enhanced:
                     used_llm_recs = True
             except Exception as e:
                 logger.debug(f"LLM marketing opportunities failed for {persona_name}, using personalized fallback: {e}")
-        # Fallback: short prefix + truncate long bullets so marketers can scan quickly
+        # Fallback: short prefix with segment metrics so each segment looks different; one full clause, no mid-phrase cuts
         if not used_llm_recs:
             short_recs = []
+            prefix = f"**{persona_name}** (${avg_deposits/1e6:.1f}M, {avg_digital*100:.0f}% digital): "
             for r in marketing_recommendations:
-                # One short sentence max ~90 chars for scannability
-                s = r.split(".")[0].strip() + "." if "." in r else r
-                if len(s) > 95:
-                    s = s[:92].rsplit(" ", 1)[0] + "."
-                short_recs.append(f"**{persona_name}:** {s}")
+                if ";" in r:
+                    s = r.split(";")[0].strip()
+                    s = s + "." if s and not s.endswith(".") else s
+                else:
+                    s = r.split(".")[0].strip() + "." if "." in r else r
+                if len(s) > 130:
+                    s = (s[:127].rsplit(" ", 1)[0] or s[:127]) + "..."
+                short_recs.append(prefix + s)
             marketing_recommendations = short_recs
         
         # Generate name explanation for macro segment

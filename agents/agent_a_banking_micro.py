@@ -670,13 +670,19 @@ class AgentA_Banking_Micro:
             except Exception as e:
                 logger.debug(f"LLM marketing opportunities failed for micro {segment_name}, using personalized fallback: {e}")
         if not used_llm_recs:
-            # Short bullets for scannability: segment name + one sentence max ~90 chars
+            # One full clause; no mid-phrase truncation; prefix with metrics so segments differ
             short_recs = []
+            deposits_range = f"${characteristics.get('avg_deposits', 0)/1e6:.1f}M" if characteristics.get('avg_deposits', 0) >= 1e6 else f"${characteristics.get('avg_deposits', 0):,.0f}"
+            prefix = f"**{segment_name}** ({deposits_range}, {digital_engagement*100:.0f}% digital): "
             for r in recommendations:
-                s = r.split(".")[0].strip() + "." if "." in r else r
-                if len(s) > 95:
-                    s = s[:92].rsplit(" ", 1)[0] + "."
-                short_recs.append(f"**{segment_name}:** {s}")
+                if ";" in r:
+                    s = r.split(";")[0].strip()
+                    s = s + "." if s and not s.endswith(".") else s
+                else:
+                    s = r.split(".")[0].strip() + "." if "." in r else r
+                if len(s) > 130:
+                    s = (s[:127].rsplit(" ", 1)[0] or s[:127]) + "..."
+                short_recs.append(prefix + s)
             recommendations = short_recs
         
         # Generate detailed name explanation
