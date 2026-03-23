@@ -1,6 +1,6 @@
 import { useQuery } from '@tanstack/react-query';
 import { Link } from 'react-router-dom';
-import { Users, ShoppingBag, Target, ArrowRight, Database, CheckCircle2, Clock, BarChart3 } from 'lucide-react';
+import { Users, ShoppingBag, Target, ArrowRight, Database, CheckCircle2, Clock, BarChart3, Sparkles } from 'lucide-react';
 
 export default function BankingDashboard() {
   const { data: status } = useQuery({
@@ -108,6 +108,27 @@ export default function BankingDashboard() {
                 </p>
                 <div className="flex items-center text-amber-600 font-semibold group-hover:gap-3 gap-2 transition-all mt-auto">
                   <span>Explore Products</span>
+                  <ArrowRight className="w-5 h-5" />
+                </div>
+              </div>
+            </div>
+          </Link>
+
+          {/* Agent C: One Best Offer */}
+          <Link to={status?.agent_a_complete ? "/banking/agent-c" : "/banking/agent-a"} className="h-full">
+            <div className="group bg-white rounded-xl shadow-sm hover:shadow-lg transition-all duration-300 overflow-hidden border border-violet-200 hover:border-violet-500 h-full flex flex-col">
+              <div className="p-8 flex flex-col flex-1">
+                <div className="w-14 h-14 bg-violet-600 rounded-xl flex items-center justify-center mb-6 group-hover:scale-110 transition-transform flex-shrink-0">
+                  <Sparkles className="w-7 h-7 text-white" />
+                </div>
+                <h3 className="text-2xl font-bold text-gray-900 mb-3">✨ One Best Offer</h3>
+                <p className="text-gray-600 mb-6 flex-1">
+                  {status?.agent_a_complete
+                    ? "Hyper-personalized 1:1 offer per customer with explainability & channels"
+                    : "Run Agent A first to get one best offer per customer"}
+                </p>
+                <div className="flex items-center text-violet-600 font-semibold group-hover:gap-3 gap-2 transition-all mt-auto">
+                  <span>{status?.agent_a_complete ? "Agent C" : "Run Agent A First"}</span>
                   <ArrowRight className="w-5 h-5" />
                 </div>
               </div>

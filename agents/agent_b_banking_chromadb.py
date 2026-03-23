@@ -154,9 +154,15 @@ class AgentB_Banking:
                 # Use customer's actual persona
                 if self.agent_a and hasattr(self.agent_a, 'customers_df') and self.agent_a.customers_df is not None:
                     # Get persona from Agent A's clustering results
-                    customer_row = self.agent_a.customers_df[self.agent_a.customers_df['customer_id'] == customer_id]
+                    ca = self.agent_a.customers_df
+                    ccol = ca['customer_id'].astype(str).str.strip()
+                    customer_row = ca[ccol == str(customer_id).strip()]
                     if not customer_row.empty and 'cluster' in customer_row.columns:
                         cluster_id = customer_row['cluster'].iloc[0]
+                        try:
+                            cluster_id = int(float(cluster_id))
+                        except (TypeError, ValueError):
+                            pass
                         persona = self._get_persona_from_cluster(cluster_id)
                         logger.info(f"Using persona '{persona}' from Agent A for customer {customer_id}")
                 elif customer_info.get('persona'):
@@ -211,10 +217,21 @@ class AgentB_Banking:
         if effective_top_n < top_n:
             logger.info(f"📌 Segment has {len(filtered_products)} product(s); capping recommendations at {effective_top_n} (requested {top_n})")
         
+        factor_weights = params.get('factor_weights')
         # Score and rank products
         recommendations = self._score_and_rank(
-            persona_name, persona_id, filtered_products, effective_top_n, explain, customer_info, tier_name
+            persona_name, persona_id, filtered_products, effective_top_n, explain, customer_info, tier_name,
+            factor_weights=factor_weights,
         )
+        sup = params.get('supervisor_directives')
+        if sup:
+            try:
+                from agents.agent_d_banking import AgentD_Banking
+                recommendations = AgentD_Banking.apply_directives_to_recommendations(
+                    recommendations, sup
+                )
+            except Exception as e:
+                logger.warning(f"Supervisor directives not applied: {e}")
         
         # Separate in-stock and out-of-stock
         in_stock_recs = [r for r in recommendations if r.get('in_stock', True)]
@@ -461,7 +478,8 @@ class AgentB_Banking:
         return products
     
     def _score_and_rank(self, persona_name: str, persona_id: int, products: List[Dict], top_n: int, 
-                        explain: bool, customer_info: Dict = None, tier_name: str = "Unknown") -> List[Dict]:
+                        explain: bool, customer_info: Dict = None, tier_name: str = "Unknown",
+                        factor_weights: Dict = None) -> List[Dict]:
         """
         Score banking products and rank by relevance to persona
         
@@ -509,7 +527,8 @@ class AgentB_Banking:
                     detailed_breakdown = self.enhanced_scorer.score_product(
                         customer=customer_info,
                         product=product,
-                        persona=persona_info
+                        persona=persona_info,
+                        factor_weights=factor_weights,
                     )
                     
                     score = detailed_breakdown['total_score']
@@ -834,7 +853,7 @@ class AgentB_Banking:
             return {}
         
         # Calculate statistics
-        scores = [r['score'] for r in recommendations]
+        scores = [float(r.get('score') or 0) for r in recommendations]
         fees = [float(r.get('annual_fee', 0)) for r in recommendations]
         min_balances = [float(r.get('min_balance', 0)) for r in recommendations]
         interest_rates = [float(r.get('interest_rate_apy', r.get('interest_rate', 0))) for r in recommendations]
@@ -859,7 +878,7 @@ class AgentB_Banking:
         # Count match levels
         match_level_counts = {}
         for rec in recommendations:
-            level = rec['match_level']
+            level = rec.get('match_level') or 'Good Option'
             match_level_counts[level] = match_level_counts.get(level, 0) + 1
         
         # Banking-optimized insights
@@ -986,7 +1005,9 @@ class AgentB_Banking:
         if self.customers_df is None:
             return None
         
-        customer_row = self.customers_df[self.customers_df['customer_id'] == customer_id]
+        cid = str(customer_id).strip()
+        col = self.customers_df['customer_id'].astype(str).str.strip()
+        customer_row = self.customers_df[col == cid]
         
         if customer_row.empty:
             return None
@@ -1022,10 +1043,15 @@ class AgentB_Banking:
             Persona name
         """
         # If Agent A is available, use its persona mapping
-        if self.agent_a and hasattr(self.agent_a, 'personas'):
-            if cluster_id in self.agent_a.personas:
-                persona_data = self.agent_a.personas[cluster_id]
-                return persona_data.get('short_name', persona_data.get('persona_name', f'Persona {cluster_id}'))
+        if self.agent_a and hasattr(self.agent_a, 'personas') and self.agent_a.personas:
+            pa = self.agent_a.personas
+            try:
+                k = int(float(cluster_id))
+            except (TypeError, ValueError):
+                k = cluster_id
+            pdata = pa.get(k) or pa.get(str(k))
+            if pdata:
+                return pdata.get('short_name', pdata.get('persona_name', f'Persona {k}'))
         
         return f'Persona {cluster_id}'
 

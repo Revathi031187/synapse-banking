@@ -1,18 +1,22 @@
 /**
  * API base URL for banking (and academy) requests.
- * Uses VITE_API_BASE_URL at build time, or derives from current path when
- * deployed under e.g. /banking-platform/v1 so requests hit the same origin.
+ *
+ * FastAPI registers routes at /api/... on the app root. Do NOT prefix with the
+ * Vite SPA base (e.g. /banking-platform/v1) — that produces URLs like
+ * /banking-platform/v1/api/... which only match the SPA catch-all GET route,
+ * so POST returns 405 Method Not Allowed.
+ *
+ * Use '' in the browser → fetch('/api/...') hits the same host's /api (Databricks
+ * single-port, or Vite dev proxy). Set VITE_API_BASE_URL only when the API is on
+ * another origin (e.g. http://localhost:8002).
  */
 export function getBankingApiBase(): string {
-  // Empty string = same-origin (single-port deployment e.g. Databricks)
-  if (typeof import.meta.env.VITE_API_BASE_URL === 'string') {
-    return import.meta.env.VITE_API_BASE_URL;
+  const env = import.meta.env.VITE_API_BASE_URL;
+  if (typeof env === 'string' && env.trim() !== '') {
+    return env.replace(/\/$/, '');
   }
   if (typeof window !== 'undefined') {
-    const path = window.location.pathname;
-    // Deployed under /banking-platform/v1/...
-    const m = path.match(/^(\/banking-platform\/v1)/);
-    if (m) return m[1];
+    return '';
   }
   return 'http://localhost:8002';
 }

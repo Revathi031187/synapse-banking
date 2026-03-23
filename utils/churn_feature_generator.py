@@ -7,6 +7,107 @@ import pandas as pd
 import numpy as np
 from datetime import datetime, timedelta
 
+
+def _safe_int(v, default=0):
+    try:
+        if v is None or (isinstance(v, float) and np.isnan(v)):
+            return default
+        if hasattr(v, "item"):
+            v = v.item()
+        return int(float(v))
+    except (TypeError, ValueError):
+        return default
+
+
+def _safe_float(v, default=0.0):
+    try:
+        if v is None or (isinstance(v, float) and np.isnan(v)):
+            return default
+        if hasattr(v, "item"):
+            v = v.item()
+        return float(v)
+    except (TypeError, ValueError):
+        return default
+
+
+def format_churn_risk_reason(row) -> str:
+    """
+    Human-readable explanation for why a customer has elevated churn risk,
+    derived from the same behavioral signals as churn_risk_score.
+    """
+    def _get(key, default=None):
+        try:
+            if hasattr(row, "get"):
+                v = row.get(key, default)
+            else:
+                v = row[key] if key in row.index else default
+            if v is not None and pd.isna(v):
+                return default
+            return v
+        except Exception:
+            return default
+
+    try:
+        reasons = []
+        recent = _safe_int(_get("recent_txn_count", 0))
+        prev = _safe_int(_get("previous_txn_count", 0))
+        dslt = _safe_float(_get("days_since_last_txn", 0))
+        tv = _safe_float(_get("txn_velocity_change", 0))
+
+        if recent == 0 and prev > 0:
+            reasons.append("No transactions in the last 30 days after prior activity")
+        elif recent == 0:
+            reasons.append("No transactions in the last 30 days")
+        if tv < -3:
+            reasons.append("Sharp drop in transaction volume vs prior month")
+        elif tv < -1 and recent < prev:
+            reasons.append("Declining transaction activity")
+        if dslt > 75:
+            reasons.append(f"{int(dslt)}+ days since last banking activity")
+        elif dslt > 45:
+            reasons.append(f"{int(dslt)} days since last transaction")
+
+        if _safe_int(_get("balance_risk", 0)) == 1:
+            reasons.append("Low account balance")
+        if _safe_int(_get("balance_below_expected", 0)) == 1:
+            reasons.append("Savings balance below expected for income level")
+        if _safe_int(_get("single_product_risk", 0)) == 1:
+            reasons.append("Single-product relationship")
+        if _safe_int(_get("low_product_adoption", 0)) == 1:
+            reasons.append("Limited product depth vs tenure")
+        if _safe_int(_get("digital_decline", 0)) == 1:
+            reasons.append("Low digital engagement")
+        if _safe_int(_get("branch_only_user", 0)) == 1:
+            reasons.append("Branch-only channel pattern")
+        if _safe_int(_get("credit_risk", 0)) == 1:
+            reasons.append("Credit profile stress signals")
+
+        score = _safe_float(_get("churn_risk_score", 0))
+        cat = str(_get("churn_risk_category", "") or "").strip()
+
+        if not reasons:
+            reasons.append(
+                f"Composite model score {score:.0f}/100 ({cat or 'elevated'}): "
+                "weighs days since activity, transaction trend, balances vs income, product breadth, and digital usage."
+            )
+        else:
+            reasons.append(f"Overall score {score:.0f}/100 ({cat})" if cat else f"Overall score {score:.0f}/100")
+
+        seen = set()
+        out = []
+        for r in reasons:
+            if r not in seen:
+                seen.add(r)
+                out.append(r)
+        return "; ".join(out[:6])
+    except Exception:
+        sc = _safe_float(_get("churn_risk_score", 0))
+        return (
+            f"Elevated churn risk (score {sc:.0f}/100) from transaction recency, activity trend, "
+            "balances, product relationships, and channel engagement."
+        )
+
+
 def add_essential_churn_features(customers_df, transactions_df):
     """
     Add ONLY essential churn prediction features calculated from REAL transaction data
@@ -185,7 +286,9 @@ def add_essential_churn_features(customers_df, transactions_df):
             return 'Loyalty_Reward'
     
     df['suggested_retention_offer'] = df.apply(get_retention_offer, axis=1)
-    
+
+    df["churn_risk_reason"] = df.apply(format_churn_risk_reason, axis=1)
+
     return df
 
 

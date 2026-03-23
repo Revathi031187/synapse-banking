@@ -19,14 +19,23 @@ if env_path.exists():
 
 logger = get_logger("TogetherAI")
 
-# Load API key from environment variable
-TOGETHER_API_KEY = os.getenv("TOGETHER_API_KEY", "6398823e1e39f337943f109988df04bbdcf19d2ac2b830d2220bde468d886ac3")
+# Load API key from environment variable (never commit real keys; get one at api.together.xyz)
+TOGETHER_API_KEY = (os.getenv("TOGETHER_API_KEY") or "").strip()
 TOGETHER_API_BASE = "https://api.together.xyz/v1"
 
-if TOGETHER_API_KEY == "6398823e1e39f337943f109988df04bbdcf19d2ac2b830d2220bde468d886ac3":
-    logger.warning("⚠️  Using fallback API key. Set TOGETHER_API_KEY in .env for better reliability")
+# Chat models to try in order (Turbo names change; Lite/Qwen are widely available)
+DEFAULT_CHAT_MODELS = [
+    "meta-llama/Meta-Llama-3-8B-Instruct-Lite",
+    "meta-llama/Meta-Llama-3.1-8B-Instruct-Turbo",
+    "meta-llama/Llama-3.2-3B-Instruct-Turbo",
+    "Qwen/Qwen2.5-7B-Instruct-Turbo",
+    "meta-llama/Meta-Llama-3-8B-Instruct-Reference",
+]
+
+if not TOGETHER_API_KEY:
+    logger.warning("⚠️  TOGETHER_API_KEY is not set — LLM persona text will use fallbacks. Add it to .env")
 else:
-    logger.info(f"✓ Loaded TOGETHER_API_KEY from .env (ends with ...{TOGETHER_API_KEY[-8:]})")
+    logger.info(f"✓ TOGETHER_API_KEY loaded (ends with ...{TOGETHER_API_KEY[-6:]})")
 
 
 class TogetherAIService:
@@ -112,44 +121,74 @@ class TogetherAIService:
         temperature: float = 0.7
     ) -> str:
         """
-        Generate text using LLM.
-        
-        Args:
-            prompt: User prompt
-            system_message: System instruction
-            model: LLM model to use
-            max_tokens: Maximum tokens to generate
-            temperature: Sampling temperature
-            
-        Returns:
-            Generated text
+        Generate text using LLM. Tries several models if one returns 400/404 (Together often deprecates IDs).
+        Set TOGETHER_CHAT_MODEL in .env to force a single model.
         """
-        try:
-            logger.info(f"💬 Generating text with {model}...")
-            
-            url = f"{TOGETHER_API_BASE}/chat/completions"
-            payload = {
-                "model": model,
-                "messages": [
-                    {"role": "system", "content": system_message},
-                    {"role": "user", "content": prompt}
-                ],
-                "max_tokens": max_tokens,
-                "temperature": temperature
-            }
-            
-            response = requests.post(url, json=payload, headers=self.headers, verify=False, timeout=30)
-            response.raise_for_status()
-            
-            data = response.json()
-            generated_text = data['choices'][0]['message']['content']
-            
-            logger.info(f"✅ Generated {len(generated_text)} characters")
-            return generated_text
-            
-        except Exception as e:
-            logger.error(f"❌ Error generating text: {e}")
+        if not self.api_key or len(self.api_key) < 8:
+            logger.debug("Together chat skipped: no API key")
             return "Error generating description"
+
+        env_model = (os.getenv("TOGETHER_CHAT_MODEL") or "").strip()
+        models_to_try = []
+        if env_model:
+            models_to_try.append(env_model)
+        if model and model not in models_to_try:
+            models_to_try.append(model)
+        for m in DEFAULT_CHAT_MODELS:
+            if m not in models_to_try:
+                models_to_try.append(m)
+
+        url = f"{TOGETHER_API_BASE}/chat/completions"
+        safe_max = max(1, min(int(max_tokens), 8192))
+        # Avoid empty user content (some APIs return 400)
+        user_content = (prompt or "").strip() or "Respond with OK."
+        sys_content = (system_message or "").strip() or "You are a helpful assistant."
+
+        last_detail = None
+        for mname in models_to_try:
+            try:
+                payload = {
+                    "model": mname,
+                    "messages": [
+                        {"role": "system", "content": sys_content[:120000]},
+                        {"role": "user", "content": user_content[:120000]},
+                    ],
+                    "max_tokens": safe_max,
+                    "temperature": float(temperature),
+                }
+                response = requests.post(
+                    url, json=payload, headers=self.headers, verify=False, timeout=90
+                )
+                if response.status_code != 200:
+                    try:
+                        err_body = response.json()
+                        detail = err_body.get("error", err_body)
+                        last_detail = str(detail)[:500]
+                    except Exception:
+                        last_detail = response.text[:500]
+                    logger.warning(
+                        f"Together chat model={mname} status={response.status_code}: {last_detail}"
+                    )
+                    continue
+
+                data = response.json()
+                choices = data.get("choices") or []
+                if not choices:
+                    logger.warning(f"Together chat empty choices for {mname}")
+                    continue
+                generated_text = (choices[0].get("message") or {}).get("content") or ""
+                if not generated_text.strip():
+                    continue
+                logger.info(f"✅ Generated {len(generated_text)} chars with {mname}")
+                return generated_text
+
+            except requests.exceptions.RequestException as e:
+                last_detail = str(e)
+                logger.warning(f"Together chat request failed ({mname}): {e}")
+                continue
+
+        logger.error(f"❌ All Together chat models failed. Last detail: {last_detail}")
+        return "Error generating description"
     
     def generate_persona_name(self, cluster_characteristics: Dict[str, Any]) -> str:
         """Generate a creative persona name based on cluster characteristics."""

@@ -1,5 +1,8 @@
 # Databricks Apps: run FastAPI on one port serving API + React frontend (same port).
 # run_app.py sets working directory to repo root so data/, api/, frontend/dist resolve correctly.
+#
+# TOGETHER_API_KEY: Create a .env file in this repo in Databricks (same folder as run_app.py)
+# with: TOGETHER_API_KEY=your_key. See deploy/DATABRICKS_ENV_FILE.md for steps.
 command:
   - python
   - run_app.py

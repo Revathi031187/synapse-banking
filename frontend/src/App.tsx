@@ -8,6 +8,8 @@ import BankingDataLoader from './pages/banking/BankingDataLoader';
 import BankingAgentA from './pages/banking/BankingAgentA';
 import BankingAgentB from './pages/banking/BankingAgentB';
 import BankingMacroDashboard from './pages/banking/BankingMacroDashboard';
+import BankingAgentC from './pages/banking/BankingAgentC';
+import BankingAgentD from './pages/banking/BankingAgentD';
 
 // Academy Sports pages (Keep for reference)
 import AcademyDashboard from './pages/academy/AcademyDashboard';
@@ -48,6 +50,8 @@ function App() {
             <Route path="macro-dashboard" element={<BankingMacroDashboard />} />
             <Route path="agent-a" element={<BankingAgentA />} />
             <Route path="agent-b" element={<BankingAgentB />} />
+            <Route path="agent-c" element={<BankingAgentC />} />
+            <Route path="agent-d" element={<BankingAgentD />} />
             <Route path="customer/:customerId/recommendations" element={<AcademyRecommendations />} />
           </Route>
           

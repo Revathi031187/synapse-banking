@@ -80,10 +80,14 @@ from agents.agent_b_banking_enhanced_v2 import AgentB_Banking_Enhanced
 from agents.agent_b_banking_chromadb import AgentB_Banking  # Rule-based chromadb agent
 from agents.agent_b_banking_logit_enhanced import AgentB_Banking_LogitEnhanced  # Hybrid ML agent
 from agents.agent_b_banking_enhanced import AgentB_Banking_Enhanced as AgentB_Banking_Modal  # Customer modal agent
+from agents.agent_c_banking import AgentC_Banking
+from agents.agent_d_banking import AgentD_Banking
 
 fmb_data_path = project_root / 'data' / 'preloaded' / 'fmb_bank'  # F&M Bank data
 banking_agent_a = AgentA_Banking_Enhanced(data_path=str(fmb_data_path))
 banking_agent_b = None  # Lazy init after Agent A runs
+banking_agent_c = AgentC_Banking()
+banking_agent_d = AgentD_Banking()
 banking_agent_b_chromadb = None  # Rule-based agent (lazy init)
 banking_agent_b_logit = None  # Hybrid ML agent (lazy init)
 banking_agent_b_modal = None  # Customer modal agent (lazy init)
@@ -142,9 +146,55 @@ system_state = {
     'banking': {
         'agent_a_results': None,
         'agent_b_results': None,
-        'banking_micro_segments': {}
+        'banking_micro_segments': {},
+        'agent_d_ledger': {},  # customer_id -> { impressions, last_directives, ... }
+        'agent_b_factor_weights_pct': None,  # saved 12-factor weights (sum 100) for rule-based B
+        'agent_d_wishlist_rows': [],
+        'agent_d_incomplete_rows': [],
+        'agent_d_impression_rows': [],
+        '_agent_d_csv_loaded': False,
     }
 }
+
+
+def _banking_fmb_path() -> Path:
+    return project_root / 'data' / 'preloaded' / 'fmb_bank'
+
+
+def _load_banking_agent_d_csv_tables():
+    """Load wishlist, incomplete_applications, recommendation_impressions for Agent D next-best."""
+    b = system_state['banking']
+    if b.get('_agent_d_csv_loaded'):
+        return
+    import pandas as pd
+    base = _banking_fmb_path()
+    for fname, key in [
+        ('wishlist.csv', 'agent_d_wishlist_rows'),
+        ('incomplete_applications.csv', 'agent_d_incomplete_rows'),
+    ]:
+        p = base / fname
+        if p.exists():
+            df = pd.read_csv(p)
+            df = df.fillna('')
+            b[key] = df.to_dict('records')
+        else:
+            b[key] = []
+    imp = base / 'recommendation_impressions.csv'
+    if imp.exists():
+        df = pd.read_csv(imp)
+        df = df.fillna('')
+        b['agent_d_impression_rows'] = df.to_dict('records')
+    else:
+        b['agent_d_impression_rows'] = []
+    b['_agent_d_csv_loaded'] = True
+
+
+def _save_banking_agent_d_impressions_csv():
+    import pandas as pd
+    rows = system_state['banking'].get('agent_d_impression_rows') or []
+    path = _banking_fmb_path() / 'recommendation_impressions.csv'
+    path.parent.mkdir(parents=True, exist_ok=True)
+    pd.DataFrame(rows).to_csv(path, index=False)
 
 
 # ============================================================================
@@ -2527,9 +2577,10 @@ async def execute_banking_agent_a(config: AgentAConfigAcademy):
         # Convert numpy types BEFORE storing (converts DataFrames to dicts)
         results = numpy_to_python_types(results)
         
-        # Store converted results
+        # Store converted results and clear churn cache so it’s recomputed with new data
         system_state['banking']['agent_a_results'] = results
-        
+        system_state['banking']['customers_with_churn'] = None
+
         return {
             "success": True,
             "result": results,
@@ -2707,15 +2758,17 @@ async def get_banking_customers(
     skip: int = 0,
     limit: int = 50,
     persona_filter: str = None,
-    search: str = None
+    search: str = None,
+    cluster_id: Optional[int] = None,
 ):
-    """Get paginated list of banking customers"""
+    """Get paginated list of banking customers. Use cluster_id to list customers in one persona/segment."""
     try:
         customers_data = banking_agent_a.get_all_customers(
             skip=skip,
             limit=limit,
             persona_filter=persona_filter,
-            search_query=search
+            search_query=search,
+            cluster_id=cluster_id,
         )
         
         customers_data = numpy_to_python_types(customers_data)
@@ -2755,30 +2808,49 @@ async def get_banking_customer_details(customer_id: str):
 
 @app.get("/api/banking/personas")
 async def get_banking_personas():
-    """Get available banking personas for Agent B dropdown"""
+    """Get available banking personas for Agent B / D dropdowns."""
     try:
-        if not system_state['banking']['agent_a_results']:
-            return {'personas': []}
-        
-        # Access personas directly (not nested under 'results')
-        personas_dict = system_state['banking']['agent_a_results'].get('personas', {})
+        personas_dict = {}
+        results = system_state['banking'].get('agent_a_results')
+        if results:
+            personas_dict = results.get('personas') or {}
+        # In-memory personas after Agent A (e.g. results not re-hydrated on some deploys)
+        if not personas_dict and getattr(banking_agent_a, 'personas', None):
+            personas_dict = banking_agent_a.personas or {}
+
         personas_list = []
-        
-        # Calculate total customers for percentage
-        total_customers = sum(p['size'] for p in personas_dict.values())
-        
-        for cluster_id, persona_data in personas_dict.items():
-            size = persona_data['size']
-            percentage = (size / total_customers * 100) if total_customers > 0 else 0
-            personas_list.append({
-                'id': str(cluster_id),
-                'name': persona_data['persona_name'],
-                'size': size,
-                'percentage': percentage,
-                'emoji': persona_data.get('emoji', '🏦')
-            })
-        
-        logger.info(f"✅ Returning {len(personas_list)} personas for Agent B")
+        if personas_dict:
+            total_customers = sum(p.get('size', 0) for p in personas_dict.values())
+            if total_customers <= 0:
+                total_customers = 1
+            for cluster_id, persona_data in personas_dict.items():
+                size = persona_data.get('size', 0)
+                percentage = (size / total_customers * 100) if total_customers > 0 else 0
+                personas_list.append({
+                    'id': str(cluster_id),
+                    'name': persona_data.get('persona_name', f'Segment {cluster_id}'),
+                    'size': size,
+                    'percentage': percentage,
+                    'emoji': persona_data.get('emoji', '🏦'),
+                })
+        else:
+            df = getattr(banking_agent_a, 'customers_df', None)
+            if df is not None and len(df) > 0 and 'cluster' in df.columns:
+                c = pd.to_numeric(df['cluster'], errors='coerce')
+                for cid in sorted(c.dropna().unique(), key=lambda x: int(x)):
+                    cid_i = int(cid)
+                    n = int((c == cid).sum())
+                    personas_list.append({
+                        'id': str(cid_i),
+                        'name': f'Segment {cid_i} ({n} customers)',
+                        'size': n,
+                        'percentage': 0.0,
+                        'emoji': '🏦',
+                    })
+                if personas_list:
+                    logger.info(f"✅ Personas fallback from clusters: {len(personas_list)} segments")
+
+        logger.info(f"✅ Returning {len(personas_list)} banking personas")
         return {'personas': personas_list}
     except Exception as e:
         logger.error(f"Error getting banking personas: {e}")
@@ -2816,6 +2888,111 @@ async def get_banking_customers():
     except Exception as e:
         logger.error(f"Error getting banking customers: {e}")
         raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/api/banking/agent_b/factor-metadata")
+async def banking_agent_b_factor_metadata():
+    """Labels and default percentages for 12-factor weight UI."""
+    from utils.banking_factor_weights import default_weights_percent, FACTOR_LABELS, factor_keys
+    return {
+        "success": True,
+        "factor_keys": factor_keys(),
+        "labels": FACTOR_LABELS,
+        "defaults_percent": default_weights_percent(),
+    }
+
+
+@app.get("/api/banking/agent_b/factor-weights")
+async def banking_agent_b_factor_weights_get():
+    """Current saved weights (or defaults if never submitted)."""
+    from utils.banking_factor_weights import default_weights_percent
+    saved = system_state["banking"].get("agent_b_factor_weights_pct")
+    defaults = default_weights_percent()
+    return {
+        "success": True,
+        "weights_percent": saved if saved else defaults,
+        "is_custom": saved is not None,
+        "defaults_percent": defaults,
+    }
+
+
+class BankingFactorWeightsSaveBody(BaseModel):
+    weights: Dict[str, float]
+
+
+@app.post("/api/banking/agent_b/factor-weights")
+async def banking_agent_b_factor_weights_save(body: BankingFactorWeightsSaveBody):
+    """Submit custom factor weights (must sum to ~100%). Used on next rule-based Run."""
+    from utils.banking_factor_weights import validate_weights_percent, factor_keys
+    ok, msg, _ = validate_weights_percent(body.weights)
+    if not ok:
+        raise HTTPException(status_code=400, detail=msg)
+    keys = factor_keys()
+    cleaned = {k: round(float(body.weights.get(k, 0)), 2) for k in keys}
+    system_state["banking"]["agent_b_factor_weights_pct"] = cleaned
+    return {
+        "success": True,
+        "weights_percent": cleaned,
+        "message": "Weights saved. Run recommendations will use this split.",
+    }
+
+
+@app.post("/api/banking/agent_b/factor-weights/reset")
+async def banking_agent_b_factor_weights_reset():
+    system_state["banking"]["agent_b_factor_weights_pct"] = None
+    from utils.banking_factor_weights import default_weights_percent
+    return {
+        "success": True,
+        "weights_percent": default_weights_percent(),
+        "message": "Reset to standard default split.",
+    }
+
+
+class BankingFactorWeightsAIBody(BaseModel):
+    persona_id: Optional[int] = None
+    persona: Optional[str] = None
+
+
+@app.post("/api/banking/agent_b/factor-weights/ai")
+async def banking_agent_b_factor_weights_ai(body: BankingFactorWeightsAIBody):
+    """AI-recommended (or heuristic) persona-based weights; fill sliders — Submit to persist."""
+    if not system_state["banking"]["agent_a_results"]:
+        raise HTTPException(status_code=400, detail="Run Agent A first.")
+    personas = banking_agent_a.personas or {}
+    pname = ""
+    desc = ""
+    if body.persona_id is not None:
+        pdata = None
+        for k in personas:
+            try:
+                if int(k) == int(body.persona_id):
+                    pdata = personas[k]
+                    break
+            except (TypeError, ValueError):
+                continue
+        if not pdata:
+            raise HTTPException(status_code=404, detail=f"Persona {body.persona_id} not found")
+        pname = pdata.get("persona_name") or str(body.persona_id)
+        desc = str(pdata.get("description") or pdata.get("persona_description") or "")
+    elif body.persona is not None:
+        pname = str(body.persona)
+        try:
+            pid = int(body.persona)
+            pdata = personas.get(pid) or personas.get(str(pid))
+            if pdata:
+                desc = str(pdata.get("description") or "")
+        except ValueError:
+            pass
+    else:
+        raise HTTPException(status_code=400, detail="Provide persona_id or persona")
+    from utils.banking_factor_weights import ai_recommended_weights_for_persona
+    weights, source, note = ai_recommended_weights_for_persona(pname, desc)
+    return {
+        "success": True,
+        "weights_percent": numpy_to_python_types(weights),
+        "source": source,
+        "note": note,
+    }
 
 
 @app.post("/api/banking/agent_b/execute")
@@ -2873,15 +3050,28 @@ async def execute_banking_agent_b(request: dict = Body(...)):
                 detail="Failed to initialize Banking Agent B (Rule-Based)"
             )
         
-        # Use the RULE-BASED chromadb agent with execute()
-        result = banking_agent_b_chromadb.execute({
+        exec_params = {
             'customer_id': customer_id,
             'persona': persona,
             'search_query': request.get('search_query', ''),
             'category': request.get('category'),
             'top_n': top_n,
-            'explain': explain
-        })
+            'explain': explain,
+        }
+        fw = request.get('factor_weights')
+        if fw is None:
+            fw = system_state['banking'].get('agent_b_factor_weights_pct')
+        if fw:
+            exec_params['factor_weights'] = fw
+        if request.get('supervisor_directives'):
+            exec_params['supervisor_directives'] = request.get('supervisor_directives')
+        elif request.get('use_agent_d_directives'):
+            ledger = system_state['banking'].setdefault('agent_d_ledger', {}).get(str(customer_id)) or {}
+            d = ledger.get('last_directives')
+            if d:
+                exec_params['supervisor_directives'] = d
+        # Use the RULE-BASED chromadb agent with execute()
+        result = banking_agent_b_chromadb.execute(exec_params)
         
         if not isinstance(result, dict):
             raise ValueError(f"Agent returned invalid result type: {type(result)}")
@@ -3206,6 +3396,528 @@ async def get_all_banking_recommendations(customer_id: str, search_term: str = N
         raise HTTPException(status_code=500, detail=str(e))
 
 
+class AgentDOrchestrateBody(BaseModel):
+    customer_id: str
+    saved_goals: List[str] = []
+    incomplete_applications: List[str] = []
+    clicked_product_ids: List[str] = []
+
+
+@app.post("/api/banking/agent_d/orchestrate")
+async def banking_agent_d_orchestrate(body: AgentDOrchestrateBody):
+    """
+    Agent D: behavioral supervisor — merge saved goals, incomplete applications,
+    Agent C offer, Agent B ranks; log impressions; return live stack + next_visit_directives for Agent B.
+    """
+    try:
+        cid = str(body.customer_id).strip()
+        if not cid:
+            raise HTTPException(status_code=400, detail="customer_id required")
+        if not system_state['banking']['agent_a_results']:
+            raise HTTPException(status_code=400, detail="Run Agent A first.")
+        init_banking_agent_b()
+        if banking_agent_b is None:
+            raise HTTPException(status_code=500, detail="Agent B not initialized")
+
+        ledger_store = system_state['banking'].setdefault('agent_d_ledger', {})
+        if cid not in ledger_store:
+            ledger_store[cid] = {'impressions': {}, 'last_session_product_ids': [], 'last_directives': {}}
+        ledger = ledger_store[cid]
+
+        all_recs = banking_agent_b.get_all_recommendations(cid, None, None)
+        if all_recs.get('error'):
+            raise HTTPException(status_code=404, detail=all_recs.get('error', 'Recommendations failed'))
+
+        customer_details = banking_agent_a.get_customer_details(cid)
+        churn_score = churn_category = None
+        try:
+            from utils.churn_feature_generator import add_essential_churn_features
+            df_c = banking_agent_a.customers_df
+            if df_c is not None and 'churn_risk_score' in df_c.columns:
+                df_churn = df_c
+            else:
+                df_churn = add_essential_churn_features(
+                    banking_agent_a.customers_df, banking_agent_a.transactions_df
+                )
+            row = df_churn[df_churn['customer_id'] == cid]
+            if len(row) > 0:
+                row = row.iloc[0]
+                churn_score = float(row.get('churn_risk_score', 0))
+                churn_category = str(row.get('churn_risk_category', ''))
+        except Exception:
+            pass
+
+        fallback_products = []
+        products_df = getattr(banking_agent_a, 'products_df', None)
+        if products_df is not None and len(products_df) > 0:
+            for _, row in products_df.iterrows():
+                fallback_products.append({
+                    'product_id': row.get('product_id'),
+                    'product_name': row.get('product_name'),
+                    'category': row.get('category') or row.get('subcategory') or 'Banking',
+                    'annual_fee': row.get('annual_fee'),
+                    'min_balance': row.get('min_balance'),
+                    'interest_rate_apy': row.get('interest_rate_apy') or row.get('interest_rate'),
+                })
+
+        agent_c_result = banking_agent_c.get_one_best_offer(
+            customer_id=cid,
+            customer_details=customer_details,
+            all_recommendations=all_recs,
+            churn_risk_score=churn_score,
+            churn_category=churn_category,
+            fallback_products=fallback_products or None,
+        )
+
+        pname = (customer_details or {}).get('persona') or ''
+        out = banking_agent_d.orchestrate(
+            customer_id=cid,
+            ledger=ledger,
+            saved_goals=body.saved_goals or [],
+            incomplete_applications=body.incomplete_applications or [],
+            clicked_product_ids=body.clicked_product_ids or [],
+            products_df=products_df,
+            all_recs=all_recs,
+            agent_c_result=agent_c_result,
+            persona_name=str(pname),
+        )
+        return {'success': True, 'data': numpy_to_python_types(out)}
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Agent D orchestrate: {e}")
+        logger.error(traceback.format_exc())
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+class BankingAgentDNextBestBody(BaseModel):
+    customer_id: str
+    top_n: int = 10
+
+
+@app.post("/api/banking/agent_d/next-best")
+async def banking_agent_d_next_best(body: BankingAgentDNextBestBody):
+    """
+    Agent D real-time next-best products: merges Agent B scores, Agent C offer,
+    wishlist + incomplete applications (CSV), excludes products in recommendation_impressions
+    with no click yet. Persists new impressions to recommendation_impressions.csv.
+    """
+    from agents.agent_d_banking_next_best import (
+        apply_impression_rows,
+        execute_next_best_banking,
+    )
+
+    try:
+        cid = str(body.customer_id).strip()
+        if not cid:
+            raise HTTPException(status_code=400, detail="customer_id required")
+        if not system_state['banking']['agent_a_results']:
+            raise HTTPException(status_code=400, detail="Run Agent A first.")
+        init_banking_agent_b()
+        if banking_agent_b is None:
+            raise HTTPException(status_code=500, detail="Agent B not initialized")
+
+        _load_banking_agent_d_csv_tables()
+        b = system_state['banking']
+        impressions = b.setdefault('agent_d_impression_rows', [])
+
+        try:
+            banking_agent_a.get_customer_details(cid)
+        except ValueError:
+            raise HTTPException(status_code=404, detail=f"Customer {cid} not found")
+
+        all_recs = banking_agent_b.get_all_recommendations(cid, None, None)
+        if all_recs.get('error'):
+            all_recs = {
+                'tailored_recommendations': [],
+                'similar_products': [],
+                'segment_recommendations': [],
+            }
+
+        customer_details = banking_agent_a.get_customer_details(cid)
+        churn_score = churn_category = None
+        try:
+            from utils.churn_feature_generator import add_essential_churn_features
+            df_c = banking_agent_a.customers_df
+            if df_c is not None and 'churn_risk_score' in df_c.columns:
+                df_churn = df_c
+            else:
+                df_churn = add_essential_churn_features(
+                    banking_agent_a.customers_df, banking_agent_a.transactions_df
+                )
+            row = df_churn[df_churn['customer_id'] == cid]
+            if len(row) > 0:
+                row = row.iloc[0]
+                churn_score = float(row.get('churn_risk_score', 0))
+                churn_category = str(row.get('churn_risk_category', ''))
+        except Exception:
+            pass
+
+        products_df = getattr(banking_agent_a, 'products_df', None)
+        fallback_products = []
+        if products_df is not None and len(products_df) > 0:
+            for _, row in products_df.iterrows():
+                fallback_products.append({
+                    'product_id': row.get('product_id'),
+                    'product_name': row.get('product_name'),
+                    'category': row.get('category') or row.get('subcategory') or 'Banking',
+                    'annual_fee': row.get('annual_fee'),
+                    'min_balance': row.get('min_balance'),
+                    'interest_rate_apy': row.get('interest_rate_apy') or row.get('interest_rate'),
+                })
+
+        agent_c_result = banking_agent_c.get_one_best_offer(
+            customer_id=cid,
+            customer_details=customer_details,
+            all_recommendations=all_recs,
+            churn_risk_score=churn_score,
+            churn_category=churn_category,
+            fallback_products=fallback_products or None,
+        )
+
+        pname = (customer_details or {}).get('persona') or ''
+        recs, meta = execute_next_best_banking(
+            customer_id=cid,
+            top_n=min(50, max(1, int(body.top_n or 10))),
+            products_df=products_df,
+            all_recs=all_recs if isinstance(all_recs, dict) else {},
+            agent_c_result=agent_c_result,
+            wishlist_rows=b.get('agent_d_wishlist_rows') or [],
+            incomplete_rows=b.get('agent_d_incomplete_rows') or [],
+            impression_rows=impressions,
+            persona_name=str(pname),
+        )
+        new_rows = meta.pop('new_impression_rows', [])
+        apply_impression_rows(impressions, new_rows)
+        _save_banking_agent_d_impressions_csv()
+
+        return {
+            'success': True,
+            'customer_id': cid,
+            'recommendations': numpy_to_python_types(recs),
+            'sources_used': meta.get('sources_used', []),
+            'excluded_count': meta.get('excluded_count', 0),
+            'no_repeat_message': meta.get('no_repeat_message', ''),
+            'uses_agent_b': 'agent_b' in (meta.get('sources_used') or []),
+            'uses_agent_c': 'agent_c' in (meta.get('sources_used') or []),
+            'persona_name': meta.get('persona_name', ''),
+        }
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Agent D next-best: {e}")
+        logger.error(traceback.format_exc())
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+class BankingAgentDClickBody(BaseModel):
+    customer_id: str
+    product_id: str
+
+
+@app.post("/api/banking/agent_d/click")
+async def banking_agent_d_click(body: BankingAgentDClickBody):
+    """Record click engagement; pin this product #1 for next Agent B when use_agent_d_directives is on."""
+    from agents.agent_d_banking_next_best import mark_impression_clicked
+
+    _load_banking_agent_d_csv_tables()
+    impressions = system_state['banking'].setdefault('agent_d_impression_rows', [])
+    ok = mark_impression_clicked(impressions, body.customer_id, body.product_id)
+    _save_banking_agent_d_impressions_csv()
+
+    cid = str(body.customer_id).strip()
+    pid = str(body.product_id).strip()
+    store = system_state['banking'].setdefault('agent_d_ledger', {})
+    if cid not in store:
+        store[cid] = {'impressions': {}, 'last_session_product_ids': [], 'last_directives': {}}
+    led = store[cid]
+    d = led.setdefault('last_directives', {})
+    d['priority_pin_product_id'] = pid
+    d['focus_source'] = 'clicked_recommendation'
+    boost = [x for x in (d.get('boost_product_ids') or []) if str(x).strip() != pid]
+    d['boost_product_ids'] = [pid] + boost
+
+    return {'success': True, 'updated': ok, 'pinned_for_agent_b': pid}
+
+
+@app.get("/api/banking/agent_d/directives/{customer_id}")
+async def banking_agent_d_directives(customer_id: str):
+    """Last supervisor directives for this customer (for Agent B use_agent_d_directives)."""
+    ledger = system_state['banking'].setdefault('agent_d_ledger', {}).get(str(customer_id).strip()) or {}
+    return {
+        'success': True,
+        'customer_id': customer_id,
+        'next_visit_directives': ledger.get('last_directives') or {},
+        'impressions_summary': ledger.get('impressions') or {},
+    }
+
+
+@app.delete("/api/banking/agent_d/ledger/{customer_id}")
+async def banking_agent_d_ledger_reset(customer_id: str):
+    """Reset Agent D impression ledger for a customer (demo)."""
+    cid = str(customer_id).strip()
+    system_state['banking'].setdefault('agent_d_ledger', {}).pop(cid, None)
+    return {'success': True, 'message': f'Ledger cleared for {cid}'}
+
+
+@app.get("/api/banking/agent_c/one-best-offer/{customer_id}")
+async def get_banking_one_best_offer(customer_id: str):
+    """
+    Agent C: One best offer per customer with explainability and cross-channel payload.
+    Returns single recommended product, score, reason, why-this-offer, why-our-AI, and channel suggestions.
+    """
+    try:
+        if not system_state['banking']['agent_a_results']:
+            raise HTTPException(status_code=404, detail="Run Agent A first to load segments.")
+        init_banking_agent_b()
+        customer_details = banking_agent_a.get_customer_details(customer_id)
+        all_recs = banking_agent_b.get_all_recommendations(customer_id, None, None)
+        if all_recs.get("error"):
+            raise HTTPException(status_code=404, detail=all_recs.get("error", "Customer or recommendations not found."))
+        churn_score = None
+        churn_category = None
+        try:
+            from utils.churn_feature_generator import add_essential_churn_features
+            df_c = banking_agent_a.customers_df
+            if df_c is not None and hasattr(df_c, "columns") and "churn_risk_score" in df_c.columns:
+                df_churn = df_c
+            else:
+                df_churn = add_essential_churn_features(
+                    banking_agent_a.customers_df,
+                    banking_agent_a.transactions_df
+                )
+            row = df_churn[df_churn["customer_id"] == customer_id]
+            if len(row) > 0:
+                row = row.iloc[0]
+                churn_score = float(row.get("churn_risk_score", 0))
+                churn_category = str(row.get("churn_risk_category", ""))
+        except Exception:
+            pass
+        # Fallback product list when no recommendations pass eligibility
+        fallback_products = []
+        products_df = getattr(banking_agent_a, "products_df", None)
+        if products_df is None:
+            products_df = system_state["banking"].get("products")
+        if products_df is not None and len(products_df) > 0:
+            for _, row in products_df.iterrows():
+                fallback_products.append({
+                    "product_id": row.get("product_id"),
+                    "product_name": row.get("product_name"),
+                    "category": row.get("category") or row.get("subcategory") or "Banking",
+                    "annual_fee": row.get("annual_fee"),
+                    "min_balance": row.get("min_balance"),
+                    "interest_rate_apy": row.get("interest_rate_apy") or row.get("interest_rate"),
+                })
+        result = banking_agent_c.get_one_best_offer(
+            customer_id=customer_id,
+            customer_details=customer_details,
+            all_recommendations=all_recs,
+            churn_risk_score=churn_score,
+            churn_category=churn_category,
+            fallback_products=fallback_products if fallback_products else None,
+        )
+        return {"success": True, "data": numpy_to_python_types(result)}
+    except HTTPException:
+        raise
+    except ValueError as e:
+        raise HTTPException(status_code=404, detail=str(e))
+    except Exception as e:
+        logger.error(f"Error getting one best offer: {e}")
+        logger.error(traceback.format_exc())
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/api/banking/agent_c/persona-best-offer")
+async def get_banking_persona_best_offer(persona_id: int = 0):
+    """
+    Agent C: One representative best offer for a persona (segment).
+    Picks a representative customer from the segment and returns their one-best-offer plus segment context.
+    """
+    try:
+        if not system_state['banking']['agent_a_results']:
+            raise HTTPException(status_code=404, detail="Run Agent A first to load segments.")
+        init_banking_agent_b()
+        personas = banking_agent_a.personas
+        # Personas keys may be int or numpy.int64; ensure we look up with a key that exists
+        persona_key = None
+        for k in personas.keys():
+            if k == persona_id or (isinstance(k, (int, float)) and int(k) == persona_id):
+                persona_key = k
+                break
+        if persona_key is None:
+            raise HTTPException(status_code=404, detail=f"Persona id {persona_id} not found.")
+        persona = personas[persona_key]
+        persona_name = persona.get("persona_name", "Unknown")
+        df = banking_agent_a.customers_df
+        if df is None:
+            raise HTTPException(status_code=404, detail="No customer data.")
+        # cluster column may be int or same type as persona_key
+        segment_customers = df[df["cluster"] == persona_key]
+        if len(segment_customers) == 0:
+            segment_customers = df[df["cluster"].astype(int) == int(persona_id)]
+        if len(segment_customers) == 0:
+            raise HTTPException(status_code=404, detail=f"No customers in segment {persona_name}.")
+        # Build fallback product list
+        fallback_products = []
+        products_df = getattr(banking_agent_a, "products_df", None)
+        if products_df is None:
+            products_df = system_state["banking"].get("products")
+        if products_df is not None and len(products_df) > 0:
+            for _, row in products_df.iterrows():
+                fallback_products.append({
+                    "product_id": row.get("product_id"),
+                    "product_name": row.get("product_name"),
+                    "category": row.get("category") or row.get("subcategory") or "Banking",
+                    "annual_fee": row.get("annual_fee"),
+                    "min_balance": row.get("min_balance"),
+                    "interest_rate_apy": row.get("interest_rate_apy") or row.get("interest_rate"),
+                })
+        # Try up to 10 customers in segment until one returns an offer
+        max_try = min(10, len(segment_customers))
+        result = None
+        for i in range(max_try):
+            representative = segment_customers.iloc[i]
+            customer_id = str(representative["customer_id"])
+            customer_details = banking_agent_a.get_customer_details(customer_id)
+            all_recs = banking_agent_b.get_all_recommendations(customer_id, None, None)
+            if all_recs.get("error"):
+                continue
+            churn_score = None
+            churn_category = None
+            try:
+                from utils.churn_feature_generator import add_essential_churn_features
+                df_c = banking_agent_a.customers_df
+                if df_c is not None and hasattr(df_c, "columns") and "churn_risk_score" in df_c.columns:
+                    df_churn = df_c
+                else:
+                    df_churn = add_essential_churn_features(banking_agent_a.customers_df, banking_agent_a.transactions_df)
+                row = df_churn[df_churn["customer_id"] == customer_id]
+                if len(row) > 0:
+                    row = row.iloc[0]
+                    churn_score = float(row.get("churn_risk_score", 0))
+                    churn_category = str(row.get("churn_risk_category", ""))
+            except Exception:
+                pass
+            result = banking_agent_c.get_one_best_offer(
+                customer_id=customer_id,
+                customer_details=customer_details,
+                all_recommendations=all_recs,
+                churn_risk_score=churn_score,
+                churn_category=churn_category,
+                fallback_products=fallback_products if fallback_products else None,
+            )
+            if result.get("offer") is not None:
+                break
+        if result is None:
+            raise HTTPException(status_code=404, detail="Could not get recommendations for any customer in this segment.")
+        result["persona_id"] = persona_id
+        result["persona_name"] = persona_name
+        result["segment_size"] = int(len(segment_customers))
+        result["representative_customer_id"] = result.get("customer_id")
+        rep_row = segment_customers[segment_customers["customer_id"].astype(str) == str(result.get("customer_id"))]
+        result["representative_customer_name"] = str(rep_row.iloc[0].get("customer_name", result.get("customer_id"))) if len(rep_row) > 0 else str(result.get("customer_id"))
+        result["note"] = f"Representative offer for segment **{persona_name}** ({len(segment_customers)} customers). Use for segment-level campaigns."
+        return {"success": True, "data": numpy_to_python_types(result)}
+    except HTTPException:
+        raise
+    except ValueError as e:
+        raise HTTPException(status_code=404, detail=str(e))
+    except Exception as e:
+        logger.error(f"Error getting persona best offer: {e}")
+        logger.error(traceback.format_exc())
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+def _get_banking_customers_with_churn():
+    """Lazy compute and cache customers with churn features for cohort API."""
+    if system_state['banking'].get('customers_with_churn') is not None:
+        return system_state['banking']['customers_with_churn']
+    if banking_agent_a.customers_df is None:
+        return None
+    try:
+        from utils.churn_feature_generator import add_essential_churn_features
+        df = add_essential_churn_features(
+            banking_agent_a.customers_df,
+            banking_agent_a.transactions_df
+        )
+        system_state['banking']['customers_with_churn'] = df
+        return df
+    except Exception as e:
+        logger.warning(f"Churn features not available: {e}")
+        return None
+
+
+@app.get("/api/banking/churn-cohort")
+async def get_banking_churn_cohort(
+    risk: str = "High,Critical",
+    limit: int = 50,
+    skip: int = 0
+):
+    """
+    Get high churn-risk customers for targeting. risk comma-separated: Low, Medium, High, Critical.
+    """
+    try:
+        if not system_state['banking']['agent_a_results']:
+            raise HTTPException(status_code=404, detail="Run Agent A first.")
+        df = _get_banking_customers_with_churn()
+        if df is None or "churn_risk_category" not in df.columns:
+            return {
+                "success": True,
+                "cohort": [],
+                "total": 0,
+                "message": "Churn data not available. Load data with churn features or run add_churn_to_existing_data."
+            }
+        categories = [s.strip() for s in risk.split(",") if s.strip()]
+        mask = df["churn_risk_category"].isin(categories)
+        subset = df[mask].copy()
+        total = len(subset)
+        subset = subset.sort_values("churn_risk_score", ascending=False).iloc[skip : skip + limit]
+        personas = banking_agent_a.personas
+        from utils.churn_feature_generator import format_churn_risk_reason
+
+        cohort = []
+        for _, row in subset.iterrows():
+            cid = row.get("customer_id")
+            cluster = row.get("cluster")
+            persona_name = personas.get(cluster, {}).get("persona_name", "Unknown") if cluster is not None else "Unknown"
+            reason = row.get("churn_risk_reason")
+            if reason is None or (isinstance(reason, float) and pd.isna(reason)) or str(reason).strip() == "":
+                reason = format_churn_risk_reason(row)
+            reason = str(reason).strip()
+            if not reason:
+                sc = float(row.get("churn_risk_score", 0) or 0)
+                cat = str(row.get("churn_risk_category", "") or "")
+                reason = (
+                    f"{cat} risk ({sc:.0f}/100): transaction recency & volume, balances vs income, "
+                    "product depth, and digital engagement."
+                )
+            cohort.append({
+                "customer_id": str(cid),
+                "customer_name": str(row.get("customer_name", cid)),
+                "churn_risk_score": float(row.get("churn_risk_score", 0)),
+                "churn_risk_category": str(row.get("churn_risk_category", "")),
+                "churn_risk_reason": reason,
+                "reason": reason,
+                "persona": persona_name,
+                "total_deposits": float(row.get("total_deposits", 0)),
+                "num_products": int(row.get("num_products", 0)),
+                "recommended_retention_action": str(row.get("recommended_retention_action", "")),
+            })
+        return {
+            "success": True,
+            "cohort": numpy_to_python_types(cohort),
+            "total": total,
+            "skip": skip,
+            "limit": limit,
+        }
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error getting churn cohort: {e}")
+        logger.error(traceback.format_exc())
+        raise HTTPException(status_code=500, detail=str(e))
+
+
 @app.get("/api/banking/products")
 async def list_banking_products():
     """List all banking products"""
@@ -3253,9 +3965,12 @@ if os.path.exists(frontend_dist):
 
     @app.get("/{full_path:path}")
     async def serve_spa(full_path: str):
-        """Serve index.html for all non-API, non-asset routes (SPA client-side routing)"""
+        """Serve index.html for all non-API, non-asset routes (SPA client-side routing). Do not handle API paths here so registered API routes match first."""
         if full_path.startswith("api/") or full_path.startswith("api\\"):
-            raise HTTPException(status_code=404, detail="Not Found")
+            raise HTTPException(
+                status_code=404,
+                detail="API route not found. If you added a new endpoint, restart the backend so it is registered.",
+            )
         return FileResponse(os.path.join(frontend_dist, "index.html"))
 
 

@@ -99,18 +99,40 @@ class Banking12FactorScorer:
         
         logger.info(f"📊 Pre-computed statistics for {len(self.customer_products)} customers")
     
+    def _merge_factor_weights(self, factor_weights: Dict = None) -> Dict[str, float]:
+        """Merge API/UI weights (percentages 0–100 or fractions) with defaults; normalize to sum 1.0."""
+        if not factor_weights:
+            return dict(self.WEIGHTS)
+        keys = list(self.WEIGHTS.keys())
+        merged = {}
+        for k in keys:
+            if k not in factor_weights:
+                merged[k] = self.WEIGHTS[k]
+                continue
+            v = float(factor_weights[k])
+            merged[k] = (v / 100.0) if v > 1.5 else v
+        s = sum(merged.values())
+        if s <= 0:
+            return dict(self.WEIGHTS)
+        return {k: merged[k] / s for k in keys}
+    
     def score_product(
         self,
         customer: Dict,
         product: Dict,
-        persona: Dict = None
+        persona: Dict = None,
+        factor_weights: Dict = None,
     ) -> Dict:
         """
         Score a single banking product for a customer using all 12 factors
         
+        Args:
+            factor_weights: Optional dict of factor_key -> percent (0-100) or fraction; normalized to sum 1.
+        
         Returns:
             detailed_breakdown with total_score and factor breakdowns
         """
+        wt = self._merge_factor_weights(factor_weights)
         breakdown = {}
         customer_id = customer.get('customer_id', '')
         
@@ -140,7 +162,7 @@ class Banking12FactorScorer:
             credit_score, income, total_deposits,
             min_credit_score, min_income, min_balance
         )
-        w1 = self.WEIGHTS['eligibility_score']
+        w1 = wt['eligibility_score']
         c1 = eligibility['score'] * w1
         breakdown['eligibility_score'] = {
             'score': c1,
@@ -155,7 +177,7 @@ class Banking12FactorScorer:
         financial_need = self._calculate_financial_need_match(
             age, income, total_deposits, num_products, category, product
         )
-        w2 = self.WEIGHTS['financial_need_match']
+        w2 = wt['financial_need_match']
         c2 = financial_need['score'] * w2
         breakdown['financial_need_match'] = {
             'score': c2,
@@ -167,7 +189,7 @@ class Banking12FactorScorer:
         
         # ==================== FACTOR 3: RELATIONSHIP DEPTH (15%) ====================
         relationship = self._calculate_relationship_depth(num_products, customer.get('tenure_months', 12))
-        w3 = self.WEIGHTS['relationship_depth']
+        w3 = wt['relationship_depth']
         c3 = relationship['score'] * w3
         breakdown['relationship_depth'] = {
             'score': c3,
@@ -181,7 +203,7 @@ class Banking12FactorScorer:
         product_value = self._calculate_product_value(
             product, customer, income, total_deposits, persona
         )
-        w4 = self.WEIGHTS['product_value']
+        w4 = wt['product_value']
         c4 = product_value['score'] * w4
         breakdown['product_value'] = {
             'score': c4,
@@ -194,7 +216,7 @@ class Banking12FactorScorer:
         
         # ==================== FACTOR 5: PRODUCT PAIRING (9%) ====================
         pairing = self._calculate_product_pairing(customer_id, product_id, category)
-        w5 = self.WEIGHTS['product_pairing']
+        w5 = wt['product_pairing']
         c5 = pairing['score'] * w5
         breakdown['product_pairing'] = {
             'score': c5,
@@ -207,7 +229,7 @@ class Banking12FactorScorer:
         
         # ==================== FACTOR 6: CHANNEL FIT (7%) ====================
         channel = self._calculate_channel_fit(digital_engagement, product.get('digital_required', False))
-        w6 = self.WEIGHTS['channel_fit']
+        w6 = wt['channel_fit']
         c6 = channel['score'] * w6
         breakdown['channel_fit'] = {
             'score': c6,
@@ -221,7 +243,7 @@ class Banking12FactorScorer:
         complexity = self._calculate_complexity_match(
             digital_engagement, total_deposits, product.get('complexity_score', 2)
         )
-        w7 = self.WEIGHTS['complexity_match']
+        w7 = wt['complexity_match']
         c7 = complexity['score'] * w7
         breakdown['complexity_match'] = {
             'score': c7,
@@ -232,7 +254,7 @@ class Banking12FactorScorer:
         }
         
         # ==================== FACTOR 8: INTENT SCORE (3%) ====================
-        w8 = self.WEIGHTS['intent_score']
+        w8 = wt['intent_score']
         c8 = cross_sell_receptivity * w8
         breakdown['intent_score'] = {
             'score': c8,
@@ -244,7 +266,7 @@ class Banking12FactorScorer:
         
         # ==================== FACTOR 9: SEGMENT AFFINITY (2%) ====================
         segment_score = self._calculate_segment_affinity(customer, product_id, persona)
-        w9 = self.WEIGHTS['segment_affinity']
+        w9 = wt['segment_affinity']
         c9 = segment_score['score'] * w9
         breakdown['segment_affinity'] = {
             'score': c9,
@@ -256,7 +278,7 @@ class Banking12FactorScorer:
         
         # ==================== FACTOR 10: TRANSACTION PATTERN (1%) ====================
         transaction = self._calculate_transaction_pattern(customer.get('transaction_frequency', 'medium'))
-        w10 = self.WEIGHTS['transaction_pattern']
+        w10 = wt['transaction_pattern']
         c10 = transaction['score'] * w10
         breakdown['transaction_pattern'] = {
             'score': c10,
@@ -269,7 +291,7 @@ class Banking12FactorScorer:
         # ==================== FACTOR 11: PRODUCT RATING (4%) ====================
         rating = product.get('avg_rating', 4.0)
         rating_score = rating / 5.0
-        w11 = self.WEIGHTS['product_rating']
+        w11 = wt['product_rating']
         c11 = rating_score * w11
         breakdown['product_rating'] = {
             'score': c11,
@@ -281,7 +303,7 @@ class Banking12FactorScorer:
         
         # ==================== FACTOR 12: POPULARITY (3%) ====================
         popularity = self._calculate_popularity(product_id, customer.get('cluster', customer.get('macro_segment_id')))
-        w12 = self.WEIGHTS['popularity']
+        w12 = wt['popularity']
         c12 = popularity['score'] * w12
         breakdown['popularity'] = {
             'score': c12,

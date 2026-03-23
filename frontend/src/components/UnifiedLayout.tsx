@@ -1,5 +1,5 @@
 import { Outlet, NavLink, useNavigate } from 'react-router-dom';
-import { Home, Database, Users, Target, ArrowLeftRight, Sparkles, BarChart3 } from 'lucide-react';
+import { Home, Database, Users, Target, ArrowLeftRight, Sparkles, BarChart3, Layers } from 'lucide-react';
 import { useQuery } from '@tanstack/react-query';
 
 interface UnifiedLayoutProps {
@@ -72,7 +72,9 @@ export default function UnifiedLayout({ industry }: UnifiedLayoutProps) {
     { path: `/${industry}/data-loader`, label: 'Data Loader', icon: Database },
     { path: `/${industry}/macro-dashboard`, label: 'Segments View', icon: BarChart3 },
     { path: `/${industry}/agent-a`, label: 'Agent A: Personas', icon: Users },
-    { path: `/${industry}/agent-b`, label: 'Agent B: Products', icon: Target }
+    { path: `/${industry}/agent-b`, label: 'Agent B: Products', icon: Target },
+    { path: `/${industry}/agent-c`, label: 'Agent C: One Best Offer', icon: Sparkles },
+    { path: `/${industry}/agent-d`, label: 'Agent D: Supervisor', icon: Layers }
   ] : industry === 'academy' ? [
     { path: `/${industry}`, label: 'Dashboard', icon: Home },
     { path: `/${industry}/macro-dashboard`, label: 'Visual Dashboard', icon: BarChart3 },

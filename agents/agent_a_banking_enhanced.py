@@ -1464,15 +1464,33 @@ class AgentA_Banking_Enhanced:
         
         return validation
     
-    def get_all_customers(self, skip=0, limit=50, persona_filter=None, search_query=None):
-        """Get paginated list of customers with persona assignments"""
+    def get_all_customers(self, skip=0, limit=50, persona_filter=None, search_query=None, cluster_id=None):
+        """Get paginated list of customers with persona assignments.
+        If cluster_id is set, only customers in that segment (matches personas / Agent A cluster).
+        Loads CSV via load_data() if execute() has not been run yet (dropdowns work before Agent A)."""
         if self.customers_df is None:
-            raise ValueError("No customer data loaded. Run execute() first.")
-        
+            if not self.load_data():
+                raise ValueError(
+                    "Banking dataset not found. Add data/preloaded/fmb_bank/ CSVs or run Agent A."
+                )
         df = self.customers_df.copy()
+        if "cluster" not in df.columns:
+            df["cluster"] = 0
+        else:
+            df["cluster"] = pd.to_numeric(df["cluster"], errors="coerce").fillna(0)
         
         # Apply filters
-        if persona_filter:
+        if cluster_id is not None and str(cluster_id).strip() != "":
+            try:
+                cid = int(float(cluster_id))
+                cnum = pd.to_numeric(df["cluster"], errors="coerce")
+                mask = cnum == cid
+                if not mask.any():
+                    mask = df["cluster"].astype(str).str.strip() == str(cid)
+                df = df[mask]
+            except (TypeError, ValueError, KeyError):
+                pass
+        elif persona_filter:
             # Map persona short name to cluster ID
             cluster_ids = [cid for cid, p in self.personas.items() if p['short_name'] == persona_filter]
             if cluster_ids:
@@ -1488,18 +1506,29 @@ class AgentA_Banking_Enhanced:
         # Prepare response
         customers = []
         for _, row in df_page.iterrows():
-            cluster_id = row['cluster']
-            persona = self.personas.get(cluster_id, {})
+            try:
+                cid = int(float(row["cluster"]))
+            except (TypeError, ValueError):
+                cid = 0
+            persona = self.personas.get(cid, {})
+            if not persona and self.personas:
+                for k, p in self.personas.items():
+                    try:
+                        if int(float(k)) == cid:
+                            persona = p
+                            break
+                    except (TypeError, ValueError):
+                        continue
             
             customers.append({
                 'customer_id': row['customer_id'],
-                'customer_name': row['customer_name'],
-                'persona': persona.get('persona_name', 'Unknown'),
-                'persona_short': persona.get('short_name', 'Unknown'),
-                'cluster_id': int(cluster_id),
-                'total_deposits': float(row['total_deposits']),
-                'num_products': int(row['num_products']),
-                'digital_engagement': float(row['digital_engagement_score'])
+                'customer_name': row.get('customer_name', row['customer_id']),
+                'persona': persona.get('persona_name', 'All customers' if cid == 0 and not self.personas else 'Unknown'),
+                'persona_short': persona.get('short_name', '—'),
+                'cluster_id': cid,
+                'total_deposits': float(row.get('total_deposits', 0) or 0),
+                'num_products': int(float(row.get('num_products', 0) or 0)),
+                'digital_engagement': float(row.get('digital_engagement_score', 0.5) or 0)
             })
         
         return {

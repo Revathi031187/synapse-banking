@@ -1,8 +1,93 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useMemo } from 'react';
 import { Link } from 'react-router-dom';
 import { useQuery, useMutation } from '@tanstack/react-query';
-import { Search, CreditCard, TrendingUp, AlertCircle, CheckCircle2, Star, DollarSign, ChevronDown, Briefcase } from 'lucide-react';
+import {
+  Search,
+  CreditCard,
+  TrendingUp,
+  AlertCircle,
+  CheckCircle2,
+  Star,
+  DollarSign,
+  ChevronDown,
+  Briefcase,
+  Wand2,
+  RotateCcw,
+  Save,
+  Target,
+  BarChart2,
+  User,
+  Bot,
+} from 'lucide-react';
 import { getBankingApiBase } from '../../utils/apiBase';
+
+/** Banking 12-factor groups — mirrors Academy “Product fit / Persona / Social / Freshness” layout */
+const FACTOR_WEIGHT_GROUPS: {
+  id: string;
+  label: string;
+  description: string;
+  keys: string[];
+}[] = [
+  {
+    id: 'product_value',
+    label: 'Product & value fit',
+    description:
+      'Fees, APY, minimums, and how well the product category matches life stage and financial needs — plus cross-sell pairing.',
+    keys: ['product_value', 'financial_need_match', 'product_pairing'],
+  },
+  {
+    id: 'persona_eligibility',
+    label: 'Persona & eligibility',
+    description:
+      'Credit, income, and balance requirements, relationship depth with the bank, and product complexity vs customer sophistication.',
+    keys: ['eligibility_score', 'relationship_depth', 'complexity_match'],
+  },
+  {
+    id: 'social_quality',
+    label: 'Social proof & quality',
+    description: 'Product ratings, adoption within the segment, and peer behavior alignment.',
+    keys: ['product_rating', 'popularity', 'segment_affinity'],
+  },
+  {
+    id: 'channel_intent',
+    label: 'Channel & intent',
+    description: 'Digital vs branch fit, cross-sell receptivity, and transaction activity patterns.',
+    keys: ['channel_fit', 'intent_score', 'transaction_pattern'],
+  },
+];
+
+const ALL_BANKING_FACTOR_KEYS = FACTOR_WEIGHT_GROUPS.flatMap((g) => g.keys);
+
+/** Defaults match backend Banking12FactorScorer (sum 100%) — always show factors even if API is slow */
+const BANKING_DEFAULTS_PERCENT: Record<string, number> = {
+  eligibility_score: 22,
+  financial_need_match: 18,
+  relationship_depth: 15,
+  product_value: 12,
+  product_pairing: 9,
+  channel_fit: 7,
+  complexity_match: 4,
+  intent_score: 3,
+  segment_affinity: 2,
+  transaction_pattern: 1,
+  product_rating: 4,
+  popularity: 3,
+};
+
+const BANKING_FACTOR_LABELS_FALLBACK: Record<string, string> = {
+  eligibility_score: 'Eligibility (credit, income, balance)',
+  financial_need_match: 'Financial need match',
+  relationship_depth: 'Relationship depth & loyalty',
+  product_value: 'Product value (fees, APY, min balance)',
+  product_pairing: 'Cross-sell / product pairing',
+  channel_fit: 'Channel fit (digital vs branch)',
+  complexity_match: 'Complexity vs sophistication',
+  intent_score: 'Cross-sell intent / receptivity',
+  segment_affinity: 'Segment affinity (peer behavior)',
+  transaction_pattern: 'Transaction pattern fit',
+  product_rating: 'Product rating / quality',
+  popularity: 'Popularity in segment',
+};
 
 const MATCH_LEVEL_COLORS = {
   'Perfect Match': 'bg-green-100 text-green-800 border-green-300',
@@ -21,6 +106,53 @@ export default function BankingAgentB() {
   const [category, setCategory] = useState('');
   const [topN, setTopN] = useState(10);
   const [expandedExplanations, setExpandedExplanations] = useState<Record<number, boolean>>({});
+  const [useAgentDDirectives, setUseAgentDDirectives] = useState(false);
+  const agentDAutoAppliedRef = React.useRef<string>('');
+
+  const agentDDirectivesQuery = useQuery({
+    queryKey: ['banking-agent-d-directives-b', customerId],
+    queryFn: async () => {
+      const res = await fetch(
+        `${API_BASE_URL}/api/banking/agent_d/directives/${encodeURIComponent(customerId)}`
+      );
+      if (!res.ok) return { next_visit_directives: null as Record<string, unknown> | null };
+      return res.json();
+    },
+    enabled: mode === 'customer' && !!customerId && scoringMethod === 'rules',
+    staleTime: 30_000,
+  });
+
+  React.useEffect(() => {
+    agentDAutoAppliedRef.current = '';
+  }, [customerId]);
+
+  React.useEffect(() => {
+    if (
+      mode !== 'customer' ||
+      !customerId ||
+      !agentDDirectivesQuery.isSuccess ||
+      scoringMethod !== 'rules'
+    )
+      return;
+    const pin = (agentDDirectivesQuery.data?.next_visit_directives as { priority_pin_product_id?: string } | null)
+      ?.priority_pin_product_id;
+    if (!pin || String(pin).trim() === '') return;
+    if (agentDAutoAppliedRef.current === customerId) return;
+    agentDAutoAppliedRef.current = customerId;
+    setUseAgentDDirectives(true);
+  }, [
+    mode,
+    customerId,
+    scoringMethod,
+    agentDDirectivesQuery.isSuccess,
+    agentDDirectivesQuery.data,
+  ]);
+  const [factorWeights, setFactorWeights] = useState<Record<string, number>>(() => ({
+    ...BANKING_DEFAULTS_PERCENT,
+  }));
+  const [factorLabels, setFactorLabels] = useState<Record<string, string>>({});
+  const [weightsSavedOk, setWeightsSavedOk] = useState<string | null>(null);
+  const [weightsAccordionOpen, setWeightsAccordionOpen] = useState(true);
 
   // Query to get available personas
   const personasQuery = useQuery({
@@ -52,6 +184,112 @@ export default function BankingAgentB() {
     enabled: mode === 'customer'
   });
 
+  const factorMetaQuery = useQuery({
+    queryKey: ['banking-agent-b-factor-meta'],
+    queryFn: async () => {
+      const res = await fetch(`${API_BASE_URL}/api/banking/agent_b/factor-metadata`);
+      if (!res.ok) throw new Error('factor-metadata');
+      return res.json();
+    },
+    enabled: scoringMethod === 'rules',
+  });
+
+  const factorWeightsQuery = useQuery({
+    queryKey: ['banking-agent-b-factor-weights'],
+    queryFn: async () => {
+      const res = await fetch(`${API_BASE_URL}/api/banking/agent_b/factor-weights`);
+      if (!res.ok) throw new Error('factor-weights');
+      return res.json();
+    },
+    enabled: scoringMethod === 'rules',
+  });
+
+  useEffect(() => {
+    if (factorMetaQuery.data?.labels) setFactorLabels(factorMetaQuery.data.labels as Record<string, string>);
+  }, [factorMetaQuery.data]);
+
+  useEffect(() => {
+    const w = factorWeightsQuery.data?.weights_percent;
+    if (w && typeof w === 'object') {
+      setFactorWeights((prev) => ({ ...BANKING_DEFAULTS_PERCENT, ...prev, ...(w as Record<string, number>) }));
+    }
+  }, [factorWeightsQuery.data]);
+
+  const effectiveFactorLabels = useMemo(
+    () => ({ ...BANKING_FACTOR_LABELS_FALLBACK, ...factorLabels }),
+    [factorLabels]
+  );
+
+  const weightsSum = useMemo(() => {
+    return ALL_BANKING_FACTOR_KEYS.reduce((s, k) => s + (Number(factorWeights[k]) || 0), 0);
+  }, [factorWeights]);
+  const weightsValid = weightsSum >= 99 && weightsSum <= 101;
+
+  const saveWeightsMutation = useMutation({
+    mutationFn: async () => {
+      const weights: Record<string, number> = {};
+      ALL_BANKING_FACTOR_KEYS.forEach((k) => {
+        const n = Number(factorWeights[k]);
+        weights[k] = Number.isFinite(n) ? n : BANKING_DEFAULTS_PERCENT[k] ?? 0;
+      });
+      const res = await fetch(`${API_BASE_URL}/api/banking/agent_b/factor-weights`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ weights }),
+      });
+      const j = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(j.detail || 'Save failed');
+      return j;
+    },
+    onSuccess: (j) => {
+      setWeightsSavedOk(j.message || 'Saved');
+      factorWeightsQuery.refetch();
+      setTimeout(() => setWeightsSavedOk(null), 4000);
+    },
+  });
+
+  const resetWeightsMutation = useMutation({
+    mutationFn: async () => {
+      const res = await fetch(`${API_BASE_URL}/api/banking/agent_b/factor-weights/reset`, { method: 'POST' });
+      if (!res.ok) throw new Error('Reset failed');
+      return res.json();
+    },
+    onSuccess: (j) => {
+      if (j.weights_percent) setFactorWeights(j.weights_percent);
+      factorWeightsQuery.refetch();
+      setWeightsSavedOk(j.message || 'Defaults restored');
+      setTimeout(() => setWeightsSavedOk(null), 4000);
+    },
+  });
+
+  const aiWeightsMutation = useMutation({
+    mutationFn: async (personaId: number) => {
+      const res = await fetch(`${API_BASE_URL}/api/banking/agent_b/factor-weights/ai`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ persona_id: personaId }),
+      });
+      const j = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(j.detail || 'AI weights failed');
+      return j;
+    },
+    onSuccess: (j) => {
+      if (j.weights_percent) setFactorWeights(j.weights_percent as Record<string, number>);
+    },
+  });
+
+  const runAiWeights = () => {
+    let personaId = 0;
+    if (mode === 'persona' && persona !== '') personaId = Number(persona);
+    else if (mode === 'customer' && customerId) {
+      const list = customersQuery.data?.data?.customers || [];
+      const row = list.find((c: { customer_id: string }) => String(c.customer_id) === String(customerId));
+      personaId = row?.cluster_id != null ? Number(row.cluster_id) : 0;
+    } else if (personas.length) personaId = Number(personas[0].id);
+    if (Number.isNaN(personaId)) personaId = 0;
+    aiWeightsMutation.mutate(personaId);
+  };
+
   // Mutation to execute Agent B (supports rule-based and hybrid ML)
   const executeMutation = useMutation({
     mutationFn: async () => {
@@ -79,13 +317,27 @@ export default function BankingAgentB() {
       if (scoringMethod === 'rules') {
         requestBody.explain = true;
       }
+      if (scoringMethod === 'rules' && mode === 'customer' && customerId && useAgentDDirectives) {
+        requestBody.use_agent_d_directives = true;
+      }
 
       const response = await fetch(endpoint, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(requestBody)
       });
-      if (!response.ok) throw new Error(`Failed to execute Agent B (${scoringMethod})`);
+      if (!response.ok) {
+        const errBody = await response.json().catch(() => ({}));
+        const detail =
+          typeof errBody.detail === 'string'
+            ? errBody.detail
+            : Array.isArray(errBody.detail)
+            ? errBody.detail.map((x: { msg?: string }) => x.msg).join('; ')
+            : '';
+        throw new Error(
+          detail || `Failed to execute Agent B (${scoringMethod}) — HTTP ${response.status}`
+        );
+      }
       return response.json();
     }
   });
@@ -127,190 +379,404 @@ export default function BankingAgentB() {
   }, [recommendations]);
 
   return (
-    <div className="max-w-7xl mx-auto p-6 space-y-6">
-      {/* Header */}
-      <div className="bg-white rounded-lg shadow p-6">
-        <div className="flex items-start justify-between">
-          <div>
-            <h1 className="text-3xl font-bold text-gray-900 flex items-center gap-3">
-              🏦 F&M Bank Agent B
-            </h1>
-            <p className="text-gray-600 mt-2">
-              Personalized Banking Product Recommendations using 12-Factor Scoring
-            </p>
+    <div className="max-w-7xl mx-auto px-4 py-6 space-y-6">
+      <div className="max-w-5xl mx-auto bg-white rounded-2xl shadow-xl border border-gray-100 overflow-hidden">
+        {/* Header — Academy-style */}
+        <div className="px-6 pt-6 pb-4 flex flex-col lg:flex-row lg:items-start lg:justify-between gap-4 border-b border-gray-100">
+          <div className="flex gap-3">
+            <div className="shrink-0 p-2.5 rounded-xl bg-blue-50 text-blue-600">
+              <Target className="w-8 h-8" />
+            </div>
+            <div>
+              <h1 className="text-2xl md:text-3xl font-bold text-gray-900 tracking-tight">F&M Bank Agent B</h1>
+              <p className="text-gray-600 mt-1.5 text-sm md:text-base">
+                Personalized financial product recommendations using feature-based (12-factor) scoring
+              </p>
+            </div>
           </div>
-          {/* View Macro Segments Button */}
           <Link
             to="/banking/macro-dashboard"
-            className="flex items-center gap-2 px-4 py-2 bg-gradient-to-r from-blue-600 to-indigo-600 text-white rounded-lg hover:from-blue-700 hover:to-indigo-700 transition-all shadow-md hover:shadow-lg"
+            className="inline-flex items-center justify-center gap-2 px-5 py-2.5 rounded-xl bg-gradient-to-r from-violet-600 to-purple-600 text-white font-semibold text-sm shadow-md hover:from-violet-700 hover:to-purple-700 transition-all shrink-0"
           >
-            <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 19v-6a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2a2 2 0 002-2zm0 0V9a2 2 0 012-2h2a2 2 0 012 2v10m-6 0a2 2 0 002 2h2a2 2 0 002-2m0 0V5a2 2 0 012-2h2a2 2 0 012 2v14a2 2 0 01-2 2h-2a2 2 0 01-2-2z" />
-            </svg>
-            <span className="font-semibold">View Macro Segments</span>
+            <BarChart2 className="w-5 h-5" />
+            View Macro Segments
           </Link>
         </div>
 
-        {/* Scoring Method Tabs */}
-        <div className="mt-6 border-b border-gray-200">
-          <div className="flex space-x-1">
-            <button
-              onClick={() => setScoringMethod('rules')}
-              className={`px-6 py-3 font-semibold transition-all border-b-2 ${
-                scoringMethod === 'rules'
-                  ? 'text-blue-600 border-blue-600 bg-blue-50'
-                  : 'text-gray-600 border-transparent hover:text-gray-900 hover:border-gray-300'
-              }`}
-            >
-              📊 Rule-Based Scoring
-              <span className="ml-2 text-xs px-2 py-1 rounded-full bg-gray-200 text-gray-700">
-                Banking 12-Factor
+        {/* Strategy tabs */}
+        <div className="flex border-b border-gray-200 px-2">
+          <button
+            type="button"
+            onClick={() => setScoringMethod('rules')}
+            className={`relative px-5 py-3.5 font-semibold text-sm md:text-base transition-all border-b-2 -mb-px flex items-center gap-2 flex-wrap ${
+              scoringMethod === 'rules'
+                ? 'text-blue-600 border-blue-600 bg-blue-50/50'
+                : 'text-gray-500 border-transparent hover:text-gray-800 hover:bg-gray-50'
+            }`}
+          >
+            Rule-Based Scoring
+            <span className="text-xs px-2 py-0.5 rounded-full bg-gray-200 text-gray-700 font-medium">
+              Banking 12-Factor
+            </span>
+            {scoringMethod === 'rules' && (
+              <span className="text-[10px] uppercase tracking-wide px-2 py-0.5 rounded-full bg-blue-600 text-white font-bold">
+                Current
               </span>
-            </button>
-            <button
-              onClick={() => setScoringMethod('logit')}
-              className={`px-6 py-3 font-semibold transition-all border-b-2 ${
-                scoringMethod === 'logit'
-                  ? 'text-purple-600 border-purple-600 bg-purple-50'
-                  : 'text-gray-600 border-transparent hover:text-gray-900 hover:border-gray-300'
-              }`}
-            >
-              🤖 Hybrid ML Model
-              <span className="ml-2 text-xs px-2 py-1 rounded-full bg-gradient-to-r from-purple-500 to-pink-500 text-white">
-                50% ML + 50% Rules
+            )}
+          </button>
+          <button
+            type="button"
+            onClick={() => setScoringMethod('logit')}
+            className={`relative px-5 py-3.5 font-semibold text-sm md:text-base transition-all border-b-2 -mb-px flex items-center gap-2 flex-wrap ${
+              scoringMethod === 'logit'
+                ? 'text-purple-600 border-purple-600 bg-purple-50/50'
+                : 'text-gray-500 border-transparent hover:text-gray-800 hover:bg-gray-50'
+            }`}
+          >
+            Hybrid ML Model
+            <span className="text-xs px-2 py-0.5 rounded-full bg-gradient-to-r from-purple-500 to-fuchsia-500 text-white font-medium">
+              50% ML + 50% Rules
+            </span>
+            {scoringMethod === 'logit' && (
+              <span className="text-[10px] uppercase tracking-wide px-2 py-0.5 rounded-full bg-purple-600 text-white font-bold">
+                Current
               </span>
-            </button>
+            )}
+          </button>
+        </div>
+
+        <div className="p-6 space-y-6">
+          {/* Operational mode — pill toggle */}
+          <div>
+            <p className="text-xs font-semibold text-gray-500 uppercase tracking-wider mb-2">Mode</p>
+            <div className="inline-flex rounded-full border border-gray-200 p-1 bg-gray-50 shadow-inner">
+              <button
+                type="button"
+                onClick={() => setMode('persona')}
+                className={`flex items-center gap-2 px-5 py-2.5 rounded-full text-sm font-semibold transition-all ${
+                  mode === 'persona'
+                    ? 'bg-emerald-600 text-white shadow-md'
+                    : 'text-gray-600 hover:text-gray-900'
+                }`}
+              >
+                <BarChart2 className="w-4 h-4" />
+                Persona Mode
+              </button>
+              <button
+                type="button"
+                onClick={() => setMode('customer')}
+                className={`flex items-center gap-2 px-5 py-2.5 rounded-full text-sm font-semibold transition-all ${
+                  mode === 'customer'
+                    ? 'bg-emerald-600 text-white shadow-md'
+                    : 'text-gray-600 hover:text-gray-900'
+                }`}
+              >
+                <User className="w-4 h-4" />
+                Customer Mode
+              </button>
+            </div>
           </div>
-        </div>
 
-        {/* Mode Toggle (Persona vs Customer) */}
-        <div className="mt-6 flex items-center justify-center space-x-4 p-4 bg-gray-50 rounded-lg">
-          <button
-            onClick={() => setMode('persona')}
-            className={`px-6 py-2 rounded-lg font-medium transition-colors ${
-              mode === 'persona'
-                ? 'bg-green-600 text-white shadow-md'
-                : 'bg-white text-gray-700 hover:bg-gray-100'
-            }`}
-          >
-            📊 Persona Mode
-          </button>
-          <button
-            onClick={() => setMode('customer')}
-            className={`px-6 py-2 rounded-lg font-medium transition-colors ${
-              mode === 'customer'
-                ? 'bg-green-600 text-white shadow-md'
-                : 'bg-white text-gray-700 hover:bg-gray-100'
-            }`}
-          >
-            👤 Customer Mode
-          </button>
-        </div>
-
-        {/* Search Form */}
-        <div className="mt-6 space-y-4">
-          <div className="grid md:grid-cols-2 gap-4">
-            {/* Conditional selector based on mode */}
+          <div className="grid md:grid-cols-2 gap-5">
             {mode === 'persona' ? (
               <div className="flex flex-col">
-                <label className="block text-sm font-medium text-gray-700 mb-2">
-                  Customer Persona
-                </label>
+                <label className="block text-sm font-semibold text-gray-800 mb-2">Customer Persona</label>
                 <select
                   value={persona}
                   onChange={(e) => setPersona(e.target.value)}
-                  className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-green-500 focus:border-transparent bg-white"
+                  className="w-full px-4 py-3 border border-gray-300 rounded-xl bg-white text-gray-900 focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
                   disabled={personasQuery.isLoading}
                 >
                   {personasQuery.isLoading ? (
                     <option>Loading personas...</option>
                   ) : personas.length === 0 ? (
-                    <option>No personas available - Run Agent A first</option>
+                    <option>Run Agent A first</option>
                   ) : (
-                    personas.map((p: any) => (
+                    personas.map((p: { id: string; name: string; size?: number; percentage?: number }) => (
                       <option key={p.id} value={p.id}>
-                        {p.name} ({p.size?.toLocaleString() || 0} customers{p.percentage ? `, ${p.percentage.toFixed(1)}%` : ''})
+                        {p.name} ({p.size?.toLocaleString() ?? 0} customers
+                        {p.percentage != null ? `, ${p.percentage.toFixed(1)}%` : ''})
                       </option>
                     ))
                   )}
                 </select>
                 {personas.length === 0 && !personasQuery.isLoading && (
-                  <p className="text-sm text-orange-600 mt-1">
-                    ⚠️ Please run Agent A clustering first to generate personas
-                  </p>
+                  <p className="text-sm text-amber-700 mt-2">Run Agent A clustering to load personas.</p>
                 )}
               </div>
             ) : (
               <div className="flex flex-col">
-                <label className="block text-sm font-medium text-gray-700 mb-2">
-                  Select Customer
-                </label>
+                <label className="block text-sm font-semibold text-gray-800 mb-2">Select Customer</label>
                 <select
                   value={customerId}
                   onChange={(e) => setCustomerId(e.target.value)}
-                  className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-green-500 focus:border-transparent bg-white"
+                  className="w-full px-4 py-3 border border-gray-300 rounded-xl bg-white focus:ring-2 focus:ring-blue-500"
                 >
-                  <option value="">Choose a customer...</option>
-                  {customersQuery.data?.data?.customers?.map((customer: any) => (
+                  <option value="">Choose a customer…</option>
+                  {customersQuery.data?.data?.customers?.map((customer: { customer_id: string; customer_name: string }) => (
                     <option key={customer.customer_id} value={customer.customer_id}>
                       {customer.customer_name} ({customer.customer_id})
                     </option>
                   ))}
                 </select>
+                {scoringMethod === 'rules' && (
+                  <div className="mt-3 space-y-2">
+                    <label className="flex items-center gap-2 text-sm text-gray-700 cursor-pointer">
+                      <input
+                        type="checkbox"
+                        checked={useAgentDDirectives}
+                        onChange={(e) => {
+                          setUseAgentDDirectives(e.target.checked);
+                          if (!e.target.checked) agentDAutoAppliedRef.current = customerId;
+                        }}
+                        className="rounded border-gray-300 text-emerald-600 focus:ring-emerald-500"
+                      />
+                      <span>
+                        Apply <strong>Agent D</strong> supervisor directives (#1 pin matches supervisor)
+                      </span>
+                    </label>
+                    {mode === 'customer' &&
+                      customerId &&
+                      (agentDDirectivesQuery.data?.next_visit_directives as { priority_pin_product_id?: string } | null)
+                        ?.priority_pin_product_id && (
+                        <p
+                          className={`text-xs rounded-lg px-3 py-2 border ${
+                            useAgentDDirectives
+                              ? 'bg-emerald-50 text-emerald-900 border-emerald-200'
+                              : 'bg-amber-50 text-amber-900 border-amber-200'
+                          }`}
+                        >
+                          <Bot className="inline w-3.5 h-3.5 mr-1 align-middle" />
+                          Agent D pinned{' '}
+                          <code className="text-[11px] bg-white/60 px-1 rounded">
+                            {
+                              (agentDDirectivesQuery.data?.next_visit_directives as { priority_pin_product_id: string })
+                                .priority_pin_product_id
+                            }
+                          </code>{' '}
+                          as #1 for this customer.
+                          {!useAgentDDirectives && (
+                            <>
+                              {' '}
+                              <strong>Check the box above</strong> or your list stays pure 12-factor (e.g. Auto Loans
+                              may rank above IRAs).
+                            </>
+                          )}
+                          {useAgentDDirectives && ' Your next run ranks that product first.'}
+                        </p>
+                      )}
+                  </div>
+                )}
               </div>
             )}
             <div className="flex flex-col">
-              <label className="block text-sm font-medium text-gray-700 mb-2">
-                Category (Optional)
-              </label>
+              <label className="block text-sm font-semibold text-gray-800 mb-2">Category (optional)</label>
               <select
                 value={category}
                 onChange={(e) => setCategory(e.target.value)}
-                className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-green-500 focus:border-transparent bg-white"
+                className="w-full px-4 py-3 border border-gray-300 rounded-xl bg-white focus:ring-2 focus:ring-blue-500"
               >
-                <option value="">All Categories</option>
-                <option value="Personal">Personal Banking</option>
-                <option value="Business">Business Banking</option>
-                <option value="Agricultural">Agricultural Banking</option>
+                <option value="">All categories</option>
+                <option value="Personal">Personal banking</option>
+                <option value="Business">Business banking</option>
+                <option value="Agricultural">Agricultural banking</option>
               </select>
             </div>
           </div>
 
-          <div className="grid md:grid-cols-4 gap-4">
+          <div className="grid md:grid-cols-4 gap-4 items-end">
             <div className="md:col-span-3 flex flex-col">
-              <label className="block text-sm font-medium text-gray-700 mb-2">
-                Search Query
-              </label>
+              <label className="block text-sm font-semibold text-gray-800 mb-2">Search query</label>
               <input
                 type="text"
                 value={searchQuery}
                 onChange={(e) => setSearchQuery(e.target.value)}
-                placeholder="e.g., checking account, credit card, savings..."
-                className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-green-500 focus:border-transparent"
+                placeholder="e.g., mortgage, high-yield savings, credit card, CD…"
+                className="w-full px-4 py-3 border border-gray-300 rounded-xl focus:ring-2 focus:ring-blue-500"
               />
             </div>
             <div className="flex flex-col">
-              <label className="block text-sm font-medium text-gray-700 mb-2">
-                Top N
-              </label>
+              <label className="block text-sm font-semibold text-gray-800 mb-2">Top N</label>
               <input
                 type="number"
                 value={topN}
-                onChange={(e) => setTopN(parseInt(e.target.value))}
+                onChange={(e) => setTopN(parseInt(e.target.value, 10) || 10)}
                 min={1}
                 max={20}
-                className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-green-500 focus:border-transparent"
+                className="w-full px-4 py-3 border border-gray-300 rounded-xl focus:ring-2 focus:ring-blue-500 tabular-nums"
               />
             </div>
           </div>
 
+          {/* Accordion: factor weights — rule-based only */}
+          {scoringMethod === 'rules' && (
+            <div className="rounded-xl border border-gray-200 bg-gray-50/50 overflow-hidden">
+              <button
+                type="button"
+                onClick={() => setWeightsAccordionOpen((o) => !o)}
+                className="w-full flex items-center justify-between gap-3 px-4 py-3.5 text-left hover:bg-gray-100/80 transition-colors"
+              >
+                <span className="font-semibold text-gray-900">Adjust factor weights (optional)</span>
+                <ChevronDown
+                  className={`w-5 h-5 text-gray-500 shrink-0 transition-transform duration-200 ${
+                    weightsAccordionOpen ? 'rotate-180' : ''
+                  }`}
+                />
+              </button>
+              {weightsAccordionOpen && (
+                <div className="px-4 pb-5 pt-0 border-t border-gray-200 bg-white space-y-4">
+                  <p className="text-xs text-gray-600 leading-relaxed pt-3">
+                    All factor weights must sum to <strong>100%</strong> before <strong>Submit weights</strong>. Use{' '}
+                    <strong className="text-violet-700">AI recommended weights</strong> for a persona-tuned starting
+                    point, then edit any field. Submitted weights apply to the next rule-based run;{' '}
+                    <strong>Reset to defaults</strong> restores the standard banking split.
+                  </p>
+                  <div className="flex flex-wrap gap-2">
+                    <button
+                      type="button"
+                      onClick={runAiWeights}
+                      disabled={aiWeightsMutation.isPending}
+                      className="inline-flex items-center gap-2 px-4 py-2 rounded-lg bg-gradient-to-r from-violet-600 to-purple-600 text-white text-sm font-medium disabled:opacity-50"
+                    >
+                      {aiWeightsMutation.isPending ? <span className="animate-pulse">…</span> : <Wand2 className="w-4 h-4" />}
+                      AI recommended weights
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => weightsValid && saveWeightsMutation.mutate()}
+                      disabled={!weightsValid || saveWeightsMutation.isPending}
+                      className="inline-flex items-center gap-2 px-4 py-2 rounded-lg bg-emerald-600 text-white text-sm font-medium disabled:opacity-50"
+                    >
+                      <Save className="w-4 h-4" />
+                      Submit weights
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => resetWeightsMutation.mutate()}
+                      disabled={resetWeightsMutation.isPending}
+                      className="inline-flex items-center gap-2 px-4 py-2 rounded-lg border border-gray-300 text-sm font-medium text-gray-700 hover:bg-gray-50"
+                    >
+                      <RotateCcw className="w-4 h-4" />
+                      Reset to defaults
+                    </button>
+                  </div>
+                  {aiWeightsMutation.data?.note && (
+                    <p className="text-xs text-violet-900 bg-violet-50 rounded-lg px-3 py-2 border border-violet-100">
+                      <strong>{aiWeightsMutation.data?.source === 'llm' ? 'AI' : 'Heuristic'}:</strong>{' '}
+                      {aiWeightsMutation.data?.note}
+                    </p>
+                  )}
+                  {weightsSavedOk && (
+                    <p className="text-sm text-emerald-800 bg-emerald-50 border border-emerald-200 rounded-lg px-3 py-2">
+                      {weightsSavedOk}
+                    </p>
+                  )}
+                  <div
+                    className={`flex items-center justify-between rounded-xl px-4 py-2.5 border ${
+                      weightsValid
+                        ? 'bg-emerald-50 border-emerald-200 text-emerald-900'
+                        : 'bg-amber-50 border-amber-200 text-amber-900'
+                    }`}
+                  >
+                    <span className="text-sm font-semibold">Total</span>
+                    <span className="text-lg font-bold tabular-nums">
+                      {weightsSum.toFixed(1)}%
+                      {weightsValid ? (
+                        <CheckCircle2 className="inline w-5 h-5 ml-2 text-emerald-600 align-middle" />
+                      ) : (
+                        <span className="text-xs font-normal ml-2">→ 100% to submit</span>
+                      )}
+                    </span>
+                  </div>
+
+                  <div className="space-y-4">
+                    <p className="text-sm text-gray-600 leading-relaxed">
+                      <span className="font-medium text-gray-800">Group labels:</span>{' '}
+                      {FACTOR_WEIGHT_GROUPS.map((g, i) => (
+                        <span key={g.id}>
+                          {i > 0 ? <span className="text-gray-300 mx-1">·</span> : null}
+                          <a
+                            href={`#banking-factor-${g.id}`}
+                            className="text-blue-600 hover:text-blue-800 hover:underline"
+                            onClick={(e) => {
+                              e.preventDefault();
+                              document
+                                .getElementById(`banking-factor-${g.id}`)
+                                ?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+                            }}
+                          >
+                            {g.label}
+                          </a>
+                        </span>
+                      ))}
+                    </p>
+                    {FACTOR_WEIGHT_GROUPS.map((g) => (
+                      <div
+                        key={g.id}
+                        id={`banking-factor-${g.id}`}
+                        className="rounded-xl border border-gray-200 bg-white p-5 shadow-sm scroll-mt-24"
+                      >
+                        <h3 className="text-base font-bold text-gray-900">{g.label}</h3>
+                        <p className="text-sm text-gray-500 italic mt-1.5 mb-4 leading-relaxed">{g.description}</p>
+                        <div className="grid grid-cols-1 sm:grid-cols-2 gap-x-10 gap-y-3">
+                          {g.keys.map((key) => (
+                            <div
+                              key={key}
+                              className="flex items-center justify-between gap-3 min-w-0 border-b border-gray-100 sm:border-0 pb-2 sm:pb-0 last:border-0"
+                            >
+                              <label
+                                className="text-sm font-medium text-gray-800 leading-snug pr-2 min-w-0"
+                                title={key}
+                              >
+                                {effectiveFactorLabels[key] || key}
+                              </label>
+                              <div className="flex items-center gap-1 shrink-0">
+                                <input
+                                  type="number"
+                                  min={0}
+                                  max={100}
+                                  step={0.5}
+                                  value={
+                                    Number.isFinite(Number(factorWeights[key]))
+                                      ? Number(factorWeights[key]).toFixed(1)
+                                      : String(BANKING_DEFAULTS_PERCENT[key] ?? 0)
+                                  }
+                                  onChange={(e) => {
+                                    const v = parseFloat(e.target.value);
+                                    if (!Number.isNaN(v))
+                                      setFactorWeights({
+                                        ...factorWeights,
+                                        [key]: Math.max(0, Math.min(100, v)),
+                                      });
+                                  }}
+                                  className="w-[4.25rem] border border-gray-300 rounded-md px-2 py-1.5 text-right text-sm font-semibold tabular-nums bg-white"
+                                />
+                                <span className="text-sm text-gray-500 w-5">%</span>
+                              </div>
+                            </div>
+                          ))}
+                        </div>
+                      </div>
+                    ))}
+                    <p className="text-xs text-gray-500">
+                      {factorWeightsQuery.data?.is_custom
+                        ? 'Saved custom weights are used on Run.'
+                        : 'Defaults apply until you submit custom weights.'}
+                    </p>
+                  </div>
+                </div>
+              )}
+            </div>
+          )}
+
           <button
+            type="button"
             onClick={handleSearch}
             disabled={executeMutation.isPending}
-            className="w-full px-6 py-3 bg-green-600 text-white rounded-lg hover:bg-green-700 disabled:bg-gray-400 flex items-center justify-center gap-2 transition-colors font-medium"
+            className="w-full px-6 py-3.5 bg-emerald-600 text-white rounded-xl hover:bg-emerald-700 disabled:bg-gray-400 flex items-center justify-center gap-2 font-semibold shadow-md transition-colors"
           >
             <Search className="w-5 h-5" />
-            {executeMutation.isPending ? 'Searching...' : 'Get Personalized Banking Recommendations'}
+            {executeMutation.isPending ? 'Running…' : 'Get personalized banking recommendations'}
           </button>
         </div>
       </div>
