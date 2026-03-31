@@ -4,6 +4,7 @@ Banking Agent B — 12-factor weight defaults, validation, and AI/heuristic pers
 
 from __future__ import annotations
 
+import hashlib
 import json
 import logging
 import re
@@ -64,6 +65,55 @@ def _normalize_to_100(pct: Dict[str, float]) -> Dict[str, float]:
     return out
 
 
+def build_customer_feature_summary(customer_context: Optional[Dict[str, Any]]) -> str:
+    """Stable, compact summary for LLM prompts and cache keys."""
+    if not customer_context or not isinstance(customer_context, dict):
+        return ""
+    metrics = customer_context.get("metrics") or {}
+    if not isinstance(metrics, dict):
+        metrics = {}
+    parts: List[str] = []
+    cid = customer_context.get("customer_id")
+    if cid is not None:
+        parts.append(f"customer_id={cid}")
+    if customer_context.get("cluster_id") is not None:
+        parts.append(f"cluster_id={customer_context.get('cluster_id')}")
+    pn = customer_context.get("persona")
+    if pn is not None and str(pn).strip():
+        parts.append(f"persona={str(pn).strip()}")
+    for k in (
+        "credit_score",
+        "income",
+        "num_products",
+        "total_deposits",
+        "digital_engagement",
+        "cross_sell_receptivity",
+    ):
+        if k in metrics and metrics.get(k) is not None:
+            try:
+                parts.append(f"{k}={float(metrics[k]):.4g}")
+            except (TypeError, ValueError):
+                parts.append(f"{k}={metrics[k]}")
+    return "; ".join(parts)
+
+
+def ai_weights_cache_fingerprint(
+    persona_id: Optional[int],
+    customer_id: Optional[str],
+    customer_context: Optional[Dict[str, Any]],
+) -> str:
+    """Deterministic short key for caching AI weight + rationale responses."""
+    parts: List[str] = []
+    if persona_id is not None:
+        parts.append(f"pid:{int(persona_id)}")
+    if customer_id:
+        parts.append(f"cid:{str(customer_id).strip()}")
+    summary = build_customer_feature_summary(customer_context)
+    parts.append(f"feat:{summary}")
+    raw = "|".join(parts).encode("utf-8")
+    return hashlib.sha256(raw).hexdigest()[:40]
+
+
 def heuristic_weights_for_persona(persona_name: str) -> Dict[str, float]:
     """Persona-tuned weights when LLM is unavailable."""
     w = {k: float(v) for k, v in _scorer_weights().items()}
@@ -104,49 +154,149 @@ def _parse_llm_json(text: str) -> Optional[Dict[str, Any]]:
         return None
 
 
+def _extract_weights_and_rationales(
+    data: Dict[str, Any], keys: List[str]
+) -> Tuple[Optional[Dict[str, Any]], Optional[Dict[str, Any]]]:
+    """Support nested {weights, rationales} or legacy flat factor keys only."""
+    if not data:
+        return None, None
+    w_block = data.get("weights")
+    r_block = data.get("rationales")
+    if isinstance(w_block, dict):
+        return w_block, r_block if isinstance(r_block, dict) else {}
+    # Legacy: all factor keys at top level
+    if any(k in data for k in keys):
+        return data, {}
+    return None, None
+
+
+def _merge_rationales(keys: List[str], raw: Any) -> Dict[str, str]:
+    out: Dict[str, str] = {}
+    if not isinstance(raw, dict):
+        raw = {}
+    for k in keys:
+        t = raw.get(k)
+        out[k] = (str(t).strip() if t is not None else "")[:500]
+    return out
+
+
+def _finalize_rationales_for_weights(
+    keys: List[str],
+    weights_percent: Dict[str, float],
+    raw_rationales: Dict[str, str],
+) -> Dict[str, str]:
+    """
+    Prefix each rationale with the **final normalized %** and factor label so copy matches sliders.
+    If the model already opened with ~the same %, keep the original text.
+    """
+    out: Dict[str, str] = {}
+    for k in keys:
+        p = round(float(weights_percent.get(k, 0) or 0), 2)
+        label = FACTOR_LABELS.get(k, k)
+        t = (raw_rationales.get(k) or "").strip()
+        if not t:
+            out[k] = f"{p}% of total score on “{label}” (no rationale returned)."
+            continue
+        m = re.match(r"^(\d{1,2}(?:\.\d+)?)\s*%", t)
+        if m:
+            try:
+                stated = float(m.group(1))
+                if abs(stated - p) <= 2.0:
+                    out[k] = t[:500]
+                    continue
+            except ValueError:
+                pass
+        rest = t
+        if rest.lower().startswith("because "):
+            rest = rest[8:].strip()
+        out[k] = f"{p}% → “{label}”: {rest}"[:500]
+    return out
+
+
 def ai_recommended_weights_for_persona(
     persona_name: str,
     persona_description: str = "",
-) -> Tuple[Dict[str, float], str, str]:
+    customer_context: Optional[Dict[str, Any]] = None,
+) -> Tuple[Dict[str, float], str, str, Dict[str, str]]:
     """
-    Returns (weights_percent, source, note).
+    Returns (weights_percent, source, note, factor_rationales).
     source is 'llm' or 'heuristic'.
+    factor_rationales maps factor_key -> short explanation (empty for heuristic path).
     """
     keys = factor_keys()
     key_list = ", ".join(keys)
     desc = (persona_description or "")[:800]
+    summary = build_customer_feature_summary(customer_context)
+    summary_block = (
+        f"\nCustomer data (cite ONLY these fields; if a field is absent, say unknown — do not invent):\n{summary}\n"
+        if summary
+        else "\n(No per-customer row: use persona name + description only.)\n"
+    )
+    labels_lines = "\n".join(f'  - "{k}": {FACTOR_LABELS.get(k, k)}' for k in keys)
 
     try:
         from utils.together_ai import together_ai
 
-        prompt = f"""You are a banking personalization expert. For this customer segment, assign importance (integers only) to each scoring factor. All values MUST sum to exactly 100.
+        prompt = f"""You calibrate weights for a 12-factor banking recommendation scorer (100 points total across factors).
 
-Factors (keys): {key_list}
+Persona / segment name: {persona_name}
+Segment description: {desc}{summary_block}
 
-Persona: {persona_name}
-Description: {desc}
+Factor keys and what they measure:
+{labels_lines}
 
-Return ONLY valid JSON, one object with exactly those keys and integer values summing to 100. Example shape: {{"eligibility_score": 20, "financial_need_match": 18, ...}}"""
+Return ONLY valid JSON:
+{{
+  "weights": {{
+    {", ".join(f'"{k}": <integer>' for k in keys)}
+  }},
+  "rationales": {{
+    {", ".join(f'"{k}": "<text>"' for k in keys)}
+  }}
+}}
+
+Hard rules for "weights":
+- Non-negative integers only; the sum of all twelve MUST be exactly 100.
+
+Hard rules for "rationales" (max 280 characters each):
+1. First clause MUST give the same integer weight as in "weights" for that key (e.g. "19 points go to …" or "We assign 14 of 100 points because …").
+2. Second clause MUST explain why that **share of the 100 points** is justified **for this customer/persona** using 1–2 concrete numbers or facts from the data line above (credit_score, income, num_products, deposits, digital_engagement, cross_sell_receptivity, cluster_id, persona name). Explain the **trade-off**: why this factor earns more or fewer points than a minor factor (e.g. eligibility vs popularity).
+3. Do NOT invent segment nicknames, job titles, or "leader/builder" labels unless they appear verbatim in the segment description.
+4. Do NOT mention the customer_id more than once in a single rationale.
+5. Make each factor’s wording distinct — no copy-paste across keys.
+6. If the model must down-weight a factor (low points), say explicitly it is a weaker signal for this profile."""
 
         raw = together_ai.generate_text(
             prompt,
-            system_message="You output only compact JSON. No markdown, no explanation outside JSON.",
-            max_tokens=500,
-            temperature=0.35,
+            system_message=(
+                "You output only compact JSON. No markdown code fences. No commentary outside JSON. "
+                "Rationales must justify the numeric weight allocation using only provided data."
+            ),
+            max_tokens=1600,
+            temperature=0.0,
         )
         if raw and "Error generating" not in raw[:80]:
             data = _parse_llm_json(raw)
             if data:
-                pct = {}
-                for k in keys:
-                    v = data.get(k)
-                    if v is None:
-                        pct[k] = _scorer_weights()[k] * 100
-                    else:
-                        pct[k] = max(0, int(round(float(v))))
-                if sum(pct.values()) > 0:
-                    pct = _normalize_to_100(pct)
-                    return pct, "llm", "Weights suggested by AI for this persona (Together). You can edit before Submit."
+                w_block, r_block = _extract_weights_and_rationales(data, keys)
+                if w_block:
+                    pct: Dict[str, float] = {}
+                    for k in keys:
+                        v = w_block.get(k)
+                        if v is None:
+                            pct[k] = _scorer_weights()[k] * 100
+                        else:
+                            pct[k] = max(0, int(round(float(v))))
+                    if sum(pct.values()) > 0:
+                        pct = _normalize_to_100(pct)
+                        rationales = _merge_rationales(keys, r_block)
+                        rationales = _finalize_rationales_for_weights(keys, pct, rationales)
+                        return (
+                            pct,
+                            "llm",
+                            "AI-suggested starting weights for this selection. Review and edit before Submit.",
+                            rationales,
+                        )
 
     except Exception as e:
         logger.warning("LLM factor weights failed: %s", e)
@@ -156,4 +306,5 @@ Return ONLY valid JSON, one object with exactly those keys and integer values su
         h,
         "heuristic",
         "Persona-based template (AI model unavailable). Adjust sliders and Submit.",
+        {k: "" for k in keys},
     )

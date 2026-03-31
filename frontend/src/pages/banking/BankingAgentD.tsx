@@ -1,6 +1,6 @@
 import React, { useState, useMemo } from 'react';
 import { Link } from 'react-router-dom';
-import { useQuery, useMutation } from '@tanstack/react-query';
+import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { motion, AnimatePresence } from 'framer-motion';
 import {
   Bot,
@@ -17,8 +17,6 @@ import {
   CreditCard,
   ArrowRight,
   LayoutGrid,
-  Zap,
-  MousePointer2,
 } from 'lucide-react';
 import { getBankingApiBase } from '../../utils/apiBase';
 
@@ -42,6 +40,7 @@ function BoldParts({ text }: { text: string }) {
 }
 
 export default function BankingAgentD() {
+  const queryClient = useQueryClient();
   const [mode, setMode] = useState<'persona' | 'customer'>('customer');
   const [personaId, setPersonaId] = useState<string>('');
   const [customerId, setCustomerId] = useState<string>('');
@@ -169,6 +168,13 @@ export default function BankingAgentD() {
       }
       return res.json();
     },
+    onSuccess: () => {
+      const cid = String(customerId).trim();
+      if (cid) {
+        queryClient.invalidateQueries({ queryKey: ['banking-agent-d-directives-b', cid] });
+        queryClient.invalidateQueries({ queryKey: ['banking-agent-d-directives-b'] });
+      }
+    },
   });
 
   const resetLedgerMutation = useMutation({
@@ -178,19 +184,6 @@ export default function BankingAgentD() {
       return res.json();
     },
     onSuccess: () => orchestrateMutation.reset(),
-  });
-
-  const nextBestMutation = useMutation({
-    mutationFn: async () => {
-      const res = await fetch(`${API_BASE}/api/banking/agent_d/next-best`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ customer_id: customerId, top_n: 10 }),
-      });
-      const j = await res.json().catch(() => ({}));
-      if (!res.ok) throw new Error(j.detail || 'Next-best failed');
-      return j;
-    },
   });
 
   const clickProductMutation = useMutation({
@@ -203,6 +196,13 @@ export default function BankingAgentD() {
       const j = await res.json().catch(() => ({}));
       if (!res.ok) throw new Error(j.detail || 'Click failed');
       return j;
+    },
+    onSuccess: () => {
+      const cid = String(customerId).trim();
+      if (cid) {
+        queryClient.invalidateQueries({ queryKey: ['banking-agent-d-directives-b', cid] });
+        queryClient.invalidateQueries({ queryKey: ['banking-agent-d-directives-b'] });
+      }
     },
   });
 
@@ -261,113 +261,11 @@ export default function BankingAgentD() {
           <div>
             <h1 className="text-2xl md:text-3xl font-bold text-slate-900">Agent D: Banking orchestration</h1>
             <p className="text-slate-600 mt-2 text-sm md:text-base leading-relaxed max-w-3xl">
-              <strong>Next-best</strong> blends Agent B + C with wishlist & incomplete applications, and won&apos;t
-              repeat products you saw but didn&apos;t engage until you click. <strong>Supervisor view</strong> below
-              summarizes B/C and issues pin instructions for Agent B.
+              <strong>Supervisor view</strong> merges digital signals with Agent B and Agent C, builds a live product
+              stack, updates the impression ledger, and issues pin instructions for Agent B.
             </p>
           </div>
         </header>
-
-        {/* Next-best real-time engine */}
-        <section className="rounded-2xl border-2 border-blue-200 bg-gradient-to-br from-blue-50/80 to-white shadow-md p-5 md:p-6 space-y-4">
-          <div className="flex items-start gap-3">
-            <div className="p-2 rounded-xl bg-blue-100 text-blue-700">
-              <Zap className="w-6 h-6" />
-            </div>
-            <div className="flex-1 min-w-0">
-              <h2 className="text-lg font-bold text-slate-900">Next-best products (real-time)</h2>
-              <p className="text-sm text-slate-600 mt-1">
-                Run <strong>Agent A</strong> first; <strong>Agent B</strong> and <strong>C</strong> power ranking and
-                offers. Data tables: <code className="text-xs bg-slate-100 px-1 rounded">wishlist.csv</code>,{' '}
-                <code className="text-xs bg-slate-100 px-1 rounded">incomplete_applications.csv</code>, and persisted{' '}
-                <code className="text-xs bg-slate-100 px-1 rounded">recommendation_impressions.csv</code>.
-              </p>
-            </div>
-          </div>
-          <p className="text-xs text-slate-600 bg-white/80 border border-slate-200 rounded-lg px-3 py-2">
-            Products recommended but <strong>not</strong> clicked stay excluded on the next run. Use{' '}
-            <strong>Mark engaged</strong> after the customer opens or applies — then that product can surface again.
-          </p>
-          <div className="flex flex-wrap items-center gap-2">
-            <button
-              type="button"
-              disabled={!customerId || nextBestMutation.isPending}
-              onClick={() => nextBestMutation.mutate()}
-              className="inline-flex items-center gap-2 px-5 py-2.5 rounded-xl bg-blue-600 text-white font-semibold text-sm hover:bg-blue-700 disabled:opacity-50"
-            >
-              {nextBestMutation.isPending ? <Loader2 className="w-4 h-4 animate-spin" /> : <Zap className="w-4 h-4" />}
-              Get next-best recommendations
-            </button>
-            {nextBestMutation.data?.uses_agent_b && (
-              <span className="text-xs font-semibold px-2 py-1 rounded-full bg-emerald-100 text-emerald-800">
-                Uses Agent B
-              </span>
-            )}
-            {nextBestMutation.data?.uses_agent_c && (
-              <span className="text-xs font-semibold px-2 py-1 rounded-full bg-violet-100 text-violet-800">
-                Uses Agent C
-              </span>
-            )}
-            {nextBestMutation.data?.sources_used?.length > 0 && (
-              <span className="text-xs text-slate-500">
-                Sources: {nextBestMutation.data.sources_used.join(', ')}
-              </span>
-            )}
-          </div>
-          {nextBestMutation.isError && (
-            <p className="text-sm text-red-600">{(nextBestMutation.error as Error).message}</p>
-          )}
-          {nextBestMutation.data?.excluded_count != null && nextBestMutation.data.excluded_count > 0 && (
-            <p className="text-sm text-amber-800">
-              <strong>{nextBestMutation.data.excluded_count}</strong> product(s) hidden until engaged (prior
-              impressions).
-            </p>
-          )}
-          {nextBestMutation.data?.no_repeat_message && (
-            <p className="text-xs text-slate-600 italic border-l-4 border-blue-300 pl-3">
-              {nextBestMutation.data.no_repeat_message}
-            </p>
-          )}
-          {nextBestMutation.data?.recommendations?.length > 0 && (
-            <ul className="space-y-2">
-              {nextBestMutation.data.recommendations.map(
-                (r: {
-                  product_id: string;
-                  product_name: string;
-                  recommendation_reason?: string;
-                  score?: number;
-                }) => (
-                  <li
-                    key={r.product_id}
-                    className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2 p-3 rounded-xl border border-slate-200 bg-white"
-                  >
-                    <div>
-                      <p className="font-semibold text-slate-900">{r.product_name}</p>
-                      <p className="text-xs font-mono text-slate-500">{r.product_id}</p>
-                      <p className="text-sm text-blue-800 mt-1">{r.recommendation_reason}</p>
-                    </div>
-                    <button
-                      type="button"
-                      disabled={clickProductMutation.isPending}
-                      onClick={async () => {
-                        try {
-                          await clickProductMutation.mutateAsync(r.product_id);
-                          nextBestMutation.mutate();
-                        } catch {
-                          /* toast optional */
-                        }
-                      }}
-                      className="shrink-0 inline-flex items-center gap-1.5 px-3 py-2 rounded-lg border border-blue-300 text-blue-700 text-sm font-medium hover:bg-blue-50"
-                    >
-                      <MousePointer2 className="w-4 h-4" />
-                      Mark engaged
-                    </button>
-                  </li>
-                )
-              )}
-            </ul>
-          )}
-        </section>
 
         {/* Control card — supervisor */}
         <div className="bg-white rounded-2xl border border-slate-200 shadow-md p-5 md:p-6 space-y-5">

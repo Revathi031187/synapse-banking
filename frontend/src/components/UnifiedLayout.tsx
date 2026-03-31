@@ -70,8 +70,8 @@ export default function UnifiedLayout({ industry }: UnifiedLayoutProps) {
   const navLinks = industry === 'banking' ? [
     { path: `/${industry}`, label: 'Dashboard', icon: Home },
     { path: `/${industry}/data-loader`, label: 'Data Loader', icon: Database },
-    { path: `/${industry}/macro-dashboard`, label: 'Segments View', icon: BarChart3 },
     { path: `/${industry}/agent-a`, label: 'Agent A: Personas', icon: Users },
+    { path: `/${industry}/macro-dashboard`, label: 'Segments View', icon: BarChart3 },
     { path: `/${industry}/agent-b`, label: 'Agent B: Products', icon: Target },
     { path: `/${industry}/agent-c`, label: 'Agent C: One Best Offer', icon: Sparkles },
     { path: `/${industry}/agent-d`, label: 'Agent D: Supervisor', icon: Layers }
