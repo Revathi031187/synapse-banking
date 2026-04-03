@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useEffect } from 'react';
 import { Link } from 'react-router-dom';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { Play, Users, TrendingUp, BarChart3, AlertCircle, CheckCircle2, Download, DollarSign, Sparkles, ArrowRight } from 'lucide-react';
@@ -24,23 +24,25 @@ import {
 } from 'recharts';
 
 import { getBankingApiBase } from '../../utils/apiBase';
+import { useSessionStorageState } from '../../hooks/useSessionStorageState';
 
 const BANKING_COLORS = ['#1e40af', '#0891b2', '#059669', '#f59e0b', '#dc2626'];
 
+const AGENT_A_UI_KEY = 'banking-agent-a-v1';
+const DEFAULT_AGENT_A_UI = { nClusters: 5, gamma: 0.5, resultsEnabled: false };
+
 export default function BankingAgentA() {
   const API_BASE_URL = getBankingApiBase();
-  const [nClusters, setNClusters] = useState(5);
-  const [gamma, setGamma] = useState(0.5);
   const queryClient = useQueryClient();
-  
-  const [resultsEnabled, setResultsEnabled] = useState(false);
+  const [ui, setUi] = useSessionStorageState(AGENT_A_UI_KEY, DEFAULT_AGENT_A_UI);
+  const { nClusters, gamma, resultsEnabled } = ui;
 
   // Check for cached results on mount
   useEffect(() => {
     const checkCache = () => {
       const cachedResults = queryClient.getQueryData(['banking-agent-a-results']);
       if (cachedResults) {
-        setResultsEnabled(true);
+        setUi((prev) => ({ ...prev, resultsEnabled: true }));
       }
     };
     checkCache();
@@ -63,7 +65,7 @@ export default function BankingAgentA() {
       return response.json();
     },
     onSuccess: async (data) => {
-      setResultsEnabled(true);
+      setUi((prev) => ({ ...prev, resultsEnabled: true }));
       
       try {
         const response = await fetch(`${API_BASE_URL}/api/banking/agent_a/results`);
@@ -106,17 +108,33 @@ export default function BankingAgentA() {
   const handleExport = async () => {
     try {
       const response = await fetch(`${API_BASE_URL}/api/banking/agent_a/export`);
+      if (!response.ok) {
+        let detail = `Export failed (HTTP ${response.status})`;
+        try {
+          const err = await response.json();
+          if (typeof err?.detail === 'string' && err.detail.trim()) detail = err.detail;
+        } catch {
+          /* non-json body */
+        }
+        throw new Error(detail);
+      }
       const blob = await response.blob();
+      if (blob.size === 0) {
+        throw new Error('Export returned an empty file');
+      }
       const url = window.URL.createObjectURL(blob);
       const a = document.createElement('a');
       a.href = url;
-      a.download = 'banking_personas.csv';
+      const cd = response.headers.get('content-disposition') || '';
+      const match = cd.match(/filename="?([^"]+)"?/i);
+      a.download = match?.[1] || 'banking_personas.csv';
       document.body.appendChild(a);
       a.click();
       window.URL.revokeObjectURL(url);
       document.body.removeChild(a);
     } catch (error) {
       console.error('Export failed:', error);
+      alert((error as Error).message || 'Export failed');
     }
   };
 
@@ -148,7 +166,7 @@ export default function BankingAgentA() {
               max="10"
               className="input-field"
               value={nClusters}
-              onChange={(e) => setNClusters(Number(e.target.value))}
+              onChange={(e) => setUi((prev) => ({ ...prev, nClusters: Number(e.target.value) }))}
             />
             <p className="text-xs text-gray-500 mt-1">Recommended: 5-7 for retail banking</p>
           </div>
@@ -164,7 +182,7 @@ export default function BankingAgentA() {
               max="1"
               className="input-field"
               value={gamma}
-              onChange={(e) => setGamma(Number(e.target.value))}
+              onChange={(e) => setUi((prev) => ({ ...prev, gamma: Number(e.target.value) }))}
             />
             <p className="text-xs text-gray-500 mt-1">Higher values = more diverse segments</p>
           </div>

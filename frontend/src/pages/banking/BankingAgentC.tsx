@@ -20,8 +20,29 @@ import {
   Users,
 } from 'lucide-react';
 import { getBankingApiBase } from '../../utils/apiBase';
+import { useSessionStorageState } from '../../hooks/useSessionStorageState';
 
 const API_BASE = getBankingApiBase();
+
+const AGENT_C_UI_KEY = 'banking-agent-c-v1';
+
+type BankingAgentCUiState = {
+  offerScope: 'customer' | 'persona';
+  churnRiskView: 'customer' | 'persona';
+  selectedCustomerId: string | null;
+  customerSearch: string;
+  explainOpen: boolean;
+  selectedPersonaId: string | null;
+};
+
+const DEFAULT_AGENT_C_UI: BankingAgentCUiState = {
+  offerScope: 'customer',
+  churnRiskView: 'customer',
+  selectedCustomerId: null,
+  customerSearch: '',
+  explainOpen: true,
+  selectedPersonaId: null,
+};
 
 const channelIcons: Record<string, React.ReactNode> = {
   email: <Mail className="w-4 h-4" />,
@@ -123,14 +144,8 @@ type PersonaBestOfferPayload = OneBestOfferPayload & {
 };
 
 export default function BankingAgentC() {
-  /** One-best-offer scope: 1:1 customer vs segment (persona) campaign view */
-  const [offerScope, setOfferScope] = useState<'customer' | 'persona'>('customer');
-  /** Lower “churn risk” panel: at-risk customers vs segment rollup (independent from offer scope) */
-  const [churnRiskView, setChurnRiskView] = useState<'customer' | 'persona'>('customer');
-  const [selectedCustomerId, setSelectedCustomerId] = useState<string | null>(null);
-  const [customerSearch, setCustomerSearch] = useState('');
-  const [explainOpen, setExplainOpen] = useState(true);
-  const [selectedPersonaId, setSelectedPersonaId] = useState<string | null>(null);
+  const [ui, setUi] = useSessionStorageState<BankingAgentCUiState>(AGENT_C_UI_KEY, DEFAULT_AGENT_C_UI);
+  const { offerScope, churnRiskView, selectedCustomerId, customerSearch, explainOpen, selectedPersonaId } = ui;
   const offerCardRef = useRef<HTMLDivElement>(null);
   const personaOfferCardRef = useRef<HTMLDivElement>(null);
 
@@ -335,7 +350,7 @@ export default function BankingAgentC() {
             <div className="mt-4 inline-flex rounded-full border border-slate-200 p-1 bg-white/90 shadow-inner">
               <button
                 type="button"
-                onClick={() => setOfferScope('customer')}
+                onClick={() => setUi((p) => ({ ...p, offerScope: 'customer' }))}
                 className={`flex items-center gap-2 px-5 py-2.5 rounded-full text-sm font-semibold transition-all ${
                   offerScope === 'customer'
                     ? 'bg-violet-600 text-white shadow-md'
@@ -347,7 +362,7 @@ export default function BankingAgentC() {
               </button>
               <button
                 type="button"
-                onClick={() => setOfferScope('persona')}
+                onClick={() => setUi((p) => ({ ...p, offerScope: 'persona' }))}
                 className={`flex items-center gap-2 px-5 py-2.5 rounded-full text-sm font-semibold transition-all ${
                   offerScope === 'persona'
                     ? 'bg-indigo-600 text-white shadow-md'
@@ -376,7 +391,7 @@ export default function BankingAgentC() {
                     type="text"
                     placeholder="Search by name or ID..."
                     value={customerSearch}
-                    onChange={(e) => setCustomerSearch(e.target.value)}
+                    onChange={(e) => setUi((p) => ({ ...p, customerSearch: e.target.value }))}
                     className="w-full pl-12 pr-4 py-3 rounded-xl border border-slate-200 bg-white shadow-sm focus:ring-2 focus:ring-violet-500 focus:border-violet-500 transition-all"
                   />
                 </div>
@@ -385,7 +400,7 @@ export default function BankingAgentC() {
                     <button
                       key={c.customer_id}
                       type="button"
-                      onClick={() => setSelectedCustomerId(c.customer_id)}
+                      onClick={() => setUi((p) => ({ ...p, selectedCustomerId: c.customer_id }))}
                       className={`w-full flex items-center gap-3 px-4 py-3 text-left hover:bg-white transition-colors border-b border-slate-100 last:border-0 ${
                         selectedCustomerId === c.customer_id ? 'bg-violet-50 text-violet-800' : ''
                       }`}
@@ -551,7 +566,7 @@ export default function BankingAgentC() {
                           <div className="border-t border-slate-100">
                             <button
                               type="button"
-                              onClick={() => setExplainOpen(!explainOpen)}
+                              onClick={() => setUi((p) => ({ ...p, explainOpen: !p.explainOpen }))}
                               className="w-full flex items-center justify-between px-6 py-4 text-left hover:bg-slate-50 transition-colors"
                             >
                               <span className="font-semibold text-slate-800">How the AI got here</span>
@@ -656,7 +671,7 @@ export default function BankingAgentC() {
                   </p>
                   <select
                     value={selectedPersonaId ?? ''}
-                    onChange={(e) => setSelectedPersonaId(e.target.value || null)}
+                    onChange={(e) => setUi((p) => ({ ...p, selectedPersonaId: e.target.value || null }))}
                     className="w-full max-w-xl rounded-xl border border-slate-200 bg-white px-4 py-3 shadow-sm focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500"
                   >
                     <option value="">Select a segment…</option>
@@ -794,7 +809,7 @@ export default function BankingAgentC() {
               <div className="inline-flex rounded-full border border-slate-200 p-1 bg-white/90 shadow-inner flex-shrink-0">
                 <button
                   type="button"
-                  onClick={() => setChurnRiskView('customer')}
+                  onClick={() => setUi((p) => ({ ...p, churnRiskView: 'customer' }))}
                   className={`flex items-center gap-2 px-4 py-2 rounded-full text-sm font-semibold transition-all ${
                     churnRiskView === 'customer'
                       ? 'bg-violet-600 text-white shadow-md'
@@ -806,7 +821,7 @@ export default function BankingAgentC() {
                 </button>
                 <button
                   type="button"
-                  onClick={() => setChurnRiskView('persona')}
+                  onClick={() => setUi((p) => ({ ...p, churnRiskView: 'persona' }))}
                   className={`flex items-center gap-2 px-4 py-2 rounded-full text-sm font-semibold transition-all ${
                     churnRiskView === 'persona'
                       ? 'bg-indigo-600 text-white shadow-md'
@@ -898,9 +913,12 @@ export default function BankingAgentC() {
                                 <button
                                   type="button"
                                   onClick={() => {
-                                    setOfferScope('customer');
-                                    setChurnRiskView('customer');
-                                    setSelectedCustomerId(c.customer_id);
+                                    setUi((p) => ({
+                                      ...p,
+                                      offerScope: 'customer',
+                                      churnRiskView: 'customer',
+                                      selectedCustomerId: c.customer_id,
+                                    }));
                                   }}
                                   className="inline-flex items-center gap-1 text-violet-600 font-medium hover:text-violet-700"
                                 >
@@ -981,8 +999,11 @@ export default function BankingAgentC() {
                                 <button
                                   type="button"
                                   onClick={() => {
-                                    setOfferScope('persona');
-                                    setSelectedPersonaId(String(row.persona_id));
+                                    setUi((p) => ({
+                                      ...p,
+                                      offerScope: 'persona',
+                                      selectedPersonaId: String(row.persona_id),
+                                    }));
                                   }}
                                   className="inline-flex items-center gap-1 text-indigo-600 font-medium hover:text-indigo-700 text-xs"
                                 >

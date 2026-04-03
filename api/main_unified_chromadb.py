@@ -2607,6 +2607,61 @@ async def get_banking_agent_a_results():
     return {"success": True, "results": results}
 
 
+@app.get("/api/banking/agent_a/export")
+async def export_banking_personas():
+    """Export banking persona assignments to CSV for downstream campaigns."""
+    try:
+        from fastapi.responses import StreamingResponse
+        import io
+
+        if not system_state['banking']['agent_a_results']:
+            raise HTTPException(status_code=404, detail="No Agent A results available. Please execute Agent A first.")
+
+        # Banking Agent A implementation does not expose export_persona_assignments(),
+        # so build CSV from cached Agent A results.
+        results = system_state['banking']['agent_a_results'] or {}
+        customers = results.get('customers_with_clusters') or []
+        personas = results.get('personas') or {}
+
+        if not customers:
+            raise HTTPException(status_code=404, detail="No customer assignments available to export.")
+
+        rows = []
+        for c in customers:
+            # cluster_id may be int/str depending on pipeline stage
+            cluster_raw = c.get('cluster_id')
+            cluster_str = str(cluster_raw) if cluster_raw is not None else ""
+            persona_meta = personas.get(cluster_raw) or personas.get(cluster_str) or {}
+            rows.append({
+                "customer_id": c.get("customer_id", ""),
+                "customer_name": c.get("customer_name", ""),
+                "cluster_id": cluster_raw if cluster_raw is not None else "",
+                "persona_name": (
+                    persona_meta.get("persona_name")
+                    or persona_meta.get("name")
+                    or c.get("persona_name")
+                    or ""
+                ),
+            })
+
+        csv_string = pd.DataFrame(rows).to_csv(index=False)
+        output = io.StringIO(csv_string)
+        output.seek(0)
+
+        return StreamingResponse(
+            iter([output.getvalue()]),
+            media_type="text/csv",
+            headers={
+                "Content-Disposition": "attachment; filename=banking_personas.csv"
+            }
+        )
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error exporting banking personas: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
 @app.get("/api/banking/macro-segments")
 async def get_banking_macro_segments():
     """Get Banking macro segments"""

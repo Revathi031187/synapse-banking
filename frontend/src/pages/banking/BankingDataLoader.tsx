@@ -4,11 +4,16 @@ import { motion, AnimatePresence } from 'framer-motion';
 import { useState } from 'react';
 import { FolderOpen, Database, CheckCircle2, AlertCircle, Eye, X, Upload } from 'lucide-react';
 import { getBankingApiBase } from '../../utils/apiBase';
+import { useSessionStorageState } from '../../hooks/useSessionStorageState';
+
+const DATA_LOADER_UI_KEY = 'banking-data-loader-v1';
 
 export default function BankingDataLoader() {
   const API_BASE_URL = getBankingApiBase();
   const queryClient = useQueryClient();
-  const [selectedDataset, setSelectedDataset] = useState<string>('');
+  const [ui, setUi] = useSessionStorageState(DATA_LOADER_UI_KEY, { selectedDataset: '' });
+  const { selectedDataset } = ui;
+  const setSelectedDataset = (name: string) => setUi((prev) => ({ ...prev, selectedDataset: name }));
   const [viewingTable, setViewingTable] = useState<string | null>(null);
   const [tableData, setTableData] = useState<any | null>(null);
   

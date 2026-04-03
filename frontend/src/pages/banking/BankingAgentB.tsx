@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useMemo } from 'react';
+import React, { useState, useEffect, useMemo, useRef } from 'react';
 import { Link } from 'react-router-dom';
 import { useQuery, useMutation } from '@tanstack/react-query';
 import {
@@ -20,6 +20,7 @@ import {
   Bot,
 } from 'lucide-react';
 import { getBankingApiBase } from '../../utils/apiBase';
+import { useSessionStorageState } from '../../hooks/useSessionStorageState';
 
 /** Banking 12-factor groups — mirrors Academy “Product fit / Persona / Social / Freshness” layout */
 const FACTOR_WEIGHT_GROUPS: {
@@ -96,17 +97,93 @@ const MATCH_LEVEL_COLORS = {
   'Consider Alternatives': 'bg-gray-100 text-gray-800 border-gray-300'
 };
 
+type BankingAgentBUiState = {
+  scoringMethod: 'rules' | 'logit';
+  mode: 'persona' | 'customer';
+  persona: string;
+  customerId: string;
+  searchQuery: string;
+  category: string;
+  topN: number;
+  expandedExplanations: Record<number, boolean>;
+  useAgentDDirectives: boolean;
+  factorWeights: Record<string, number>;
+  factorLabels: Record<string, string>;
+  weightsAccordionOpen: boolean;
+  lastAiFactorRationales: Record<string, string>;
+  lastRunFactorWeights: Record<string, number> | null;
+  runWeightsAccordionOpen: boolean;
+  executeData: unknown | null;
+};
+
+function mergeAgentBUi(saved: Partial<BankingAgentBUiState>, def: BankingAgentBUiState): BankingAgentBUiState {
+  return {
+    ...def,
+    ...saved,
+    factorWeights: { ...BANKING_DEFAULTS_PERCENT, ...def.factorWeights, ...saved.factorWeights },
+    factorLabels: { ...def.factorLabels, ...saved.factorLabels },
+    expandedExplanations: saved.expandedExplanations ?? def.expandedExplanations,
+    lastAiFactorRationales: { ...def.lastAiFactorRationales, ...saved.lastAiFactorRationales },
+  };
+}
+
+const DEFAULT_BANKING_AGENT_B_UI: BankingAgentBUiState = {
+  scoringMethod: 'rules',
+  mode: 'persona',
+  persona: '',
+  customerId: '',
+  searchQuery: '',
+  category: '',
+  topN: 10,
+  expandedExplanations: {},
+  useAgentDDirectives: false,
+  factorWeights: { ...BANKING_DEFAULTS_PERCENT },
+  factorLabels: {},
+  weightsAccordionOpen: true,
+  lastAiFactorRationales: {},
+  lastRunFactorWeights: null,
+  runWeightsAccordionOpen: false,
+  executeData: null,
+};
+
+const AGENT_B_UI_KEY = 'banking-agent-b-v1';
+
 export default function BankingAgentB() {
   const API_BASE_URL = getBankingApiBase();
-  const [scoringMethod, setScoringMethod] = useState<'rules' | 'logit'>('rules'); // Toggle between rule-based and hybrid ML
-  const [mode, setMode] = useState<'persona' | 'customer'>('persona'); // Toggle between persona and customer mode
-  const [persona, setPersona] = useState('');
-  const [customerId, setCustomerId] = useState('');
-  const [searchQuery, setSearchQuery] = useState('');
-  const [category, setCategory] = useState('');
-  const [topN, setTopN] = useState(10);
-  const [expandedExplanations, setExpandedExplanations] = useState<Record<number, boolean>>({});
-  const [useAgentDDirectives, setUseAgentDDirectives] = useState(false);
+  const [ui, setUi] = useSessionStorageState(AGENT_B_UI_KEY, DEFAULT_BANKING_AGENT_B_UI, mergeAgentBUi);
+  const {
+    scoringMethod,
+    mode,
+    persona,
+    customerId,
+    searchQuery,
+    category,
+    topN,
+    expandedExplanations,
+    useAgentDDirectives,
+    factorWeights,
+    factorLabels,
+    weightsAccordionOpen,
+    lastAiFactorRationales,
+    lastRunFactorWeights,
+    runWeightsAccordionOpen,
+    executeData,
+  } = ui;
+
+  const setFactorWeights = (updater: React.SetStateAction<Record<string, number>>) => {
+    setUi((prev) => ({
+      ...prev,
+      factorWeights: typeof updater === 'function' ? updater(prev.factorWeights) : updater,
+    }));
+  };
+  const setExpandedExplanations = (updater: React.SetStateAction<Record<number, boolean>>) => {
+    setUi((prev) => ({
+      ...prev,
+      expandedExplanations: typeof updater === 'function' ? updater(prev.expandedExplanations) : updater,
+    }));
+  };
+
+  const [weightsSavedOk, setWeightsSavedOk] = useState<string | null>(null);
   const agentDAutoAppliedRef = React.useRef<string>('');
 
   const agentDDirectivesQuery = useQuery({
@@ -136,28 +213,26 @@ export default function BankingAgentB() {
     if (!pin || String(pin).trim() === '') return;
     if (agentDAutoAppliedRef.current === customerId) return;
     agentDAutoAppliedRef.current = customerId;
-    setUseAgentDDirectives(true);
+    setUi((prev) => ({ ...prev, useAgentDDirectives: true }));
   }, [
     mode,
     customerId,
     agentDDirectivesQuery.isSuccess,
     agentDDirectivesQuery.data,
   ]);
-  const [factorWeights, setFactorWeights] = useState<Record<string, number>>(() => ({
-    ...BANKING_DEFAULTS_PERCENT,
-  }));
-  const [factorLabels, setFactorLabels] = useState<Record<string, string>>({});
-  const [weightsSavedOk, setWeightsSavedOk] = useState<string | null>(null);
-  const [weightsAccordionOpen, setWeightsAccordionOpen] = useState(true);
-  /** Per-factor AI text from last /factor-weights/ai response (shown after a run). */
-  const [lastAiFactorRationales, setLastAiFactorRationales] = useState<Record<string, string>>({});
-  /** Snapshot of weights sent to /execute for the last successful rules run. */
-  const [lastRunFactorWeights, setLastRunFactorWeights] = useState<Record<string, number> | null>(null);
-  const [runWeightsAccordionOpen, setRunWeightsAccordionOpen] = useState(false);
 
+  const isFirstContextEffect = useRef(true);
   React.useEffect(() => {
-    setLastAiFactorRationales({});
-    setLastRunFactorWeights(null);
+    if (isFirstContextEffect.current) {
+      isFirstContextEffect.current = false;
+      return;
+    }
+    setUi((prev) => ({
+      ...prev,
+      lastAiFactorRationales: {},
+      lastRunFactorWeights: null,
+      executeData: null,
+    }));
   }, [customerId, persona, mode]);
 
   // Query to get available personas
@@ -175,7 +250,7 @@ export default function BankingAgentB() {
   // Set default persona when personas load
   React.useEffect(() => {
     if (personas.length > 0 && !persona) {
-      setPersona(personas[0].id);
+      setUi((prev) => ({ ...prev, persona: personas[0].id }));
     }
   }, [personas, persona]);
 
@@ -211,7 +286,12 @@ export default function BankingAgentB() {
   });
 
   useEffect(() => {
-    if (factorMetaQuery.data?.labels) setFactorLabels(factorMetaQuery.data.labels as Record<string, string>);
+    if (factorMetaQuery.data?.labels) {
+      setUi((prev) => ({
+        ...prev,
+        factorLabels: factorMetaQuery.data.labels as Record<string, string>,
+      }));
+    }
   }, [factorMetaQuery.data]);
 
   useEffect(() => {
@@ -270,7 +350,7 @@ export default function BankingAgentB() {
       return res.json();
     },
     onSuccess: (j) => {
-      if (j.weights_percent) setFactorWeights(j.weights_percent);
+      if (j.weights_percent) setUi((prev) => ({ ...prev, factorWeights: j.weights_percent as Record<string, number> }));
       factorWeightsQuery.refetch();
       setWeightsSavedOk(j.message || 'Defaults restored');
       setTimeout(() => setWeightsSavedOk(null), 4000);
@@ -294,12 +374,14 @@ export default function BankingAgentB() {
       weights_percent?: Record<string, number>;
       factor_rationales?: Record<string, string>;
     }) => {
-      if (j.weights_percent) setFactorWeights(j.weights_percent as Record<string, number>);
-      if (j.factor_rationales && typeof j.factor_rationales === 'object') {
-        setLastAiFactorRationales(j.factor_rationales as Record<string, string>);
-      } else {
-        setLastAiFactorRationales({});
-      }
+      setUi((prev) => ({
+        ...prev,
+        factorWeights: j.weights_percent ? (j.weights_percent as Record<string, number>) : prev.factorWeights,
+        lastAiFactorRationales:
+          j.factor_rationales && typeof j.factor_rationales === 'object'
+            ? (j.factor_rationales as Record<string, string>)
+            : {},
+      }));
     },
   });
 
@@ -352,7 +434,10 @@ export default function BankingAgentB() {
         });
         requestBody.factor_weights = fw;
       }
-      if (mode === 'customer' && customerId && useAgentDDirectives) {
+      const pinnedByAgentD = (
+        agentDDirectivesQuery.data?.next_visit_directives as { priority_pin_product_id?: string } | null
+      )?.priority_pin_product_id;
+      if (mode === 'customer' && customerId && (String(pinnedByAgentD || '').trim() || useAgentDDirectives)) {
         requestBody.use_agent_d_directives = true;
       }
 
@@ -385,9 +470,11 @@ export default function BankingAgentB() {
       return data;
     },
     onSuccess: (data: { _factorWeightsUsed?: Record<string, number> }) => {
-      if (data?._factorWeightsUsed) {
-        setLastRunFactorWeights(data._factorWeightsUsed);
-      }
+      setUi((prev) => ({
+        ...prev,
+        executeData: data,
+        lastRunFactorWeights: data?._factorWeightsUsed ?? prev.lastRunFactorWeights,
+      }));
     },
   });
 
@@ -404,7 +491,8 @@ export default function BankingAgentB() {
     executeMutation.mutate();
   };
 
-  const results = executeMutation.data?.results;
+  const executePayload = executeMutation.data ?? (executeData as typeof executeMutation.data | undefined);
+  const results = executePayload?.results;
   const recommendations = results?.recommendations || [];
   const insights = results?.insights || {};
   const scoringMethodology = results?.scoring_methodology || results?.algorithm_explanation || {};
@@ -456,7 +544,7 @@ export default function BankingAgentB() {
         <div className="flex border-b border-gray-200 px-2">
           <button
             type="button"
-            onClick={() => setScoringMethod('rules')}
+            onClick={() => setUi((p) => ({ ...p, scoringMethod: 'rules' }))}
             className={`relative px-5 py-3.5 font-semibold text-sm md:text-base transition-all border-b-2 -mb-px flex items-center gap-2 flex-wrap ${
               scoringMethod === 'rules'
                 ? 'text-blue-600 border-blue-600 bg-blue-50/50'
@@ -475,7 +563,7 @@ export default function BankingAgentB() {
           </button>
           <button
             type="button"
-            onClick={() => setScoringMethod('logit')}
+            onClick={() => setUi((p) => ({ ...p, scoringMethod: 'logit' }))}
             className={`relative px-5 py-3.5 font-semibold text-sm md:text-base transition-all border-b-2 -mb-px flex items-center gap-2 flex-wrap ${
               scoringMethod === 'logit'
                 ? 'text-purple-600 border-purple-600 bg-purple-50/50'
@@ -501,7 +589,7 @@ export default function BankingAgentB() {
             <div className="inline-flex rounded-full border border-gray-200 p-1 bg-gray-50 shadow-inner">
               <button
                 type="button"
-                onClick={() => setMode('persona')}
+                onClick={() => setUi((p) => ({ ...p, mode: 'persona' }))}
                 className={`flex items-center gap-2 px-5 py-2.5 rounded-full text-sm font-semibold transition-all ${
                   mode === 'persona'
                     ? 'bg-emerald-600 text-white shadow-md'
@@ -513,7 +601,7 @@ export default function BankingAgentB() {
               </button>
               <button
                 type="button"
-                onClick={() => setMode('customer')}
+                onClick={() => setUi((p) => ({ ...p, mode: 'customer' }))}
                 className={`flex items-center gap-2 px-5 py-2.5 rounded-full text-sm font-semibold transition-all ${
                   mode === 'customer'
                     ? 'bg-emerald-600 text-white shadow-md'
@@ -532,7 +620,7 @@ export default function BankingAgentB() {
                 <label className="block text-sm font-semibold text-gray-800 mb-2">Customer Persona</label>
                 <select
                   value={persona}
-                  onChange={(e) => setPersona(e.target.value)}
+                  onChange={(e) => setUi((p) => ({ ...p, persona: e.target.value }))}
                   className="w-full px-4 py-3 border border-gray-300 rounded-xl bg-white text-gray-900 focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
                   disabled={personasQuery.isLoading}
                 >
@@ -558,7 +646,7 @@ export default function BankingAgentB() {
                 <label className="block text-sm font-semibold text-gray-800 mb-2">Select Customer</label>
                 <select
                   value={customerId}
-                  onChange={(e) => setCustomerId(e.target.value)}
+                  onChange={(e) => setUi((p) => ({ ...p, customerId: e.target.value }))}
                   className="w-full px-4 py-3 border border-gray-300 rounded-xl bg-white focus:ring-2 focus:ring-blue-500"
                 >
                   <option value="">Choose a customer…</option>
@@ -569,29 +657,11 @@ export default function BankingAgentB() {
                   ))}
                 </select>
                 <div className="mt-3 space-y-2">
-                  <label className="flex items-center gap-2 text-sm text-gray-700 cursor-pointer">
-                    <input
-                      type="checkbox"
-                      checked={useAgentDDirectives}
-                      onChange={(e) => {
-                        setUseAgentDDirectives(e.target.checked);
-                        if (!e.target.checked) agentDAutoAppliedRef.current = customerId;
-                      }}
-                      className="rounded border-gray-300 text-emerald-600 focus:ring-emerald-500"
-                    />
-                    <span>
-                      Apply <strong>Agent D</strong> supervisor directives (#1 pin matches supervisor; rules and hybrid)
-                    </span>
-                  </label>
                   {customerId &&
                     (agentDDirectivesQuery.data?.next_visit_directives as { priority_pin_product_id?: string } | null)
                       ?.priority_pin_product_id && (
                       <p
-                        className={`text-xs rounded-lg px-3 py-2 border ${
-                          useAgentDDirectives
-                            ? 'bg-emerald-50 text-emerald-900 border-emerald-200'
-                            : 'bg-amber-50 text-amber-900 border-amber-200'
-                        }`}
+                        className="text-xs rounded-lg px-3 py-2 border bg-emerald-50 text-emerald-900 border-emerald-200"
                       >
                         <Bot className="inline w-3.5 h-3.5 mr-1 align-middle" />
                         Agent D pinned{' '}
@@ -601,15 +671,7 @@ export default function BankingAgentB() {
                               .priority_pin_product_id
                           }
                         </code>{' '}
-                        as #1 for this customer.
-                        {!useAgentDDirectives && (
-                          <>
-                            {' '}
-                            <strong>Check the box above</strong> or your list stays pure scoring (supervisor pin not
-                            applied).
-                          </>
-                        )}
-                        {useAgentDDirectives && ' Your next run ranks that product first.'}
+                        as #1 for this customer. <strong>This is auto-applied on every run.</strong>
                       </p>
                     )}
                 </div>
@@ -619,7 +681,7 @@ export default function BankingAgentB() {
               <label className="block text-sm font-semibold text-gray-800 mb-2">Category (optional)</label>
               <select
                 value={category}
-                onChange={(e) => setCategory(e.target.value)}
+                onChange={(e) => setUi((p) => ({ ...p, category: e.target.value }))}
                 className="w-full px-4 py-3 border border-gray-300 rounded-xl bg-white focus:ring-2 focus:ring-blue-500"
               >
                 <option value="">All categories</option>
@@ -636,7 +698,7 @@ export default function BankingAgentB() {
               <input
                 type="text"
                 value={searchQuery}
-                onChange={(e) => setSearchQuery(e.target.value)}
+                onChange={(e) => setUi((p) => ({ ...p, searchQuery: e.target.value }))}
                 placeholder="e.g., mortgage, high-yield savings, credit card, CD…"
                 className="w-full px-4 py-3 border border-gray-300 rounded-xl focus:ring-2 focus:ring-blue-500"
               />
@@ -646,7 +708,7 @@ export default function BankingAgentB() {
               <input
                 type="number"
                 value={topN}
-                onChange={(e) => setTopN(parseInt(e.target.value, 10) || 10)}
+                onChange={(e) => setUi((p) => ({ ...p, topN: parseInt(e.target.value, 10) || 10 }))}
                 min={1}
                 max={20}
                 className="w-full px-4 py-3 border border-gray-300 rounded-xl focus:ring-2 focus:ring-blue-500 tabular-nums"
@@ -659,7 +721,7 @@ export default function BankingAgentB() {
             <div className="rounded-xl border border-gray-200 bg-gray-50/50 overflow-hidden">
               <button
                 type="button"
-                onClick={() => setWeightsAccordionOpen((o) => !o)}
+                onClick={() => setUi((p) => ({ ...p, weightsAccordionOpen: !p.weightsAccordionOpen }))}
                 className="w-full flex items-center justify-between gap-3 px-4 py-3.5 text-left hover:bg-gray-100/80 transition-colors"
               >
                 <span className="font-semibold text-gray-900">Adjust factor weights (optional)</span>
@@ -1000,7 +1062,7 @@ export default function BankingAgentB() {
             <div className="bg-white rounded-lg shadow border border-violet-100 overflow-hidden">
               <button
                 type="button"
-                onClick={() => setRunWeightsAccordionOpen((o) => !o)}
+                onClick={() => setUi((p) => ({ ...p, runWeightsAccordionOpen: !p.runWeightsAccordionOpen }))}
                 className="w-full p-6 flex items-start justify-between gap-3 text-left hover:bg-violet-50/40 transition-colors"
               >
                 <div>
@@ -1057,9 +1119,9 @@ export default function BankingAgentB() {
                       <span className="text-2xl font-bold text-gray-400">#{index + 1}</span>
                       <h3 className="text-xl font-bold text-gray-900">{rec.product_name}</h3>
                       {rec.supervisor_pinned && (
-                        <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-semibold bg-violet-100 text-violet-900 border border-violet-200">
-                          <Bot className="w-3.5 h-3.5 shrink-0" />
-                          Agent D: pinned #1
+                        <span className="inline-flex items-center gap-2 px-4 py-1.5 rounded-full text-sm font-bold bg-gradient-to-r from-violet-600 to-fuchsia-600 text-white border border-violet-300 shadow-sm">
+                          <Bot className="w-4 h-4 shrink-0" />
+                          Agent D Priority Pin: #1
                         </span>
                       )}
                     </div>

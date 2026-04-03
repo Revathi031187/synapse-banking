@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { Link } from 'react-router-dom';
 import { 
@@ -7,6 +7,7 @@ import {
 } from 'lucide-react';
 
 import { getBankingApiBase } from '../../utils/apiBase';
+import { useSessionStorageState } from '../../hooks/useSessionStorageState';
 
 interface MacroPersona {
   cluster_id: number;
@@ -54,11 +55,16 @@ interface MicroSegment {
   };
 }
 
+const MACRO_UI_KEY = 'banking-macro-dashboard-v1';
+
 export default function BankingMacroDashboard() {
   const API_BASE_URL = getBankingApiBase();
-  const [expandedMacro, setExpandedMacro] = useState<number | null>(null);
-  const [loadingMicro, setLoadingMicro] = useState<number[]>([]);
-  const [microSegments, setMicroSegments] = useState<Record<number, MicroSegment[]>>({});
+  const [ui, setUi] = useSessionStorageState(MACRO_UI_KEY, {
+    expandedMacro: null as number | null,
+    microSegments: {} as Record<number, MicroSegment[]>,
+  });
+  const { expandedMacro, microSegments } = ui;
+  const [loadingMicro, setLoadingMicro] = React.useState<number[]>([]);
 
   // Fetch macro segmentation results
   const { data: macroData, isLoading: macroLoading, error: macroError } = useQuery({
@@ -109,15 +115,21 @@ export default function BankingMacroDashboard() {
       
       console.log(`✓ Loaded ${microSegs.length} micro segments for cluster ${macroClusterId}`);
       
-      setMicroSegments(prev => ({
+      setUi((prev) => ({
         ...prev,
-        [macroClusterId]: microSegs
+        microSegments: {
+          ...prev.microSegments,
+          [macroClusterId]: microSegs,
+        },
       }));
     } catch (error) {
       console.error('Error loading micro segments:', error);
-      setMicroSegments(prev => ({
+      setUi((prev) => ({
         ...prev,
-        [macroClusterId]: []
+        microSegments: {
+          ...prev.microSegments,
+          [macroClusterId]: [],
+        },
       }));
     } finally {
       setLoadingMicro(prev => prev.filter(id => id !== macroClusterId));
@@ -130,10 +142,10 @@ export default function BankingMacroDashboard() {
     
     if (expandedMacro === macroClusterId) {
       console.log('📦 Collapsing macro segment:', macroClusterId);
-      setExpandedMacro(null);
+      setUi((prev) => ({ ...prev, expandedMacro: null }));
     } else {
       console.log('📂 Expanding macro segment:', macroClusterId);
-      setExpandedMacro(macroClusterId);
+      setUi((prev) => ({ ...prev, expandedMacro: macroClusterId }));
       
       if (!microSegments[macroClusterId]) {
         await loadMicroSegments(macroClusterId);
@@ -269,7 +281,7 @@ export default function BankingMacroDashboard() {
 
 // Macro Persona Card Component - Professional Design with Images
 function MacroPersonaCard({ persona, isExpanded, onToggle }: any) {
-  const [showExplanation, setShowExplanation] = useState(false);
+  const [showExplanation, setShowExplanation] = React.useState(false);
   
   // Banking themed images from Unsplash
   const getBankingImage = () => {
@@ -521,7 +533,7 @@ function MacroPersonaCard({ persona, isExpanded, onToggle }: any) {
 
 // Micro Segment Card Component (matching Academy Sports)
 function MicroSegmentCard({ micro }: { micro: MicroSegment }) {
-  const [showDetails, setShowDetails] = useState(false);
+  const [showDetails, setShowDetails] = React.useState(false);
 
   return (
     <div className="bg-white rounded-lg shadow-md hover:shadow-xl transition-all duration-300 p-6 border border-blue-100 transform hover:scale-105">

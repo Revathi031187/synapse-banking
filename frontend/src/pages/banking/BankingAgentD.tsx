@@ -1,4 +1,4 @@
-import React, { useState, useMemo } from 'react';
+import React, { useMemo } from 'react';
 import { Link } from 'react-router-dom';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { motion, AnimatePresence } from 'framer-motion';
@@ -19,8 +19,24 @@ import {
   LayoutGrid,
 } from 'lucide-react';
 import { getBankingApiBase } from '../../utils/apiBase';
+import { useSessionStorageState } from '../../hooks/useSessionStorageState';
 
 const API_BASE = getBankingApiBase();
+
+const AGENT_D_UI_KEY = 'banking-agent-d-v1';
+const DEFAULT_AGENT_D_UI = {
+  mode: 'customer' as 'persona' | 'customer',
+  personaId: '',
+  customerId: '',
+  savedGoals: [] as string[],
+  abandoned: [] as string[],
+  clicked: [] as string[],
+  pickSaved: '',
+  pickAbandoned: '',
+  pickClicked: '',
+  advancedOpen: false,
+  persistedOrchestrate: null as { customerId: string; response: unknown } | null,
+};
 
 function BoldParts({ text }: { text: string }) {
   const parts = text.split(/\*\*/);
@@ -41,16 +57,30 @@ function BoldParts({ text }: { text: string }) {
 
 export default function BankingAgentD() {
   const queryClient = useQueryClient();
-  const [mode, setMode] = useState<'persona' | 'customer'>('customer');
-  const [personaId, setPersonaId] = useState<string>('');
-  const [customerId, setCustomerId] = useState<string>('');
-  const [savedGoals, setSavedGoals] = useState<string[]>([]);
-  const [abandoned, setAbandoned] = useState<string[]>([]);
-  const [clicked, setClicked] = useState<string[]>([]);
-  const [pickSaved, setPickSaved] = useState('');
-  const [pickAbandoned, setPickAbandoned] = useState('');
-  const [pickClicked, setPickClicked] = useState('');
-  const [advancedOpen, setAdvancedOpen] = useState(false);
+  const [ui, setUi] = useSessionStorageState(AGENT_D_UI_KEY, DEFAULT_AGENT_D_UI);
+  const {
+    mode,
+    personaId,
+    customerId,
+    savedGoals,
+    abandoned,
+    clicked,
+    pickSaved,
+    pickAbandoned,
+    pickClicked,
+    advancedOpen,
+    persistedOrchestrate,
+  } = ui;
+
+  const setSavedGoals = (v: React.SetStateAction<string[]>) =>
+    setUi((prev) => ({ ...prev, savedGoals: typeof v === 'function' ? v(prev.savedGoals) : v }));
+  const setAbandoned = (v: React.SetStateAction<string[]>) =>
+    setUi((prev) => ({ ...prev, abandoned: typeof v === 'function' ? v(prev.abandoned) : v }));
+  const setClicked = (v: React.SetStateAction<string[]>) =>
+    setUi((prev) => ({ ...prev, clicked: typeof v === 'function' ? v(prev.clicked) : v }));
+  const setPickSaved = (pickSaved: string) => setUi((prev) => ({ ...prev, pickSaved }));
+  const setPickAbandoned = (pickAbandoned: string) => setUi((prev) => ({ ...prev, pickAbandoned }));
+  const setPickClicked = (pickClicked: string) => setUi((prev) => ({ ...prev, pickClicked }));
 
   const personasQuery = useQuery({
     queryKey: ['banking-personas-d'],
@@ -88,7 +118,7 @@ export default function BankingAgentD() {
     const byCluster = new Map<string, number>();
     for (const c of allCustomers) {
       const k = c.cluster_id;
-      if (k == null || k === '') continue;
+      if (k == null) continue;
       const id = String(k);
       byCluster.set(id, (byCluster.get(id) ?? 0) + 1);
     }
@@ -121,19 +151,19 @@ export default function BankingAgentD() {
   }>;
 
   React.useEffect(() => {
-    if (personas.length && !personaId) setPersonaId(String(personas[0].id));
+    if (personas.length && !personaId) setUi((prev) => ({ ...prev, personaId: String(personas[0].id) }));
   }, [personas, personaId]);
 
   React.useEffect(() => {
     if (mode !== 'persona' || !personaId || !segmentCustomersQuery.isSuccess) return;
     const list = segmentCustomers;
     if (list.length === 0) {
-      setCustomerId('');
+      setUi((prev) => ({ ...prev, customerId: '' }));
       return;
     }
     const inList = list.some((c) => String(c.customer_id) === String(customerId));
     if (!customerId || !inList) {
-      setCustomerId(String(list[0].customer_id));
+      setUi((prev) => ({ ...prev, customerId: String(list[0].customer_id) }));
     }
   }, [mode, personaId, segmentCustomersQuery.isSuccess, segmentCustomers, customerId]);
 
@@ -168,9 +198,10 @@ export default function BankingAgentD() {
       }
       return res.json();
     },
-    onSuccess: () => {
+    onSuccess: (payload) => {
       const cid = String(customerId).trim();
       if (cid) {
+        setUi((prev) => ({ ...prev, persistedOrchestrate: { customerId: cid, response: payload } }));
         queryClient.invalidateQueries({ queryKey: ['banking-agent-d-directives-b', cid] });
         queryClient.invalidateQueries({ queryKey: ['banking-agent-d-directives-b'] });
       }
@@ -183,30 +214,19 @@ export default function BankingAgentD() {
       if (!res.ok) throw new Error('Reset failed');
       return res.json();
     },
-    onSuccess: () => orchestrateMutation.reset(),
-  });
-
-  const clickProductMutation = useMutation({
-    mutationFn: async (productId: string) => {
-      const res = await fetch(`${API_BASE}/api/banking/agent_d/click`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ customer_id: customerId, product_id: productId }),
-      });
-      const j = await res.json().catch(() => ({}));
-      if (!res.ok) throw new Error(j.detail || 'Click failed');
-      return j;
-    },
     onSuccess: () => {
-      const cid = String(customerId).trim();
-      if (cid) {
-        queryClient.invalidateQueries({ queryKey: ['banking-agent-d-directives-b', cid] });
-        queryClient.invalidateQueries({ queryKey: ['banking-agent-d-directives-b'] });
-      }
+      orchestrateMutation.reset();
+      setUi((prev) => ({ ...prev, persistedOrchestrate: null }));
     },
   });
 
-  const data = orchestrateMutation.data?.data;
+  const cidKey = String(customerId).trim();
+  type OrchestrateBody = NonNullable<typeof orchestrateMutation.data>['data'];
+  const data: OrchestrateBody | undefined =
+    orchestrateMutation.data?.data ??
+    (persistedOrchestrate?.customerId === cidKey
+      ? (persistedOrchestrate.response as { data?: OrchestrateBody })?.data
+      : undefined);
   const sv = data?.supervisor_view;
   const liveStack = (data?.live_recommendations ?? []) as Array<{
     product_id: string;
@@ -217,6 +237,15 @@ export default function BankingAgentD() {
   const cOffer = sv?.agent_c_primary_offer;
   const journey = sv?.digital_journey_signals;
   const focus = sv?.focus_product;
+  const autoPinnedProductId = (data?.next_visit_directives as { priority_pin_product_id?: string } | undefined)
+    ?.priority_pin_product_id;
+  const autoPinnedProduct = autoPinnedProductId
+    ? liveStack.find((r) => String(r.product_id) === String(autoPinnedProductId)) ??
+      ({
+        product_id: String(autoPinnedProductId),
+        product_name: String(autoPinnedProductId),
+      } as (typeof liveStack)[number])
+    : null;
 
   const addPid = (list: string[], setList: (v: string[]) => void, pid: string) => {
     const p = pid.trim();
@@ -297,8 +326,7 @@ export default function BankingAgentD() {
               <button
                 type="button"
                 onClick={() => {
-                  setMode('persona');
-                  orchestrateMutation.reset();
+                  setUi((prev) => ({ ...prev, mode: 'persona' }));
                 }}
                 className={`flex-1 sm:flex-none flex items-center justify-center gap-2 px-4 py-2 rounded-lg text-sm font-semibold transition-all ${
                   mode === 'persona' ? 'bg-emerald-600 text-white shadow' : 'text-slate-600 hover:bg-white'
@@ -310,8 +338,7 @@ export default function BankingAgentD() {
               <button
                 type="button"
                 onClick={() => {
-                  setMode('customer');
-                  orchestrateMutation.reset();
+                  setUi((prev) => ({ ...prev, mode: 'customer' }));
                 }}
                 className={`flex-1 sm:flex-none flex items-center justify-center gap-2 px-4 py-2 rounded-lg text-sm font-semibold transition-all ${
                   mode === 'customer' ? 'bg-emerald-600 text-white shadow' : 'text-slate-600 hover:bg-white'
@@ -332,8 +359,11 @@ export default function BankingAgentD() {
                   value={personaId}
                   disabled={personas.length === 0 || personasQuery.isLoading}
                   onChange={(e) => {
-                    setPersonaId(e.target.value);
-                    setCustomerId('');
+                    setUi((prev) => ({
+                      ...prev,
+                      personaId: e.target.value,
+                      customerId: '',
+                    }));
                     orchestrateMutation.reset();
                   }}
                 >
@@ -358,7 +388,7 @@ export default function BankingAgentD() {
                   value={customerId}
                   disabled={segmentCustomersQuery.isLoading}
                   onChange={(e) => {
-                    setCustomerId(e.target.value);
+                    setUi((prev) => ({ ...prev, customerId: e.target.value }));
                     orchestrateMutation.reset();
                   }}
                 >
@@ -385,7 +415,7 @@ export default function BankingAgentD() {
                 className="w-full border border-slate-300 rounded-xl px-3 py-2.5 bg-white max-w-xl"
                 value={customerId}
                 onChange={(e) => {
-                  setCustomerId(e.target.value);
+                  setUi((prev) => ({ ...prev, customerId: e.target.value }));
                   orchestrateMutation.reset();
                 }}
               >
@@ -411,7 +441,7 @@ export default function BankingAgentD() {
           <div className="border border-dashed border-slate-200 rounded-xl overflow-hidden">
             <button
               type="button"
-              onClick={() => setAdvancedOpen(!advancedOpen)}
+              onClick={() => setUi((prev) => ({ ...prev, advancedOpen: !prev.advancedOpen }))}
               className="w-full flex items-center justify-between px-4 py-3 text-left text-sm font-medium text-slate-700 hover:bg-slate-50"
             >
               <span>Optional: simulate digital journey signals</span>
@@ -531,10 +561,9 @@ export default function BankingAgentD() {
           </div>
 
           <p className="text-xs text-slate-500 leading-relaxed border-t border-slate-100 pt-4">
-            After Agent D runs, open <strong>Agent B</strong> → <strong>Customer mode</strong> → same customer → enable{' '}
-            <strong>Apply Agent D supervisor directives</strong> → Run recommendations. The{' '}
-            <strong>supervisor focus product</strong> (incomplete application or Agent C primary) is pinned{' '}
-            <strong>#1</strong>. No need to re-run Agent A.
+            After Agent D runs, open <strong>Agent B</strong> → <strong>Customer mode</strong> → same customer →{' '}
+            <strong>Run recommendations</strong>. The <strong>supervisor focus product</strong> is auto-applied as{' '}
+            <strong>#1</strong>. No manual pin required.
           </p>
         </div>
 
@@ -572,44 +601,32 @@ export default function BankingAgentD() {
               {liveStack.length > 0 && (
                 <div className="mb-8 rounded-xl border border-emerald-200 bg-emerald-50/40 p-4">
                   <h3 className="text-sm font-bold text-emerald-900 mb-1">
-                    Click the product to pin #1 in Agent B
+                    Auto-synced to Agent B (#1 pin)
                   </h3>
                   <p className="text-xs text-slate-600 mb-3">
-                    Same customer → Agent B (Customer mode) → enable <strong>Apply Agent D supervisor directives</strong>{' '}
-                    → Run. The product you click below becomes the <strong>top recommendation</strong>.
+                    Same customer in Agent B (Customer mode) and run recommendations. Agent D automatically pushes
+                    the supervisor focus product as <strong>#1</strong> for the next run.
                   </p>
-                  <ul className="space-y-2 max-h-64 overflow-y-auto">
-                    {liveStack.slice(0, 15).map((r) => (
-                      <li
-                        key={r.product_id}
-                        className="flex flex-wrap items-center justify-between gap-2 rounded-lg bg-white border border-slate-200 px-3 py-2 text-sm"
-                      >
-                        <div className="min-w-0">
-                          <span className="font-medium text-slate-900">{r.product_name || r.product_id}</span>
-                          <span className="text-xs text-slate-500 font-mono ml-2">{r.product_id}</span>
-                          {r.supervisor_slot && (
-                            <span className="block text-[10px] uppercase text-slate-400 mt-0.5">
-                              {String(r.supervisor_slot).replace(/_/g, ' ')}
-                            </span>
-                          )}
-                        </div>
-                        <button
-                          type="button"
-                          disabled={clickProductMutation.isPending}
-                          onClick={async () => {
-                            try {
-                              await clickProductMutation.mutateAsync(r.product_id);
-                            } catch {
-                              /* handled */
-                            }
-                          }}
-                          className="shrink-0 px-3 py-1.5 rounded-lg bg-emerald-600 text-white text-xs font-semibold hover:bg-emerald-700 disabled:opacity-50"
-                        >
-                          Pin #1 for Agent B
-                        </button>
-                      </li>
-                    ))}
-                  </ul>
+                  {autoPinnedProduct ? (
+                    <div className="rounded-lg bg-white border border-slate-200 px-3 py-2 text-sm">
+                      <div className="min-w-0">
+                        <span className="font-medium text-slate-900">
+                          {autoPinnedProduct.product_name || autoPinnedProduct.product_id}
+                        </span>
+                        <span className="text-xs text-slate-500 font-mono ml-2">{autoPinnedProduct.product_id}</span>
+                        <span className="ml-2 inline-flex items-center px-2 py-0.5 rounded-full text-[10px] font-bold bg-emerald-600 text-white">
+                          AUTO PINNED #1
+                        </span>
+                        {autoPinnedProduct.supervisor_slot && (
+                          <span className="block text-[10px] uppercase text-slate-400 mt-0.5">
+                            {String(autoPinnedProduct.supervisor_slot).replace(/_/g, ' ')}
+                          </span>
+                        )}
+                      </div>
+                    </div>
+                  ) : (
+                    <p className="text-xs text-slate-500">No auto-pinned product returned in this run.</p>
+                  )}
                 </div>
               )}
 
