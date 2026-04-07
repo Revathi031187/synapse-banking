@@ -206,8 +206,13 @@ def build_workspace_client():
     ``.env`` without tripping SDK validation.
 
     Use ``DATABRICKS_GENIE_AUTH=pat`` to force PAT when OAuth vars are also set.
+
+    Uses ``Config(...)`` + ``WorkspaceClient(config=cfg)`` so ``custom_headers`` (e.g.
+    ``X-Databricks-Org-Id``) works on older ``databricks-sdk`` releases that do not accept
+    ``custom_headers`` on ``WorkspaceClient.__init__``.
     """
     from databricks.sdk import WorkspaceClient
+    from databricks.sdk.core import Config
 
     host = normalize_databricks_host(os.getenv("DATABRICKS_HOST", ""))
     if not host:
@@ -255,7 +260,7 @@ def build_workspace_client():
     ex = _genie_workspace_client_extras()
 
     if use_azure:
-        return WorkspaceClient(
+        cfg = Config(
             host=host,
             azure_client_id=arm_id,
             azure_client_secret=arm_sec,
@@ -263,21 +268,23 @@ def build_workspace_client():
             auth_type="azure-client-secret",
             **ex,
         )
-    if use_m2m:
-        return WorkspaceClient(
+    elif use_m2m:
+        cfg = Config(
             host=host,
             client_id=cid,
             client_secret=csec,
             auth_type="oauth-m2m",
             **ex,
         )
-    if use_pat:
-        return WorkspaceClient(host=host, token=token, auth_type="pat", **ex)
+    elif use_pat:
+        cfg = Config(host=host, token=token, auth_type="pat", **ex)
+    else:
+        raise ValueError(
+            "No Databricks credentials: set DATABRICKS_TOKEN or "
+            "DATABRICKS_CLIENT_ID+DATABRICKS_CLIENT_SECRET or ARM_CLIENT_ID+ARM_CLIENT_SECRET+ARM_TENANT_ID"
+        )
 
-    raise ValueError(
-        "No Databricks credentials: set DATABRICKS_TOKEN or "
-        "DATABRICKS_CLIENT_ID+DATABRICKS_CLIENT_SECRET or ARM_CLIENT_ID+ARM_CLIENT_SECRET+ARM_TENANT_ID"
-    )
+    return WorkspaceClient(config=cfg)
 
 
 def _persona_cluster_key(personas: Dict[str, Any], cluster: Any) -> Optional[str]:
