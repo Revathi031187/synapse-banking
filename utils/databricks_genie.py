@@ -163,9 +163,12 @@ def genie_env_configured() -> Dict[str, Any]:
         )
         note = f"{note}\n\n{extra}".strip() if note else extra
 
+    ws_id = bool((os.getenv("DATABRICKS_WORKSPACE_ID") or "").strip())
+
     return {
         "databricks_host_set": host,
         "databricks_token_set": token,
+        "databricks_workspace_id_set": ws_id,
         "genie_space_id_set": space_nonempty,
         "genie_space_id_valid": space_ok,
         "databricks_oauth_m2m_set": oauth_m2m,
@@ -541,6 +544,138 @@ def _genie_message_to_payload(msg: Any) -> Dict[str, Any]:
     return out
 
 
+_GENIE_SPACE_NOT_FOUND_HINT = (
+    "The Genie API cannot open a **dataroom** for this id using your configured **DATABRICKS_HOST** and "
+    "**credentials**. If the Space ID matches Genie → Settings, the usual causes are: "
+    "(1) **Host mismatch** — `DATABRICKS_HOST` must be the same workspace URL you use in the browser. "
+    "(2) **Identity mismatch** — the PAT or service principal must be allowed to use that space; run "
+    "**GET /api/banking/genie/spaces** and confirm this `space_id` appears. If it does not, grant the API "
+    "identity access (same as your user for Genie / SQL). "
+    "(3) **DATABRICKS_WORKSPACE_ID** — if your platform team requires it, set the workspace (org) id from "
+    "workspace settings / admin. "
+    "(4) Rare: id copied from exported space JSON instead of Settings. "
+    "Use **GET /api/banking/genie/spaces/verify** to test lookup for the configured `GENIE_SPACE_ID`."
+)
+
+
+def list_genie_spaces(
+    page_size: int = 50,
+    page_token: Optional[str] = None,
+) -> Dict[str, Any]:
+    """
+    List Genie spaces visible to the configured credentials in ``DATABRICKS_HOST`` workspace.
+    Does not require ``GENIE_SPACE_ID`` to be set.
+    """
+    try:
+        from databricks.sdk import WorkspaceClient  # noqa: F401
+    except ImportError:
+        return {
+            "success": False,
+            "error": "databricks-sdk not installed. pip install -r requirements-databricks.txt",
+            "spaces": [],
+        }
+
+    cfg = genie_env_configured()
+    if not cfg.get("databricks_host_set") or not _genie_client_has_credentials():
+        return {
+            "success": False,
+            "error": "Set DATABRICKS_HOST and PAT or OAuth credentials to list Genie spaces (GENIE_SPACE_ID not required).",
+            "spaces": [],
+            "config": cfg,
+        }
+
+    try:
+        w = build_workspace_client()
+        resp = w.genie.list_spaces(page_size=page_size, page_token=page_token)
+    except Exception as e:
+        return {
+            "success": False,
+            "error": str(e),
+            "spaces": [],
+            "config": cfg,
+        }
+
+    rows: List[Dict[str, Any]] = []
+    for s in resp.spaces or []:
+        rows.append(
+            {
+                "space_id": s.space_id,
+                "title": s.title,
+                "description": s.description,
+                "warehouse_id": s.warehouse_id,
+            }
+        )
+    return {
+        "success": True,
+        "spaces": rows,
+        "next_page_token": resp.next_page_token,
+        "config": cfg,
+    }
+
+
+def verify_genie_space(space_id: Optional[str] = None) -> Dict[str, Any]:
+    """
+    Call Genie ``get_space`` for ``space_id`` or, if omitted, ``GENIE_SPACE_ID`` env.
+    Confirms whether the API identity can resolve the space (same check as start-conversation routing).
+    """
+    try:
+        from databricks.sdk import WorkspaceClient  # noqa: F401
+    except ImportError:
+        return {
+            "success": False,
+            "error": "databricks-sdk not installed. pip install -r requirements-databricks.txt",
+        }
+
+    sid = (space_id or os.getenv("GENIE_SPACE_ID") or "").strip()
+    if not sid:
+        return {
+            "success": False,
+            "error": "Pass space_id query param or set GENIE_SPACE_ID",
+        }
+
+    cfg = genie_env_configured()
+    if not cfg.get("databricks_host_set") or not _genie_client_has_credentials():
+        return {
+            "success": False,
+            "error": "Set DATABRICKS_HOST and PAT or OAuth credentials first.",
+            "config": cfg,
+        }
+
+    try:
+        w = build_workspace_client()
+        sp = w.genie.get_space(sid, include_serialized_space=False)
+    except Exception as e:
+        return {
+            "success": False,
+            "space_id": sid,
+            "error": str(e),
+            "hint": _GENIE_SPACE_NOT_FOUND_HINT,
+            "config": cfg,
+        }
+
+    return {
+        "success": True,
+        "space_id": sp.space_id,
+        "title": sp.title,
+        "description": sp.description,
+        "warehouse_id": sp.warehouse_id,
+        "config": cfg,
+    }
+
+
+def _genie_client_has_credentials() -> bool:
+    token = sanitize_pat_token(os.getenv("DATABRICKS_TOKEN") or "")
+    m2m = (os.getenv("DATABRICKS_CLIENT_ID") or "").strip() and (
+        os.getenv("DATABRICKS_CLIENT_SECRET") or ""
+    ).strip()
+    az = (
+        (os.getenv("ARM_CLIENT_ID") or "").strip()
+        and (os.getenv("ARM_CLIENT_SECRET") or "").strip()
+        and (os.getenv("ARM_TENANT_ID") or "").strip()
+    )
+    return bool(token or m2m or az)
+
+
 def ask_genie(question: str, context_prefix: str) -> Dict[str, Any]:
     try:
         from databricks.sdk.errors.platform import Unauthenticated
@@ -563,8 +698,8 @@ def ask_genie(question: str, context_prefix: str) -> Dict[str, Any]:
             "success": False,
             "error": (
                 "GENIE_SPACE_ID is missing or still a placeholder. "
-                "Use the real space id from Genie space Settings or GET /api/2.0/genie/spaces "
-                "(32 hex characters, not 'paste_your_genie_space_id_here')."
+                "Use the real space id from Genie space Settings or GET /api/banking/genie/spaces "
+                "(or GET /api/2.0/genie/spaces). Do not use ids from inside serialized_space JSON (e.g. 01f… blocks)."
             ),
             "config": cfg,
         }
@@ -595,13 +730,21 @@ def ask_genie(question: str, context_prefix: str) -> Dict[str, Any]:
         }
     except Exception as e:
         err = str(e)
-        if "unsupported type" in err.lower() or "not sent" in err.lower():
+        el = err.lower()
+        if "unsupported type" in el or "not sent" in el:
             return {
                 "success": False,
                 "error": err,
                 "hint": cfg.get("genie_auth_note") or (
                     "Try OAuth (service principal) instead of a personal access token for Genie on Azure."
                 ),
+                "config": cfg,
+            }
+        if "does not exist" in el or "unable to get space" in el or "datarooms/" in el:
+            return {
+                "success": False,
+                "error": err,
+                "hint": _GENIE_SPACE_NOT_FOUND_HINT,
                 "config": cfg,
             }
         raise

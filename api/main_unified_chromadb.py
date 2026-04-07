@@ -2695,6 +2695,25 @@ async def banking_genie_status():
     }
 
 
+@app.get("/api/banking/genie/spaces")
+async def banking_genie_list_spaces(page_size: int = 50, page_token: str | None = None):
+    """List Genie space_id values in the workspace (same host + auth as Ask Genie). Does not require GENIE_SPACE_ID."""
+    from utils.databricks_genie import list_genie_spaces
+
+    return list_genie_spaces(page_size=page_size, page_token=page_token)
+
+
+@app.get("/api/banking/genie/spaces/verify")
+async def banking_genie_verify_space(space_id: str | None = None):
+    """
+    GET Genie space metadata for ``space_id`` (query param) or ``GENIE_SPACE_ID`` from env.
+    Use this when Settings shows a valid id but start-conversation returns dataroom not found.
+    """
+    from utils.databricks_genie import verify_genie_space
+
+    return verify_genie_space(space_id=space_id)
+
+
 @app.post("/api/banking/genie/sync-personas")
 async def banking_genie_sync_personas():
     """

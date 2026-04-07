@@ -1,6 +1,18 @@
 # Genie space instructions (Databricks UI)
 
-Copy these into your **Genie space → Instructions** (and add matching **SQL samples** / **Sample questions**). Replace `dev.banking` with your Unity Catalog location. The API resolves catalog/schema in one place: **`DOMAIN_CATALOG` / `DOMAIN_SCHEMA`** first, then **`ACADEMY_CATALOG` / `ACADEMY_SCHEMA`** if unset (backward compatibility).
+Copy into **Genie → Instructions** (plus sample SQL / questions). Replace `dev.banking` with your catalog.schema. The API uses **`DOMAIN_CATALOG` / `DOMAIN_SCHEMA`** (then **`ACADEMY_*`** fallback).
+
+## Banking Genie — compact (paste into Genie UI)
+
+You analyze **F&M Bank** data in **`dev.banking`**.
+
+**Core tables:** `customers`, `products`, `transactions`. **Personas (source of truth):** `persona_assignments` (`customer_id`, `cluster_id`, `persona_name`) and `persona_definitions` (`persona_name`, `size`, `total_revenue`, `avg_spend`, `percentage`). Optional if loaded: `wishlist`, `incomplete_applications`, `recommendation_impressions`.
+
+**Rules:** Use fully qualified names (`dev.banking.<table>`). For **any** persona/segment question, join via **`persona_assignments`** — **do not** use `customers.customer_segment` or other legacy persona fields. Metrics from transactions: **`SUM(amount)`** (filter `transaction_type` / `channel` when asked). Join `transactions` to `products` for names/categories. Top-N: **`ORDER BY` + `LIMIT`**.
+
+**Output:** Brief narrative + the SQL + a small result table; suggest a chart when comparing metrics across personas or categories.
+
+*(Longer examples and env setup are below.)*
 
 ## Domain description
 
@@ -78,7 +90,12 @@ WHERE pa.persona_name = 'Tech Adopters';
 Set:
 
 - `DATABRICKS_HOST` — workspace URL (with or without `https://`; normalized at runtime)  
-- **`GENIE_SPACE_ID`** — real space id from Genie **Settings** or `GET /api/2.0/genie/spaces` (hex string, e.g. 32 characters). Not a placeholder like `paste_your_genie_space_id_here`.  
+- **`GENIE_SPACE_ID`** — from **Genie → open the space → Settings** (or list APIs below). Prefer that value over any id embedded in exported JSON unless you know it is the space id.  
+  - **List spaces from this app:** `GET /api/banking/genie/spaces` (same `DATABRICKS_HOST` and auth as Ask Genie). If your Settings id **does not appear** in this list, the PAT or service principal cannot see the space — fix permissions for that identity, not the id string.  
+  - **Verify lookup:** `GET /api/banking/genie/spaces/verify` (uses `GENIE_SPACE_ID` from env) or `?space_id=…` — calls Genie `get_space`; if this fails with *dataroom … does not exist*, the API still cannot resolve the space for this host/credential even if the UI shows the id.  
+  - **Databricks API:** `GET /api/2.0/genie/spaces`  
+  - **`DATABRICKS_HOST`** must be the **same workspace** URL you use in the browser (same `adb-…azuredatabricks.net` deployment).  
+  - Optional **`DATABRICKS_WORKSPACE_ID`** — workspace numeric / org id from admin or settings; the Databricks SDK sends it when required for unified hosts. Try if your admin says API routing needs it.  
 - **Authentication (Genie on Azure):** Microsoft documents **OAuth** for the Genie Conversation API. A **personal access token alone often returns** `Credential was not sent or was of an unsupported type`. Prefer one of:
   - **Databricks OAuth M2M:** `DATABRICKS_CLIENT_ID` + `DATABRICKS_CLIENT_SECRET` (service principal in the workspace), or  
   - **Azure Entra service principal:** `ARM_CLIENT_ID` + `ARM_CLIENT_SECRET` + `ARM_TENANT_ID` (same variable names the Databricks SDK uses for Azure auth).  

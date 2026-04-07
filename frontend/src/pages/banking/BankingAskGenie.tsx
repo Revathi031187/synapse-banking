@@ -21,7 +21,32 @@ interface GenieStatus {
   genie_auth_note?: string;
   databricks_genie_auth_preference?: string | null;
   genie_effective_auth?: string | null;
+  databricks_workspace_id_set?: boolean;
   ready_to_ask?: boolean;
+}
+
+interface GenieSpaceRow {
+  space_id?: string;
+  title?: string;
+  description?: string | null;
+  warehouse_id?: string | null;
+}
+
+interface GenieSpacesResponse {
+  success?: boolean;
+  error?: string;
+  spaces?: GenieSpaceRow[];
+  next_page_token?: string | null;
+}
+
+interface GenieVerifyResponse {
+  success?: boolean;
+  space_id?: string;
+  title?: string;
+  description?: string | null;
+  warehouse_id?: string | null;
+  error?: string;
+  hint?: string;
 }
 
 interface GenieAskResponse {
@@ -39,6 +64,10 @@ interface GenieAskResponse {
 export default function BankingAskGenie() {
   const API_BASE = getBankingApiBase();
   const [question, setQuestion] = React.useState('');
+  const [spacesResult, setSpacesResult] = React.useState<GenieSpacesResponse | null>(null);
+  const [spacesLoading, setSpacesLoading] = React.useState(false);
+  const [verifyResult, setVerifyResult] = React.useState<GenieVerifyResponse | null>(null);
+  const [verifyLoading, setVerifyLoading] = React.useState(false);
 
   const statusQuery = useQuery({
     queryKey: ['banking-genie-status'],
@@ -61,6 +90,28 @@ export default function BankingAskGenie() {
       return data;
     },
   });
+
+  const loadGenieSpaces = React.useCallback(async () => {
+    setSpacesLoading(true);
+    try {
+      const res = await fetch(`${API_BASE}/api/banking/genie/spaces?page_size=50`);
+      const data = (await res.json()) as GenieSpacesResponse;
+      setSpacesResult(data);
+    } finally {
+      setSpacesLoading(false);
+    }
+  }, [API_BASE]);
+
+  const verifyGenieSpace = React.useCallback(async () => {
+    setVerifyLoading(true);
+    try {
+      const res = await fetch(`${API_BASE}/api/banking/genie/spaces/verify`);
+      const data = (await res.json()) as GenieVerifyResponse;
+      setVerifyResult(data);
+    } finally {
+      setVerifyLoading(false);
+    }
+  }, [API_BASE]);
 
   const askMutation = useMutation({
     mutationFn: async (q: string) => {
@@ -150,6 +201,10 @@ export default function BankingAskGenie() {
               <strong>Databricks runtime (Spark):</strong> {s.databricks_runtime ? 'yes' : 'no'} — Delta sync only runs
               on cluster/notebook
             </li>
+            <li>
+              <strong>DATABRICKS_WORKSPACE_ID:</strong> {s.databricks_workspace_id_set ? 'set' : 'not set'} (optional; try if
+              verify fails and admin requires org id)
+            </li>
           </ul>
         )}
       </div>
@@ -172,7 +227,86 @@ export default function BankingAskGenie() {
           <RefreshCw className="w-4 h-4" />
           Refresh status
         </button>
+        <button
+          type="button"
+          onClick={() => loadGenieSpaces()}
+          disabled={spacesLoading}
+          className="inline-flex items-center gap-2 px-4 py-2 rounded-lg border border-blue-300 text-sm font-medium text-blue-900 hover:bg-blue-50 disabled:opacity-50"
+        >
+          <Database className="w-4 h-4" />
+          {spacesLoading ? 'Loading spaces…' : 'List Genie spaces'}
+        </button>
+        <button
+          type="button"
+          onClick={() => verifyGenieSpace()}
+          disabled={verifyLoading}
+          className="inline-flex items-center gap-2 px-4 py-2 rounded-lg border border-slate-300 text-sm font-medium text-slate-800 hover:bg-slate-50 disabled:opacity-50"
+        >
+          <MessageSquare className="w-4 h-4" />
+          {verifyLoading ? 'Verifying…' : 'Verify GENIE_SPACE_ID'}
+        </button>
       </div>
+
+      {verifyResult && (
+        <div
+          className={`mb-6 rounded-xl border p-5 text-sm ${
+            verifyResult.success ? 'border-green-200 bg-green-50 text-green-900' : 'border-red-200 bg-red-50 text-red-900'
+          }`}
+        >
+          {verifyResult.success ? (
+            <div>
+              <p className="font-semibold">Genie get_space OK</p>
+              <p className="mt-1 font-mono text-xs">space_id: {verifyResult.space_id}</p>
+              <p className="mt-1">title: {verifyResult.title}</p>
+              {verifyResult.warehouse_id ? (
+                <p className="mt-1 font-mono text-xs">warehouse_id: {verifyResult.warehouse_id}</p>
+              ) : null}
+            </div>
+          ) : (
+            <div className="space-y-2">
+              <p>{verifyResult.error}</p>
+              {verifyResult.hint && <p className="text-amber-900 bg-amber-50 border border-amber-200 rounded-lg p-3">{verifyResult.hint}</p>}
+            </div>
+          )}
+        </div>
+      )}
+
+      {spacesResult && (
+        <div className="mb-6 rounded-xl border border-gray-200 bg-white shadow-sm p-5 text-sm">
+          <h2 className="text-sm font-semibold text-gray-900 mb-2">Genie spaces (this workspace)</h2>
+          {!spacesResult.success && spacesResult.error && (
+            <p className="text-red-700">{spacesResult.error}</p>
+          )}
+          {spacesResult.success && spacesResult.spaces && spacesResult.spaces.length === 0 && (
+            <p className="text-gray-600">No spaces returned — check permissions or create a Genie space in this workspace.</p>
+          )}
+          {spacesResult.success && spacesResult.spaces && spacesResult.spaces.length > 0 && (
+            <div className="overflow-x-auto">
+              <table className="min-w-full text-left text-xs border-collapse">
+                <thead>
+                  <tr className="border-b border-gray-200 text-gray-500">
+                    <th className="py-2 pr-4 font-medium">space_id → set as GENIE_SPACE_ID</th>
+                    <th className="py-2 pr-4 font-medium">title</th>
+                    <th className="py-2 font-medium">warehouse_id</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {spacesResult.spaces.map((row) => (
+                    <tr key={row.space_id} className="border-b border-gray-100">
+                      <td className="py-2 pr-4 font-mono text-gray-900">{row.space_id}</td>
+                      <td className="py-2 pr-4 text-gray-800">{row.title}</td>
+                      <td className="py-2 font-mono text-gray-600">{row.warehouse_id ?? '—'}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
+          {spacesResult.next_page_token ? (
+            <p className="mt-2 text-gray-500 text-xs">More pages exist; use API query page_token if needed.</p>
+          ) : null}
+        </div>
+      )}
 
       {syncMutation.isSuccess && (
         <div
