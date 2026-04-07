@@ -532,7 +532,9 @@ def build_genie_persona_context(
 
 
 def _genie_message_to_payload(msg: Any) -> Dict[str, Any]:
-    """Best-effort extraction of narrative, SQL, and table preview from GenieMessage."""
+    """Best-effort extraction of narrative, SQL, and table preview from GenieMessage or API dict."""
+    if isinstance(msg, dict):
+        return _genie_message_dict_to_payload(msg)
     out: Dict[str, Any] = {
         "conversation_id": getattr(msg, "conversation_id", None),
         "message_id": getattr(msg, "id", None) or getattr(msg, "message_id", None),
@@ -573,6 +575,123 @@ def _genie_message_to_payload(msg: Any) -> Dict[str, Any]:
                 out["narrative"] = str(v).strip()
                 break
     return out
+
+
+def _genie_message_dict_to_payload(d: Dict[str, Any]) -> Dict[str, Any]:
+    """Parse Genie GET message JSON when the SDK does not wrap it in GenieMessage."""
+    out: Dict[str, Any] = {
+        "conversation_id": d.get("conversation_id"),
+        "message_id": d.get("message_id") or d.get("id"),
+        "narrative": "",
+        "sql": None,
+        "attachments": [],
+        "raw_attachment_types": [],
+    }
+    narrative_parts: List[str] = []
+    for att in d.get("attachments") or []:
+        if not isinstance(att, dict):
+            continue
+        atype = att.get("attachment_type") or att.get("type") or "unknown"
+        out["raw_attachment_types"].append(str(atype))
+        ad: Dict[str, Any] = {"type": str(atype)}
+        text = att.get("text")
+        if text:
+            ad["text"] = text
+            narrative_parts.append(str(text))
+        query = att.get("query")
+        if isinstance(query, dict):
+            sql_str = query.get("query")
+            if sql_str:
+                ad["sql"] = sql_str
+                if out["sql"] is None:
+                    out["sql"] = sql_str
+        elif query is not None:
+            ad["sql"] = str(query)
+            if out["sql"] is None:
+                out["sql"] = str(query)
+        if att.get("title"):
+            ad["title"] = att["title"]
+        out["attachments"].append(ad)
+    out["narrative"] = "\n\n".join(narrative_parts).strip()
+    if not out["narrative"]:
+        for key in ("content", "text", "body"):
+            v = d.get(key)
+            if v:
+                out["narrative"] = str(v).strip()
+                break
+    return out
+
+
+def _workspace_api_client(w: Any) -> Any:
+    api = getattr(w, "_api_client", None)
+    if api is None:
+        raise RuntimeError("Databricks WorkspaceClient has no _api_client")
+    return api
+
+
+def _genie_rest_list_spaces(w: Any, page_size: int, page_token: Optional[str]) -> Dict[str, Any]:
+    api = _workspace_api_client(w)
+    query: Dict[str, Any] = {}
+    if page_size:
+        query["page_size"] = page_size
+    if page_token:
+        query["page_token"] = page_token
+    headers = {"Accept": "application/json"}
+    return api.do("GET", "/api/2.0/genie/spaces", query=query or None, headers=headers)
+
+
+def _genie_rest_get_space(w: Any, space_id: str) -> Dict[str, Any]:
+    api = _workspace_api_client(w)
+    headers = {"Accept": "application/json"}
+    return api.do("GET", f"/api/2.0/genie/spaces/{space_id}", headers=headers)
+
+
+def _genie_rest_start_conversation(w: Any, space_id: str, content: str) -> Dict[str, Any]:
+    api = _workspace_api_client(w)
+    headers = {"Accept": "application/json", "Content-Type": "application/json"}
+    return api.do(
+        "POST",
+        f"/api/2.0/genie/spaces/{space_id}/start-conversation",
+        body={"content": content},
+        headers=headers,
+    )
+
+
+def _genie_rest_get_message(w: Any, space_id: str, conversation_id: str, message_id: str) -> Dict[str, Any]:
+    api = _workspace_api_client(w)
+    headers = {"Accept": "application/json"}
+    return api.do(
+        "GET",
+        f"/api/2.0/genie/spaces/{space_id}/conversations/{conversation_id}/messages/{message_id}",
+        headers=headers,
+    )
+
+
+def _genie_rest_wait_message_completed(
+    w: Any,
+    space_id: str,
+    conversation_id: str,
+    message_id: str,
+    timeout_seconds: float = 1200.0,
+) -> Dict[str, Any]:
+    import random
+    import time
+
+    deadline = time.time() + timeout_seconds
+    attempt = 1
+    status_message = ""
+    while time.time() < deadline:
+        res = _genie_rest_get_message(w, space_id, conversation_id, message_id)
+        status = str(res.get("status") or "").upper()
+        status_message = status or "unknown"
+        if status == "COMPLETED":
+            return res
+        if status == "FAILED":
+            raise RuntimeError(f"Genie message FAILED: {res}")
+        sleep_s = min(10.0, float(attempt)) + random.random()
+        time.sleep(sleep_s)
+        attempt += 1
+    raise TimeoutError(f"Genie message timed out after {timeout_seconds}s (last status: {status_message})")
 
 
 _GENIE_SPACE_NOT_FOUND_HINT = (
@@ -618,7 +737,34 @@ def list_genie_spaces(
 
     try:
         w = build_workspace_client()
-        resp = w.genie.list_spaces(page_size=page_size, page_token=page_token)
+        next_token: Optional[str] = None
+        if hasattr(w.genie, "list_spaces"):
+            resp = w.genie.list_spaces(page_size=page_size, page_token=page_token)
+            rows = [
+                {
+                    "space_id": s.space_id,
+                    "title": s.title,
+                    "description": s.description,
+                    "warehouse_id": s.warehouse_id,
+                }
+                for s in (resp.spaces or [])
+            ]
+            next_token = resp.next_page_token
+        else:
+            raw = _genie_rest_list_spaces(w, page_size, page_token)
+            rows = []
+            for s in raw.get("spaces") or []:
+                if not isinstance(s, dict):
+                    continue
+                rows.append(
+                    {
+                        "space_id": s.get("space_id"),
+                        "title": s.get("title"),
+                        "description": s.get("description"),
+                        "warehouse_id": s.get("warehouse_id"),
+                    }
+                )
+            next_token = raw.get("next_page_token")
     except Exception as e:
         return {
             "success": False,
@@ -627,20 +773,10 @@ def list_genie_spaces(
             "config": cfg,
         }
 
-    rows: List[Dict[str, Any]] = []
-    for s in resp.spaces or []:
-        rows.append(
-            {
-                "space_id": s.space_id,
-                "title": s.title,
-                "description": s.description,
-                "warehouse_id": s.warehouse_id,
-            }
-        )
     return {
         "success": True,
         "spaces": rows,
-        "next_page_token": resp.next_page_token,
+        "next_page_token": next_token,
         "config": cfg,
     }
 
@@ -675,7 +811,25 @@ def verify_genie_space(space_id: Optional[str] = None) -> Dict[str, Any]:
 
     try:
         w = build_workspace_client()
-        sp = w.genie.get_space(sid, include_serialized_space=False)
+        if hasattr(w.genie, "get_space"):
+            sp = w.genie.get_space(sid, include_serialized_space=False)
+            return {
+                "success": True,
+                "space_id": sp.space_id,
+                "title": sp.title,
+                "description": sp.description,
+                "warehouse_id": sp.warehouse_id,
+                "config": cfg,
+            }
+        raw = _genie_rest_get_space(w, sid)
+        return {
+            "success": True,
+            "space_id": raw.get("space_id"),
+            "title": raw.get("title"),
+            "description": raw.get("description"),
+            "warehouse_id": raw.get("warehouse_id"),
+            "config": cfg,
+        }
     except Exception as e:
         return {
             "success": False,
@@ -684,15 +838,6 @@ def verify_genie_space(space_id: Optional[str] = None) -> Dict[str, Any]:
             "hint": _GENIE_SPACE_NOT_FOUND_HINT,
             "config": cfg,
         }
-
-    return {
-        "success": True,
-        "space_id": sp.space_id,
-        "title": sp.title,
-        "description": sp.description,
-        "warehouse_id": sp.warehouse_id,
-        "config": cfg,
-    }
 
 
 def _genie_client_has_credentials() -> bool:
@@ -747,7 +892,23 @@ def ask_genie(question: str, context_prefix: str) -> Dict[str, Any]:
 
     try:
         w = build_workspace_client()
-        msg = w.genie.start_conversation_and_wait(space_id=space_id, content=content)
+        genie = w.genie
+        if hasattr(genie, "start_conversation_and_wait"):
+            msg = genie.start_conversation_and_wait(space_id=space_id, content=content)
+        else:
+            op = _genie_rest_start_conversation(w, space_id, content)
+            conv_id = op.get("conversation_id")
+            msg_id = op.get("message_id")
+            if not conv_id or not msg_id:
+                raise RuntimeError(f"Unexpected Genie start-conversation response: {op}")
+            if hasattr(genie, "wait_get_message_genie_completed"):
+                msg = genie.wait_get_message_genie_completed(
+                    conversation_id=conv_id,
+                    message_id=msg_id,
+                    space_id=space_id,
+                )
+            else:
+                msg = _genie_rest_wait_message_completed(w, space_id, conv_id, msg_id)
     except Unauthenticated as e:
         hint = (
             "The Genie API rejected this credential type. On Azure Databricks use OAuth: "

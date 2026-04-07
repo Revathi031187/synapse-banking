@@ -9,4 +9,5 @@
 #   %pip install -r /Workspace/Repos/<user>/<repo>/requirements-databricks.txt
 # or one-liner:
 #   %pip install "databricks-sdk>=0.29.0,<1.0.0"
+# Prefer >=0.40 if you can: older wheels may omit GenieAPI.list_spaces/get_space (this app falls back to REST).
 databricks-sdk>=0.29.0,<1.0.0
