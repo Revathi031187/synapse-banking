@@ -164,11 +164,13 @@ def genie_env_configured() -> Dict[str, Any]:
         note = f"{note}\n\n{extra}".strip() if note else extra
 
     ws_id = bool((os.getenv("DATABRICKS_WORKSPACE_ID") or "").strip())
+    azure_rid = bool((os.getenv("DATABRICKS_AZURE_RESOURCE_ID") or "").strip())
 
     return {
         "databricks_host_set": host,
         "databricks_token_set": token,
         "databricks_workspace_id_set": ws_id,
+        "databricks_azure_resource_id_set": azure_rid,
         "genie_space_id_set": space_nonempty,
         "genie_space_id_valid": space_ok,
         "databricks_oauth_m2m_set": oauth_m2m,
@@ -178,6 +180,24 @@ def genie_env_configured() -> Dict[str, Any]:
         "databricks_genie_auth_preference": pref or None,
         "genie_effective_auth": effective or None,
     }
+
+
+def _genie_workspace_client_extras() -> Dict[str, Any]:
+    """
+    Optional SDK kwargs for Genie on Azure workspace URLs.
+
+    The Python SDK only attaches ``X-Databricks-Org-Id`` for UNIFIED hosts; Genie may still need the
+    workspace org id on standard ``adb-…azuredatabricks.net`` hosts. When ``DATABRICKS_WORKSPACE_ID``
+    is set, we send it on every API request via ``custom_headers``.
+    """
+    extras: Dict[str, Any] = {}
+    wid = (os.getenv("DATABRICKS_WORKSPACE_ID") or "").strip()
+    if wid:
+        extras["custom_headers"] = {"X-Databricks-Org-Id": wid}
+    rid = (os.getenv("DATABRICKS_AZURE_RESOURCE_ID") or "").strip()
+    if rid:
+        extras["azure_workspace_resource_id"] = rid
+    return extras
 
 
 def build_workspace_client():
@@ -232,6 +252,8 @@ def build_workspace_client():
         elif pat_ok:
             use_pat = True
 
+    ex = _genie_workspace_client_extras()
+
     if use_azure:
         return WorkspaceClient(
             host=host,
@@ -239,6 +261,7 @@ def build_workspace_client():
             azure_client_secret=arm_sec,
             azure_tenant_id=arm_ten,
             auth_type="azure-client-secret",
+            **ex,
         )
     if use_m2m:
         return WorkspaceClient(
@@ -246,9 +269,10 @@ def build_workspace_client():
             client_id=cid,
             client_secret=csec,
             auth_type="oauth-m2m",
+            **ex,
         )
     if use_pat:
-        return WorkspaceClient(host=host, token=token, auth_type="pat")
+        return WorkspaceClient(host=host, token=token, auth_type="pat", **ex)
 
     raise ValueError(
         "No Databricks credentials: set DATABRICKS_TOKEN or "
@@ -545,16 +569,17 @@ def _genie_message_to_payload(msg: Any) -> Dict[str, Any]:
 
 
 _GENIE_SPACE_NOT_FOUND_HINT = (
-    "The Genie API cannot open a **dataroom** for this id using your configured **DATABRICKS_HOST** and "
-    "**credentials**. If the Space ID matches Genie → Settings, the usual causes are: "
-    "(1) **Host mismatch** — `DATABRICKS_HOST` must be the same workspace URL you use in the browser. "
-    "(2) **Identity mismatch** — the PAT or service principal must be allowed to use that space; run "
-    "**GET /api/banking/genie/spaces** and confirm this `space_id` appears. If it does not, grant the API "
-    "identity access (same as your user for Genie / SQL). "
-    "(3) **DATABRICKS_WORKSPACE_ID** — if your platform team requires it, set the workspace (org) id from "
-    "workspace settings / admin. "
-    "(4) Rare: id copied from exported space JSON instead of Settings. "
-    "Use **GET /api/banking/genie/spaces/verify** to test lookup for the configured `GENIE_SPACE_ID`."
+    "The Genie API cannot resolve this **dataroom** for your **host + credentials**. If Genie → Settings "
+    "shows this `space_id`, check: "
+    "(1) **Host** — `DATABRICKS_HOST` is the same `https://adb-…azuredatabricks.net` you use in the browser. "
+    "(2) **Identity** — **GET /api/banking/genie/spaces** must list this id for the same PAT/SP; if not, grant "
+    "that identity Genie/SQL access. "
+    "(3) **Workspace org id** — set **`DATABRICKS_WORKSPACE_ID`** to the numeric workspace id (same value as "
+    "response header **`x-databricks-org-id`** on a request in the browser DevTools Network tab, or from "
+    "admin/workspace metadata). This app sends it as **`X-Databricks-Org-Id`** on Genie calls; the SDK often "
+    "omits it on Azure workspace URLs without this. "
+    "(4) **Azure resource** — optional **`DATABRICKS_AZURE_RESOURCE_ID`** (full workspace Azure resource id) for SP auth. "
+    "(5) Wrong id from export JSON vs Settings. **GET /api/banking/genie/spaces/verify** tests `get_space`."
 )
 
 

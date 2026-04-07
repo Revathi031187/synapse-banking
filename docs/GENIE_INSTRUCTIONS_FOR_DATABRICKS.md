@@ -95,7 +95,8 @@ Set:
   - **Verify lookup:** `GET /api/banking/genie/spaces/verify` (uses `GENIE_SPACE_ID` from env) or `?space_id=…` — calls Genie `get_space`; if this fails with *dataroom … does not exist*, the API still cannot resolve the space for this host/credential even if the UI shows the id.  
   - **Databricks API:** `GET /api/2.0/genie/spaces`  
   - **`DATABRICKS_HOST`** must be the **same workspace** URL you use in the browser (same `adb-…azuredatabricks.net` deployment).  
-  - Optional **`DATABRICKS_WORKSPACE_ID`** — workspace numeric / org id from admin or settings; the Databricks SDK sends it when required for unified hosts. Try if your admin says API routing needs it.  
+  - **`DATABRICKS_WORKSPACE_ID`** — numeric **workspace / org** id. Easiest source: your Genie URL query string **`?o=…`** (e.g. `…/genie/rooms/<space_id>?o=3750626659891863` → use **`3750626659891863`**). Same value as **`x-databricks-org-id`** on API responses in DevTools. **If Genie returns *dataroom … does not exist*** but the space id is correct, set this: the app sends **`X-Databricks-Org-Id`** on Genie requests (the SDK often omits it on standard Azure workspace URLs).  
+  - Optional **`DATABRICKS_AZURE_RESOURCE_ID`** — full Azure resource id of the workspace (`/subscriptions/.../resourceGroups/.../providers/Microsoft.Databricks/workspaces/...`); helps some service-principal flows.  
 - **Authentication (Genie on Azure):** Microsoft documents **OAuth** for the Genie Conversation API. A **personal access token alone often returns** `Credential was not sent or was of an unsupported type`. Prefer one of:
   - **Databricks OAuth M2M:** `DATABRICKS_CLIENT_ID` + `DATABRICKS_CLIENT_SECRET` (service principal in the workspace), or  
   - **Azure Entra service principal:** `ARM_CLIENT_ID` + `ARM_CLIENT_SECRET` + `ARM_TENANT_ID` (same variable names the Databricks SDK uses for Azure auth).  
