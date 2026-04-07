@@ -15,12 +15,19 @@ interface GenieStatus {
   databricks_host_set?: boolean;
   databricks_token_set?: boolean;
   genie_space_id_set?: boolean;
+  genie_space_id_valid?: boolean;
+  databricks_oauth_m2m_set?: boolean;
+  azure_service_principal_set?: boolean;
+  genie_auth_note?: string;
+  databricks_genie_auth_preference?: string | null;
+  genie_effective_auth?: string | null;
   ready_to_ask?: boolean;
 }
 
 interface GenieAskResponse {
   success?: boolean;
   error?: string;
+  hint?: string;
   narrative?: string;
   sql?: string | null;
   attachments?: Array<{ type?: string; text?: string; sql?: string; title?: string }>;
@@ -106,9 +113,29 @@ export default function BankingAskGenie() {
               )}
               <span>
                 Genie ask:{' '}
-                <strong>{s.ready_to_ask ? 'ready' : 'not configured'}</strong> (host / token / space id)
+                <strong>{s.ready_to_ask ? 'ready' : 'not configured'}</strong> (host / credentials / valid space id)
               </span>
             </li>
+            {s.genie_space_id_set && s.genie_space_id_valid === false && (
+              <li className="text-amber-800">
+                <strong>GENIE_SPACE_ID</strong> looks like a placeholder — use the real id from Genie space Settings (hex
+                string).
+              </li>
+            )}
+            {(s.databricks_oauth_m2m_set || s.azure_service_principal_set) && (
+              <li className="text-green-800">
+                OAuth credentials detected (Genie on Azure usually needs this instead of PAT-only).
+              </li>
+            )}
+            {s.genie_effective_auth && (
+              <li>
+                <strong>Genie SDK auth in use:</strong> {s.genie_effective_auth}
+                {s.databricks_genie_auth_preference ? ` (override: ${s.databricks_genie_auth_preference})` : ''}
+              </li>
+            )}
+            {s.genie_auth_note ? (
+              <li className="text-amber-900 bg-amber-50 rounded-md px-2 py-1.5">{s.genie_auth_note}</li>
+            ) : null}
             <li>
               <strong>Catalog.schema:</strong> {s.catalog}.{s.schema}
             </li>
@@ -190,7 +217,12 @@ export default function BankingAskGenie() {
       {askMutation.data && (
         <div className="mt-6 space-y-4">
           {!askMutation.data.success && askMutation.data.error && (
-            <div className="text-sm text-red-700">{askMutation.data.error}</div>
+            <div className="text-sm space-y-2">
+              <div className="text-red-700">{askMutation.data.error}</div>
+              {askMutation.data.hint && (
+                <div className="text-amber-900 bg-amber-50 border border-amber-200 rounded-lg p-3">{askMutation.data.hint}</div>
+              )}
+            </div>
           )}
           {askMutation.data.narrative && (
             <div className="bg-gray-50 rounded-lg border border-gray-200 p-4">

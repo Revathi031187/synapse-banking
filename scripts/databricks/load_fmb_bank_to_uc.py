@@ -154,7 +154,10 @@ def _maybe_auto_run() -> None:
         raise
 
 
-_maybe_auto_run()
+# Auto-run only when this file is executed as the notebook entrypoint (%run / python -m …).
+# When imported or exec'd with __name__ != "__main__", define functions only (no load).
+if __name__ == "__main__":
+    _maybe_auto_run()
 
 
 # =============================================================================

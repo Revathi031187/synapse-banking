@@ -54,16 +54,203 @@ def get_customers_table_fqn() -> str:
     return f"{catalog}.{schema}.customers"
 
 
-def genie_env_configured() -> Dict[str, bool]:
-    host = bool((os.getenv("DATABRICKS_HOST") or "").strip())
-    token = bool((os.getenv("DATABRICKS_TOKEN") or "").strip())
-    space = bool((os.getenv("GENIE_SPACE_ID") or "").strip())
+def normalize_databricks_host(host: str) -> str:
+    h = (host or "").strip().rstrip("/")
+    if not h:
+        return h
+    if not h.startswith(("http://", "https://")):
+        h = "https://" + h
+    return h
+
+
+def sanitize_pat_token(token: str) -> str:
+    return (token or "").strip().strip('"').strip("'")
+
+
+_GENIE_SPACE_BAD_FRAGMENTS = (
+    "paste",
+    "placeholder",
+    "your_genie",
+    "example",
+    "xxxxxxxx",
+    "todo",
+)
+
+
+def is_valid_genie_space_id(space_id: str) -> bool:
+    """Genie space IDs are hex-like (often 32 chars); reject doc placeholders."""
+    s = (space_id or "").strip()
+    if not s:
+        return False
+    low = s.lower()
+    if any(frag in low for frag in _GENIE_SPACE_BAD_FRAGMENTS):
+        return False
+    compact = s.replace("-", "")
+    if len(compact) < 16 or len(compact) > 64:
+        return False
+    return all(c in "0123456789abcdefABCDEF" for c in compact)
+
+
+def _likely_azure_databricks_host(host: str) -> bool:
+    return "azuredatabricks.net" in (host or "").lower()
+
+
+def _genie_auth_mode_preference() -> str:
+    """
+    When PAT and OAuth are both in the environment, the Databricks SDK raises
+    'more than one authorization method configured' unless auth_type is fixed.
+
+    Set ``DATABRICKS_GENIE_AUTH`` to ``pat`` or ``oauth-m2m`` to choose explicitly.
+    If unset: prefer ``oauth-m2m`` when client_id+secret exist (better for Genie on Azure), else PAT.
+    """
+    raw = (os.getenv("DATABRICKS_GENIE_AUTH") or "").strip().lower()
+    if raw in ("pat", "token", "personal-access-token"):
+        return "pat"
+    if raw in ("oauth", "oauth-m2m", "m2m", "sp", "service-principal"):
+        return "oauth-m2m"
+    if raw in ("azure", "azure-client-secret", "azure-sp", "entra"):
+        return "azure-client-secret"
+    return ""
+
+
+def genie_env_configured() -> Dict[str, Any]:
+    host_raw = (os.getenv("DATABRICKS_HOST") or "").strip()
+    host = bool(host_raw)
+    token = bool(sanitize_pat_token(os.getenv("DATABRICKS_TOKEN") or ""))
+    space_raw = (os.getenv("GENIE_SPACE_ID") or "").strip()
+    space_nonempty = bool(space_raw)
+    space_ok = is_valid_genie_space_id(space_raw)
+    oauth_m2m = bool(
+        (os.getenv("DATABRICKS_CLIENT_ID") or "").strip()
+        and (os.getenv("DATABRICKS_CLIENT_SECRET") or "").strip()
+    )
+    azure_sp = bool(
+        (os.getenv("ARM_CLIENT_ID") or "").strip()
+        and (os.getenv("ARM_CLIENT_SECRET") or "").strip()
+        and (os.getenv("ARM_TENANT_ID") or "").strip()
+    )
+    has_auth = oauth_m2m or azure_sp or token
+    pref = _genie_auth_mode_preference()
+    effective = ""
+    if pref == "pat" and token:
+        effective = "pat"
+    elif pref == "oauth-m2m" and oauth_m2m:
+        effective = "oauth-m2m"
+    elif pref == "azure-client-secret" and azure_sp:
+        effective = "azure-client-secret"
+    elif oauth_m2m:
+        effective = "oauth-m2m"
+    elif azure_sp:
+        effective = "azure-client-secret"
+    elif token:
+        effective = "pat"
+
+    note = ""
+    if host and space_ok and token and not (oauth_m2m or azure_sp) and _likely_azure_databricks_host(
+        host_raw
+    ):
+        note = (
+            "On Azure Databricks, the Genie Conversation API often rejects personal access tokens. "
+            "Prefer OAuth: set DATABRICKS_CLIENT_ID + DATABRICKS_CLIENT_SECRET (Databricks SP) or "
+            "ARM_CLIENT_ID + ARM_CLIENT_SECRET + ARM_TENANT_ID (Azure Entra SP). "
+            "See https://learn.microsoft.com/en-us/azure/databricks/genie/conversation-api "
+            "#configure-azure-databricks-authentication"
+        )
+    if oauth_m2m and token and not pref:
+        extra = (
+            "Both PAT and OAuth M2M env vars are set. The Genie client uses OAuth M2M unless you set "
+            "DATABRICKS_GENIE_AUTH=pat (force PAT) or DATABRICKS_GENIE_AUTH=oauth-m2m (explicit OAuth)."
+        )
+        note = f"{note}\n\n{extra}".strip() if note else extra
+
     return {
         "databricks_host_set": host,
         "databricks_token_set": token,
-        "genie_space_id_set": space,
-        "ready_to_ask": host and token and space,
+        "genie_space_id_set": space_nonempty,
+        "genie_space_id_valid": space_ok,
+        "databricks_oauth_m2m_set": oauth_m2m,
+        "azure_service_principal_set": azure_sp,
+        "ready_to_ask": host and space_ok and has_auth,
+        "genie_auth_note": note,
+        "databricks_genie_auth_preference": pref or None,
+        "genie_effective_auth": effective or None,
     }
+
+
+def build_workspace_client():
+    """
+    Build a WorkspaceClient for Genie. Always sets ``auth_type`` so PAT + OAuth can coexist in
+    ``.env`` without tripping SDK validation.
+
+    Use ``DATABRICKS_GENIE_AUTH=pat`` to force PAT when OAuth vars are also set.
+    """
+    from databricks.sdk import WorkspaceClient
+
+    host = normalize_databricks_host(os.getenv("DATABRICKS_HOST", ""))
+    if not host:
+        raise ValueError("DATABRICKS_HOST is not set")
+
+    pref = _genie_auth_mode_preference()
+    cid = (os.getenv("DATABRICKS_CLIENT_ID") or "").strip()
+    csec = (os.getenv("DATABRICKS_CLIENT_SECRET") or "").strip()
+    oauth_m2m_ok = bool(cid and csec)
+
+    arm_id = (os.getenv("ARM_CLIENT_ID") or "").strip()
+    arm_sec = (os.getenv("ARM_CLIENT_SECRET") or "").strip()
+    arm_ten = (os.getenv("ARM_TENANT_ID") or "").strip()
+    azure_sp_ok = bool(arm_id and arm_sec and arm_ten)
+
+    token = sanitize_pat_token(os.getenv("DATABRICKS_TOKEN") or "")
+    pat_ok = bool(token)
+
+    use_pat = False
+    use_m2m = False
+    use_azure = False
+
+    if pref == "pat":
+        if not pat_ok:
+            raise ValueError("DATABRICKS_GENIE_AUTH=pat but DATABRICKS_TOKEN is missing")
+        use_pat = True
+    elif pref == "oauth-m2m":
+        if not oauth_m2m_ok:
+            raise ValueError("DATABRICKS_GENIE_AUTH=oauth-m2m but DATABRICKS_CLIENT_ID/SECRET missing")
+        use_m2m = True
+    elif pref == "azure-client-secret":
+        if not azure_sp_ok:
+            raise ValueError(
+                "DATABRICKS_GENIE_AUTH=azure-client-secret but ARM_CLIENT_ID/ARM_CLIENT_SECRET/ARM_TENANT_ID missing"
+            )
+        use_azure = True
+    else:
+        if oauth_m2m_ok:
+            use_m2m = True
+        elif azure_sp_ok:
+            use_azure = True
+        elif pat_ok:
+            use_pat = True
+
+    if use_azure:
+        return WorkspaceClient(
+            host=host,
+            azure_client_id=arm_id,
+            azure_client_secret=arm_sec,
+            azure_tenant_id=arm_ten,
+            auth_type="azure-client-secret",
+        )
+    if use_m2m:
+        return WorkspaceClient(
+            host=host,
+            client_id=cid,
+            client_secret=csec,
+            auth_type="oauth-m2m",
+        )
+    if use_pat:
+        return WorkspaceClient(host=host, token=token, auth_type="pat")
+
+    raise ValueError(
+        "No Databricks credentials: set DATABRICKS_TOKEN or "
+        "DATABRICKS_CLIENT_ID+DATABRICKS_CLIENT_SECRET or ARM_CLIENT_ID+ARM_CLIENT_SECRET+ARM_TENANT_ID"
+    )
 
 
 def _persona_cluster_key(personas: Dict[str, Any], cluster: Any) -> Optional[str]:
@@ -356,7 +543,14 @@ def _genie_message_to_payload(msg: Any) -> Dict[str, Any]:
 
 def ask_genie(question: str, context_prefix: str) -> Dict[str, Any]:
     try:
-        from databricks.sdk import WorkspaceClient
+        from databricks.sdk.errors.platform import Unauthenticated
+    except ImportError:
+
+        class Unauthenticated(Exception):
+            pass
+
+    try:
+        from databricks.sdk import WorkspaceClient  # noqa: F401
     except ImportError:
         return {
             "success": False,
@@ -364,21 +558,54 @@ def ask_genie(question: str, context_prefix: str) -> Dict[str, Any]:
         }
 
     cfg = genie_env_configured()
+    if not cfg.get("genie_space_id_valid"):
+        return {
+            "success": False,
+            "error": (
+                "GENIE_SPACE_ID is missing or still a placeholder. "
+                "Use the real space id from Genie space Settings or GET /api/2.0/genie/spaces "
+                "(32 hex characters, not 'paste_your_genie_space_id_here')."
+            ),
+            "config": cfg,
+        }
     if not cfg["ready_to_ask"]:
         return {
             "success": False,
-            "error": "Missing DATABRICKS_HOST, DATABRICKS_TOKEN, or GENIE_SPACE_ID",
+            "error": "Missing DATABRICKS_HOST, credentials (token or OAuth), or valid GENIE_SPACE_ID",
             "config": cfg,
         }
 
     space_id = os.getenv("GENIE_SPACE_ID", "").strip()
     content = (context_prefix or "").strip() + "\n" + (question or "").strip()
 
-    w = WorkspaceClient(
-        host=os.getenv("DATABRICKS_HOST", "").strip(),
-        token=os.getenv("DATABRICKS_TOKEN", "").strip(),
-    )
-    msg = w.genie.start_conversation_and_wait(space_id=space_id, content=content)
+    try:
+        w = build_workspace_client()
+        msg = w.genie.start_conversation_and_wait(space_id=space_id, content=content)
+    except Unauthenticated as e:
+        hint = (
+            "The Genie API rejected this credential type. On Azure Databricks use OAuth: "
+            "DATABRICKS_CLIENT_ID + DATABRICKS_CLIENT_SECRET, or ARM_CLIENT_ID + ARM_CLIENT_SECRET + ARM_TENANT_ID. "
+            "See Microsoft Learn: 'Configure Azure Databricks authentication' in the Genie Conversation API article."
+        )
+        return {
+            "success": False,
+            "error": str(e),
+            "hint": hint,
+            "config": cfg,
+        }
+    except Exception as e:
+        err = str(e)
+        if "unsupported type" in err.lower() or "not sent" in err.lower():
+            return {
+                "success": False,
+                "error": err,
+                "hint": cfg.get("genie_auth_note") or (
+                    "Try OAuth (service principal) instead of a personal access token for Genie on Azure."
+                ),
+                "config": cfg,
+            }
+        raise
+
     payload = _genie_message_to_payload(msg)
     payload["success"] = True
     payload["config"] = cfg

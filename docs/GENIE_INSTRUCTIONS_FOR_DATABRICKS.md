@@ -77,12 +77,16 @@ WHERE pa.persona_name = 'Tech Adopters';
 
 Set:
 
-- `DATABRICKS_HOST` — workspace URL  
-- `DATABRICKS_TOKEN` — PAT with Genie + SQL + catalog access  
-- `GENIE_SPACE_ID` — from the Genie space URL or app resource  
+- `DATABRICKS_HOST` — workspace URL (with or without `https://`; normalized at runtime)  
+- **`GENIE_SPACE_ID`** — real space id from Genie **Settings** or `GET /api/2.0/genie/spaces` (hex string, e.g. 32 characters). Not a placeholder like `paste_your_genie_space_id_here`.  
+- **Authentication (Genie on Azure):** Microsoft documents **OAuth** for the Genie Conversation API. A **personal access token alone often returns** `Credential was not sent or was of an unsupported type`. Prefer one of:
+  - **Databricks OAuth M2M:** `DATABRICKS_CLIENT_ID` + `DATABRICKS_CLIENT_SECRET` (service principal in the workspace), or  
+  - **Azure Entra service principal:** `ARM_CLIENT_ID` + `ARM_CLIENT_SECRET` + `ARM_TENANT_ID` (same variable names the Databricks SDK uses for Azure auth).  
+  You can keep `DATABRICKS_TOKEN` in `.env` for other APIs (e.g. warehouse/SQL). If **both** PAT and `DATABRICKS_CLIENT_ID` / `DATABRICKS_CLIENT_SECRET` are set, the Databricks SDK errors unless one method is chosen: this app sets `auth_type` automatically. **Default for Genie:** OAuth M2M when those client vars exist. To **force PAT** for Genie only, set **`DATABRICKS_GENIE_AUTH=pat`**. For explicit OAuth: **`DATABRICKS_GENIE_AUTH=oauth-m2m`**. Azure Entra SP: **`DATABRICKS_GENIE_AUTH=azure-client-secret`** (requires `ARM_*` vars).  
+- `DATABRICKS_TOKEN` — optional if using OAuth above; PAT for SQL / Files where accepted  
 - `DOMAIN_CATALOG` / `DOMAIN_SCHEMA` (fallback: `ACADEMY_CATALOG` / `ACADEMY_SCHEMA`) — must match registered tables; one resolver is used for sync, Genie context, and `/genie/status`  
 - Optional: `DOMAIN_CUSTOMERS_TABLE` — fully qualified customers table if not `{catalog}.{schema}.customers`  
 - **`DATABRICKS_SQL_WAREHOUSE_ID`** — required for **`POST /api/banking/uc/preloaded/upload`** (preloaded CSV → UC)  
-- Optional: **`DATABRICKS_UC_VOLUME_NAME`** — managed volume under `catalog.schema` for staging CSVs (default `fmb_preloaded`); PAT needs **Files API** (preview) permission where applicable
+- Optional: **`DATABRICKS_UC_VOLUME_NAME`** — managed volume under `catalog.schema` for staging CSVs (default `fmb_preloaded`); PAT needs **Files API** (preview) permission where applicable  
 
 Install SDK: `pip install -r requirements-databricks.txt` (Genie). UC upload from the API uses **httpx** only (already in `requirements.txt`).
