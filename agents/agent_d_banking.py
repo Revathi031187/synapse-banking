@@ -44,10 +44,13 @@ def _get_product_from_catalog(products_df, product_id: str) -> Optional[Dict[str
         if len(row) == 0:
             return None
         r = row.iloc[0]
+        sub = r.get("subcategory")
+        sub_s = "" if sub is None or str(sub).strip().lower() == "nan" else str(sub).strip()
         return {
             "product_id": _pid(r.get("product_id")),
             "product_name": r.get("product_name") or "Banking product",
             "category": r.get("category") or r.get("subcategory") or "Banking",
+            "subcategory": sub_s,
             "annual_fee": r.get("annual_fee"),
             "min_balance": r.get("min_balance"),
             "interest_rate_apy": r.get("interest_rate_apy") or r.get("interest_rate"),
@@ -559,6 +562,7 @@ class AgentD_Banking:
     def apply_directives_to_recommendations(
         recommendations: List[Dict[str, Any]],
         directives: Optional[Dict[str, Any]],
+        products_df: Any = None,
     ) -> List[Dict[str, Any]]:
         """Re-rank Agent B list using supervisor directives (for Agent B execute)."""
         if not directives or not recommendations:
@@ -585,11 +589,21 @@ class AgentD_Banking:
             rest = [x for x in out if _pid(x.get("product_id")) != pin]
             if not pinned:
                 # Supervisor-clicked product may not be in B's filtered top-N — still force #1
+                cat = _get_product_from_catalog(products_df, pin)
+
+                def _fnum(v: Any, default: float = 0.0) -> float:
+                    if v is None or v == "":
+                        return default
+                    try:
+                        return float(v)
+                    except (TypeError, ValueError):
+                        return default
+
                 stub = {
                     "product_id": pin,
-                    "product_name": pin,
-                    "category": "Banking",
-                    "subcategory": "",
+                    "product_name": (cat.get("product_name") if cat else None) or pin,
+                    "category": (cat.get("category") if cat else None) or "Banking",
+                    "subcategory": (cat.get("subcategory") if cat else None) or "",
                     "score": 1.0,
                     "compatibility": 100.0,
                     "match_level": "Perfect Match",
@@ -597,10 +611,10 @@ class AgentD_Banking:
                     "supervisor_pinned": True,
                     "reasoning": "Pinned #1 by Agent D (customer clicked this recommendation).",
                     "recommendation_text": "Pinned by Agent D supervisor for this customer.",
-                    "annual_fee": 0.0,
-                    "min_balance": 0.0,
-                    "interest_rate": 0.0,
-                    "interest_rate_apy": 0.0,
+                    "annual_fee": _fnum(cat.get("annual_fee")) if cat else 0.0,
+                    "min_balance": _fnum(cat.get("min_balance")) if cat else 0.0,
+                    "interest_rate": _fnum(cat.get("interest_rate_apy")) if cat else 0.0,
+                    "interest_rate_apy": _fnum(cat.get("interest_rate_apy")) if cat else 0.0,
                     "avg_rating": 4.5,
                     "description": "",
                     "scoring_method": "supervisor_pin",

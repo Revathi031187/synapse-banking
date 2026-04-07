@@ -45,10 +45,14 @@ class AgentC_Banking:
         churn_risk_score: Optional[float] = None,
         churn_category: Optional[str] = None,
         fallback_products: Optional[List[Dict]] = None,
+        agent_b_reference_recs: Optional[List[Dict[str, Any]]] = None,
     ) -> Dict[str, Any]:
         """
         Select the single best offer for this customer and build explainability.
         If no candidates from recommendations, uses fallback_products when provided.
+
+        agent_b_reference_recs: Raw rows from rule-based Agent B execute (same order as UI #1–#3).
+        When set, B vs C comparison uses execute #1 vs Agent C pick — otherwise raw merge rank vs churn-boosted pick.
         """
         persona_name = (customer_details.get("persona") or "Unknown").strip()
         metrics = customer_details.get("metrics") or {}
@@ -73,9 +77,19 @@ class AgentC_Banking:
                 seen[pid] = rec_copy
         for rec in segment:
             pid = rec.get("product_id")
-            if pid and (pid not in seen or rec.get("score", 0) > seen[pid].get("score", 0)):
-                rec_copy = dict(rec)
-                rec_copy["source"] = "segment_popular"
+            if not pid:
+                continue
+            rec_copy = dict(rec)
+            rec_copy["source"] = "segment_popular"
+            # Segment rows from Enhanced often only have popularity — map so merge can beat execute
+            try:
+                sc = float(rec_copy.get("score") or 0)
+            except (TypeError, ValueError):
+                sc = 0.0
+            if sc <= 0:
+                pop = float(rec_copy.get("popularity") or 0)
+                rec_copy["score"] = round(min(0.94, max(0.18, pop * 0.75 + 0.18)), 4)
+            if pid not in seen or float(rec_copy.get("score") or 0) > float(seen[pid].get("score") or 0):
                 seen[pid] = rec_copy
 
         # Apply exclusions
@@ -124,15 +138,117 @@ class AgentC_Banking:
                 "churn_category": churn_category,
             }
 
-        # Boost retention-type products for high churn risk
-        if churn_risk_score is not None and churn_category in ("High", "Critical"):
-            retention_categories = {"Savings", "CD", "Retirement_IRA", "Wealth_Management", "Investment", "Money_Market", "Regular Savings", "Certificates of Deposit"}
-            for c in candidates:
-                cat = (c.get("category") or "")
+        # Raw Agent B ordering (same candidate pool, no churn boost) — for B vs C comparison
+        retention_categories = {
+            "Savings",
+            "CD",
+            "Retirement_IRA",
+            "Wealth_Management",
+            "Investment",
+            "Money_Market",
+            "Regular Savings",
+            "Certificates of Deposit",
+        }
+        b_ranked = sorted(
+            [dict(r) for r in candidates],
+            key=lambda x: float(x.get("score") or 0),
+            reverse=True,
+        )
+
+        # Agent C: multi-signal boost (segment / similar) so one-best-offer can diverge from rule-based B #1
+        AGENT_C_CROSS_SIGNAL_BOOST = 0.05
+
+        # Agent C: apply retention boost on copies, then re-rank
+        boosted: List[Dict[str, Any]] = []
+        for c in candidates:
+            cc = dict(c)
+            base = float(cc.get("score") or 0)
+            src = (cc.get("source") or "").strip()
+            if src in ("segment_popular", "similar_products"):
+                base += AGENT_C_CROSS_SIGNAL_BOOST
+            if churn_risk_score is not None and churn_category in ("High", "Critical"):
+                cat = cc.get("category") or ""
                 if any(rc in cat for rc in retention_categories):
-                    c["score"] = (c.get("score") or 0) + 0.12
-        candidates.sort(key=lambda x: x.get("score") or 0, reverse=True)
-        best = candidates[0]
+                    base += 0.12
+            cc["score"] = base
+            boosted.append(cc)
+        boosted.sort(key=lambda x: float(x.get("score") or 0), reverse=True)
+        best = boosted[0]
+
+        # Agent B reference: prefer rule-based execute order (matches Agent B UI); else merged-pool raw rank
+        if agent_b_reference_recs and len(agent_b_reference_recs) > 0:
+            ref_rows = agent_b_reference_recs[:3]
+            agent_b_top_products = [
+                {
+                    "product_id": r.get("product_id"),
+                    "product_name": r.get("product_name") or str(r.get("product_id") or ""),
+                    "score": float(r.get("score") or 0),
+                }
+                for r in ref_rows
+            ]
+            b0 = agent_b_reference_recs[0]
+            b_top_id = str(b0.get("product_id") or "")
+            b_line = ", ".join(
+                f"{(x.get('product_name') or x.get('product_id'))!s} ({float(x.get('score') or 0)*100:.0f}%)"
+                for x in agent_b_reference_recs[:3]
+            )
+        else:
+            b_top_id = str(b_ranked[0].get("product_id") or "") if b_ranked else ""
+            b_line = ", ".join(
+                f"{(x.get('product_name') or x.get('product_id'))!s} ({float(x.get('score') or 0)*100:.0f}%)"
+                for x in b_ranked[:3]
+            )
+            agent_b_top_products = [
+                {
+                    "product_id": r.get("product_id"),
+                    "product_name": r.get("product_name") or str(r.get("product_id") or ""),
+                    "score": float(r.get("score") or 0),
+                }
+                for r in b_ranked[:3]
+            ]
+
+        c_pick_id = str(best.get("product_id") or "")
+        recommendations_differ = bool(b_top_id and c_pick_id and b_top_id != c_pick_id)
+        agent_c_vs_agent_b: Optional[Dict[str, Any]] = None
+        if recommendations_differ:
+            if agent_b_reference_recs and len(agent_b_reference_recs) > 0:
+                b0 = agent_b_reference_recs[0]
+            else:
+                b0 = b_ranked[0]
+            b_name = (b0.get("product_name") or b_top_id or "Agent B top pick").strip()
+            c_name = (best.get("product_name") or c_pick_id or "this offer").strip()
+            b_score = float(b0.get("score") or 0)
+            c_score = float(best.get("score") or 0)
+            template = self._template_b_vs_c(
+                persona_name, churn_category, b_name, b_score, c_name, c_score
+            )
+            llm_text = self._llm_b_vs_c_explanation(
+                persona_name=persona_name,
+                churn_category=churn_category or "",
+                agent_b_top_name=b_name,
+                agent_b_top_score=b_score,
+                agent_c_name=c_name,
+                agent_c_score=c_score,
+                agent_b_products_line=b_line,
+            )
+            if llm_text:
+                agent_c_vs_agent_b = {
+                    "recommendations_differ": True,
+                    "explanation": llm_text,
+                    "explanation_source": "llm",
+                }
+            else:
+                agent_c_vs_agent_b = {
+                    "recommendations_differ": True,
+                    "explanation": template,
+                    "explanation_source": "template",
+                }
+        else:
+            agent_c_vs_agent_b = {
+                "recommendations_differ": False,
+                "explanation": None,
+                "explanation_source": None,
+            }
 
         reason = best.get("reasoning") or "Best fit for your segment and profile."
         score_val = float(best.get("score") or 0)
@@ -183,7 +299,66 @@ class AgentC_Banking:
             "persona": persona_name,
             "churn_risk_score": churn_risk_score,
             "churn_category": churn_category,
+            "agent_b_top_products": agent_b_top_products,
+            "agent_c_vs_agent_b": agent_c_vs_agent_b,
         }
+
+    def _template_b_vs_c(
+        self,
+        persona_name: str,
+        churn_category: Optional[str],
+        agent_b_top_name: str,
+        agent_b_top_score: float,
+        agent_c_name: str,
+        agent_c_score: float,
+    ) -> str:
+        """Fallback copy when LLM is unavailable."""
+        churn_bit = ""
+        if churn_category in ("High", "Critical"):
+            churn_bit = (
+                f" With {churn_category} churn risk, Agent C prioritizes retention-oriented offers so outreach "
+                f"leads with a product that protects the relationship—not only the highest raw fit score."
+            )
+        return (
+            f'Agent B\'s top match-ranked product is "{agent_b_top_name}" ({agent_b_top_score*100:.0f}% fit). '
+            f'Agent C selects "{agent_c_name}" ({agent_c_score*100:.0f}% after retention rules) as the one best offer '
+            f"for segment {persona_name}.{churn_bit} "
+            f'Use "{agent_c_name}" as the primary campaign SKU to maximize retention and deepen share-of-wallet; '
+            f'"{agent_b_top_name}" remains a strong alternative for follow-up if the customer declines.'
+        )
+
+    def _llm_b_vs_c_explanation(
+        self,
+        persona_name: str,
+        churn_category: str,
+        agent_b_top_name: str,
+        agent_b_top_score: float,
+        agent_c_name: str,
+        agent_c_score: float,
+        agent_b_products_line: str,
+    ) -> str:
+        try:
+            import os
+
+            if not (os.getenv("TOGETHER_API_KEY") or "").strip():
+                return ""
+            from utils.together_ai import together_ai
+
+            raw = together_ai.generate_agent_b_vs_c_explanation(
+                persona_name=persona_name,
+                churn_category=churn_category,
+                agent_b_top_name=agent_b_top_name,
+                agent_b_top_score=agent_b_top_score,
+                agent_c_name=agent_c_name,
+                agent_c_score=agent_c_score,
+                agent_b_products_line=agent_b_products_line,
+            )
+            if not raw or "Error generating" in raw:
+                return ""
+            return raw.strip()
+        except Exception as e:
+            logger.warning(f"agent_b vs agent_c LLM explanation failed: {e}")
+            return ""
 
     def _compute_channels(
         self,

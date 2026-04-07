@@ -7,6 +7,7 @@ import {
 } from 'lucide-react';
 
 import { getBankingApiBase } from '../../utils/apiBase';
+import { formatCompactUsd } from '../../utils/formatCurrency';
 import { useSessionStorageState } from '../../hooks/useSessionStorageState';
 
 interface MacroPersona {
@@ -25,7 +26,11 @@ interface MacroPersona {
   image_url?: string;
   color_theme?: string;
   visual_emoji?: string;
-  characteristics?: any;
+  characteristics?: {
+    avg_products?: number;
+    avg_digital_engagement?: number;
+    [key: string]: unknown;
+  };
   segment_explanation?: {
     name_explanation?: string;
     segment_definition?: string;
@@ -43,7 +48,11 @@ interface MicroSegment {
   avg_balance: number;
   avg_spend: number;
   ltv_tier: string;
-  characteristics: any;
+  characteristics?: {
+    avg_portfolio_depth?: number;
+    avg_digital_engagement?: number;
+    [key: string]: unknown;
+  };
   description?: string;
   top_customers?: Array<{customer_id: string; customer_name: string; total_balance?: number; total_deposits?: number}>;
   segment_explanation?: {
@@ -355,23 +364,23 @@ function MacroPersonaCard({ persona, isExpanded, onToggle }: any) {
           <div className="border-t border-gray-200 pt-2 mb-2">
             <div className="text-xs text-gray-600 mb-1">Avg Balance</div>
             <div className="text-xl font-bold" style={{ color: cardColor }}>
-              ${(persona.avg_balance || 0).toLocaleString()}
+              {formatCompactUsd(persona.avg_balance)}
             </div>
           </div>
 
           <div className="border-t border-gray-200 pt-2 mb-1">
-            <div className="text-xs text-gray-600 mb-1">Banking Events</div>
+            <div className="text-xs text-gray-600 mb-1">Digital adoption</div>
             <div className="text-base font-bold text-blue-600">
-              {persona.avg_transactions ? 
-                (persona.avg_transactions > 1 ? Math.round(persona.avg_transactions).toLocaleString() : 'N/A')
-                : 'N/A'}
+              {persona.characteristics?.avg_digital_engagement != null
+                ? `${(Number(persona.characteristics.avg_digital_engagement) * 100).toFixed(0)}% online`
+                : '—'}
             </div>
           </div>
 
           <div className="border-t border-gray-200 pt-2 mb-1">
             <div className="text-xs text-gray-600 mb-1">Intent Score</div>
             <div className="text-base font-bold text-green-600">
-              {((persona.avg_intent_score || 0) * 100).toFixed(0)}%
+              {((persona.avg_intent_score || 0) * 100).toFixed(1)}%
             </div>
           </div>
 
@@ -509,8 +518,11 @@ function MacroPersonaCard({ persona, isExpanded, onToggle }: any) {
               
               <div className="space-y-3 text-sm text-gray-700">
                 <p><strong>Description:</strong> {persona.description || 'No description available'}</p>
-                {persona.avg_transactions && (
-                  <p><strong>Avg Banking Events:</strong> {persona.avg_transactions}/month</p>
+                {persona.characteristics?.avg_products != null && (
+                  <p><strong>Avg products held:</strong> {Number(persona.characteristics.avg_products).toFixed(1)}</p>
+                )}
+                {persona.characteristics?.avg_digital_engagement != null && (
+                  <p><strong>Digital adoption:</strong> {(Number(persona.characteristics.avg_digital_engagement) * 100).toFixed(0)}% (normalized engagement)</p>
                 )}
                 {persona.characteristics && (
                   <div>
@@ -559,7 +571,15 @@ function MicroSegmentCard({ micro }: { micro: MicroSegment }) {
         <div className="flex justify-between items-center">
           <span className="text-sm text-gray-600">Avg Balance</span>
           <span className="font-bold text-blue-700">
-            ${(micro.avg_spend || micro.avg_balance || 0).toLocaleString()}
+            {formatCompactUsd(micro.avg_spend || micro.avg_balance || 0)}
+          </span>
+        </div>
+        <div className="flex justify-between items-center">
+          <span className="text-sm text-gray-600">Avg products</span>
+          <span className="font-bold text-gray-800">
+            {micro.characteristics?.avg_portfolio_depth != null
+              ? `${Number(micro.characteristics.avg_portfolio_depth).toFixed(1)}`
+              : '—'}
           </span>
         </div>
       </div>
@@ -664,7 +684,7 @@ function MicroSegmentCard({ micro }: { micro: MicroSegment }) {
                       {micro.top_customers.slice(0, 3).map((customer, idx) => (
                         <div key={idx} className="text-xs text-gray-600 flex justify-between">
                           <span>{customer.customer_name || customer.customer_id}</span>
-                          <span className="font-semibold">${(customer.total_balance || customer.total_deposits || 0).toLocaleString()}</span>
+                          <span className="font-semibold">{formatCompactUsd(customer.total_balance || customer.total_deposits || 0)}</span>
                         </div>
                       ))}
                     </div>
@@ -679,7 +699,7 @@ function MicroSegmentCard({ micro }: { micro: MicroSegment }) {
                 {micro.top_customers && micro.top_customers.slice(0, 3).map((customer, idx) => (
                   <div key={idx} className="text-xs text-gray-600 flex justify-between">
                     <span>{customer.customer_name || customer.customer_id}</span>
-                    <span className="font-semibold">${(customer.total_balance || 0).toLocaleString()}</span>
+                    <span className="font-semibold">{formatCompactUsd(customer.total_balance || 0)}</span>
                   </div>
                 ))}
               </div>

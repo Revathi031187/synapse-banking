@@ -72,6 +72,43 @@ function pct(v: number | null | undefined): string {
   return `${Math.round(v * 100)}%`;
 }
 
+/** Compact table cells: expand on demand so more churn rows fit on screen. */
+function CollapsibleChurnText({
+  text,
+  collapseThreshold = 96,
+}: {
+  text: string;
+  /** Show toggle when text is longer than this (Reason copy is often under 160 chars but still clipped in the table). */
+  collapseThreshold?: number;
+}) {
+  const [expanded, setExpanded] = useState(false);
+  const t = (text || '').trim();
+  if (!t) return <span className="text-slate-400">—</span>;
+  const long = t.length > collapseThreshold || t.split(/\n/).length > 2;
+  return (
+    <div className="min-w-0 max-w-md">
+      <div
+        className={
+          expanded
+            ? 'text-slate-600 text-xs leading-snug whitespace-pre-line break-words'
+            : 'text-slate-600 text-xs leading-snug whitespace-pre-line break-words line-clamp-2 overflow-hidden'
+        }
+      >
+        {t}
+      </div>
+      {long && (
+        <button
+          type="button"
+          onClick={() => setExpanded((v) => !v)}
+          className="mt-1 text-violet-600 text-xs font-medium hover:underline"
+        >
+          {expanded ? 'Show less' : 'Show more'}
+        </button>
+      )}
+    </div>
+  );
+}
+
 type AgentCCustomerMetrics = {
   days_since_last_txn?: number;
   recent_txn_count?: number;
@@ -103,6 +140,121 @@ type AgentCPersonaMetrics = {
   avg_inflow_outflow_ratio_90d?: number | null;
 };
 
+type ChurnCohortCustomerRow = {
+  customer_id: string;
+  customer_name: string;
+  churn_risk_score: number;
+  churn_risk_category: string;
+  churn_risk_reason?: string;
+  reason?: string;
+  persona?: string;
+  recommended_retention_action?: string;
+  suggested_retention_offer?: string;
+  retention_strategy?: string;
+  customer_metrics?: AgentCCustomerMetrics;
+};
+
+function ChurnCohortCustomerTable({
+  rows,
+  title,
+  description,
+  headerClassName,
+  getReasonText,
+  onGetOffer,
+}: {
+  rows: ChurnCohortCustomerRow[];
+  title: string;
+  description: string;
+  headerClassName: string;
+  getReasonText: (c: ChurnCohortCustomerRow) => string;
+  onGetOffer: (customerId: string) => void;
+}) {
+  if (rows.length === 0) return null;
+  return (
+    <div className="rounded-xl border border-slate-200 bg-white shadow-sm overflow-hidden mb-6 last:mb-0">
+      <div className={`px-4 py-3 border-b border-slate-100 ${headerClassName}`}>
+        <h3 className="text-sm font-bold text-slate-900">{title}</h3>
+        <p className="text-xs text-slate-600 mt-0.5">{description}</p>
+      </div>
+      <div className="overflow-x-auto">
+        <table className="w-full text-sm min-w-[960px]">
+          <thead>
+            <tr className="bg-slate-50 border-b border-slate-200">
+              <th className="text-left py-3 px-4 font-semibold text-slate-700">Customer</th>
+              <th className="text-left py-3 px-4 font-semibold text-slate-700">Segment</th>
+              <th className="text-right py-3 px-4 font-semibold text-slate-700">Risk score</th>
+              <th className="text-left py-3 px-4 font-semibold text-slate-700 min-w-[200px] max-w-md">Reason</th>
+              <th className="text-left py-3 px-4 font-semibold text-slate-700 min-w-[220px] max-w-lg">
+                Retention strategy
+              </th>
+              <th className="text-left py-3 px-4 font-semibold text-slate-700">Suggested action</th>
+              <th className="text-left py-3 px-4 font-semibold text-slate-700">Action</th>
+            </tr>
+          </thead>
+          <tbody>
+            {rows.map((c) => (
+              <tr
+                key={`${c.customer_id}-${c.churn_risk_category}`}
+                className="border-b border-slate-100 hover:bg-slate-50/50 transition-colors"
+              >
+                <td className="py-3 px-4">
+                  <p className="font-medium text-slate-900">{c.customer_name}</p>
+                  <p className="text-slate-500 text-xs">{c.customer_id}</p>
+                </td>
+                <td className="py-3 px-4 text-slate-600">{c.persona ?? '—'}</td>
+                <td className="py-3 px-4 text-right">
+                  <span
+                    className={`font-semibold ${
+                      c.churn_risk_category === 'Critical'
+                        ? 'text-red-600'
+                        : c.churn_risk_category === 'High'
+                        ? 'text-amber-600'
+                        : c.churn_risk_category === 'Low'
+                        ? 'text-emerald-600'
+                        : 'text-slate-600'
+                    }`}
+                  >
+                    {c.churn_risk_score?.toFixed(0) ?? '—'}
+                  </span>
+                  <span className="text-slate-400 ml-1 text-xs">{c.churn_risk_category}</span>
+                </td>
+                <td className="py-3 px-4 text-slate-600 align-top max-w-md">
+                  <CollapsibleChurnText text={getReasonText(c)} collapseThreshold={52} />
+                </td>
+                <td className="py-3 px-4 text-slate-600 align-top max-w-lg">
+                  <CollapsibleChurnText
+                    text={formatRetentionStrategy(c.retention_strategy?.trim() || '') || ''}
+                    collapseThreshold={120}
+                  />
+                  {c.customer_metrics && (
+                    <p className="mt-2 text-[11px] text-slate-500">
+                      90d txns {c.customer_metrics.txn_count_90d ?? '—'} | mobile {pct(c.customer_metrics.mobile_share_90d)} |
+                      active products {c.customer_metrics.active_products_180d ?? '—'}
+                    </p>
+                  )}
+                </td>
+                <td className="py-3 px-4 text-slate-600 text-xs">
+                  {c.recommended_retention_action?.replace(/_/g, ' ') ?? '—'}
+                </td>
+                <td className="py-3 px-4">
+                  <button
+                    type="button"
+                    onClick={() => onGetOffer(c.customer_id)}
+                    className="inline-flex items-center gap-1 text-violet-600 font-medium hover:text-violet-700"
+                  >
+                    Get offer
+                    <ArrowRight className="w-4 h-4" />
+                  </button>
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  );
+}
+
 /** API payload from GET /api/banking/agent_c/one-best-offer/:id */
 type OneBestOfferPayload = {
   offer?: {
@@ -123,6 +275,12 @@ type OneBestOfferPayload = {
   best_channel_reason?: string;
   channels?: Array<{ channel: string; priority?: number; label?: string }>;
   explainability?: { why_this_offer?: string; why_our_ai?: string };
+  agent_b_top_products?: Array<{ product_id?: string; product_name?: string; score?: number }>;
+  agent_c_vs_agent_b?: {
+    recommendations_differ: boolean;
+    explanation?: string | null;
+    explanation_source?: 'llm' | 'template' | null;
+  };
 };
 
 type PersonaBestOfferPayload = OneBestOfferPayload & {
@@ -206,17 +364,43 @@ export default function BankingAgentC() {
     enabled: !!selectedCustomerId,
   });
 
-  const { data: churnData } = useQuery({
-    queryKey: ['banking-churn-cohort', 'High,Critical', 30],
+  const churnQueriesEnabled = customersSuccess && (customersData?.data?.customers?.length ?? 0) > 0;
+
+  const { data: churnHighData, isPending: churnHighPending } = useQuery({
+    queryKey: ['banking-churn-cohort', 'High,Critical', 10, 'desc'],
     queryFn: async () => {
       const res = await fetch(
-        `${API_BASE}/api/banking/churn-cohort?risk=High,Critical&limit=30&skip=0`
+        `${API_BASE}/api/banking/churn-cohort?${new URLSearchParams({
+          risk: 'High,Critical',
+          limit: '10',
+          skip: '0',
+          order: 'desc',
+        })}`
       );
       if (!res.ok) return { cohort: [], total: 0 };
       return res.json();
     },
-    enabled: customersSuccess && (customersData?.data?.customers?.length ?? 0) > 0,
+    enabled: churnQueriesEnabled,
   });
+
+  const { data: churnLowData, isPending: churnLowPending } = useQuery({
+    queryKey: ['banking-churn-cohort', 'Low', 10, 'asc'],
+    queryFn: async () => {
+      const res = await fetch(
+        `${API_BASE}/api/banking/churn-cohort?${new URLSearchParams({
+          risk: 'Low',
+          limit: '10',
+          skip: '0',
+          order: 'asc',
+        })}`
+      );
+      if (!res.ok) return { cohort: [], total: 0 };
+      return res.json();
+    },
+    enabled: churnQueriesEnabled,
+  });
+
+  const churnCohortLoading = churnHighPending || churnLowPending;
 
   const { data: churnByPersonaData } = useQuery({
     queryKey: ['banking-churn-by-persona', 'High,Critical'],
@@ -262,19 +446,15 @@ export default function BankingAgentC() {
   const personaOffer = personaOfferData?.data as PersonaBestOfferPayload | undefined;
 
   const offer = offerData?.data as OneBestOfferPayload | undefined;
-  const cohort = (churnData?.cohort ?? []) as Array<{
-    customer_id: string;
-    customer_name: string;
-    churn_risk_score: number;
-    churn_risk_category: string;
-    churn_risk_reason?: string;
-    reason?: string;
-    persona?: string;
-    recommended_retention_action?: string;
-    suggested_retention_offer?: string;
-    retention_strategy?: string;
-    customer_metrics?: AgentCCustomerMetrics;
-  }>;
+  const cohortHighRisk = useMemo(
+    () => (churnHighData?.cohort ?? []) as ChurnCohortCustomerRow[],
+    [churnHighData]
+  );
+  const cohortLowRisk = useMemo(
+    () => (churnLowData?.cohort ?? []) as ChurnCohortCustomerRow[],
+    [churnLowData]
+  );
+  const hasChurnCohortRows = cohortHighRisk.length > 0 || cohortLowRisk.length > 0;
 
   const churnByPersona = (churnByPersonaData?.segments ?? []) as Array<{
     persona_id: number | string;
@@ -290,7 +470,7 @@ export default function BankingAgentC() {
     persona_metrics?: AgentCPersonaMetrics;
   }>;
 
-  function churnReasonText(c: (typeof cohort)[0]): string {
+  function churnReasonText(c: ChurnCohortCustomerRow): string {
     const raw = (c.churn_risk_reason || c.reason || '').trim();
     if (raw) return raw;
     const cat = c.churn_risk_category || 'Elevated';
@@ -460,7 +640,8 @@ export default function BankingAgentC() {
                               {selectedCustomer?.customer_name ?? selectedCustomerId} · {offer.persona}
                             </p>
                           </div>
-                          <div className="p-6 flex flex-wrap gap-6">
+                          <div className="p-6 space-y-5">
+                            <div className="flex flex-wrap gap-6">
                             <div className="flex-1 min-w-[260px]">
                               <div className="rounded-xl bg-slate-50 p-5 border border-slate-100">
                                 <p className="text-xs font-semibold uppercase tracking-wider text-slate-500 mb-1">
@@ -562,6 +743,42 @@ export default function BankingAgentC() {
                                 </div>
                               )}
                             </div>
+                            </div>
+
+                            {offer.agent_c_vs_agent_b?.recommendations_differ && offer.agent_c_vs_agent_b?.explanation && (
+                              <div className="rounded-xl border border-blue-200 bg-gradient-to-br from-blue-50/90 to-indigo-50/50 px-4 py-4 shadow-sm">
+                                <div className="flex items-start justify-between gap-2 mb-2">
+                                  <p className="text-sm font-bold text-slate-900 flex items-center gap-2">
+                                    <Sparkles className="w-4 h-4 text-blue-600 flex-shrink-0" />
+                                    Agent B vs Agent C
+                                  </p>
+                                  {offer.agent_c_vs_agent_b.explanation_source === 'llm' && (
+                                    <span className="text-[10px] uppercase tracking-wide font-semibold text-blue-700 bg-white/80 border border-blue-100 px-2 py-0.5 rounded-full">
+                                      AI explanation
+                                    </span>
+                                  )}
+                                </div>
+                                <p className="text-xs text-slate-600 mb-2">
+                                  Agent B ranks products by segment fit; Agent C picks one best offer for retention and
+                                  purchase—shown when they differ.
+                                </p>
+                                {offer.agent_b_top_products && offer.agent_b_top_products.length > 0 && (
+                                  <p className="text-xs text-slate-500 mb-3">
+                                    Agent B top matches:{' '}
+                                    {offer.agent_b_top_products.map((p, i) => (
+                                      <span key={p.product_id ?? i}>
+                                        <strong className="text-slate-700">{p.product_name ?? p.product_id}</strong>
+                                        {p.score != null && (
+                                          <span className="text-slate-400"> ({(p.score * 100).toFixed(0)}%)</span>
+                                        )}
+                                        {i < (offer.agent_b_top_products?.length ?? 0) - 1 ? ' · ' : ''}
+                                      </span>
+                                    ))}
+                                  </p>
+                                )}
+                                <p className="text-sm text-slate-800 leading-relaxed">{offer.agent_c_vs_agent_b.explanation}</p>
+                              </div>
+                            )}
                           </div>
                           <div className="border-t border-slate-100">
                             <button
@@ -705,7 +922,8 @@ export default function BankingAgentC() {
                             Representative: {personaOffer.representative_customer_name} ({personaOffer.representative_customer_id})
                           </p>
                         </div>
-                        <div className="p-6 flex flex-wrap gap-6">
+                        <div className="p-6 space-y-5">
+                          <div className="flex flex-wrap gap-6">
                           <div className="flex-1 min-w-[220px]">
                             <p className="text-xs font-semibold uppercase tracking-wider text-slate-500 mb-1">
                               Segment best offer
@@ -761,6 +979,42 @@ export default function BankingAgentC() {
                               </div>
                             )}
                           </div>
+                          </div>
+
+                          {personaOffer.agent_c_vs_agent_b?.recommendations_differ && personaOffer.agent_c_vs_agent_b?.explanation && (
+                            <div className="rounded-xl border border-blue-200 bg-gradient-to-br from-blue-50/90 to-indigo-50/50 px-4 py-4 shadow-sm">
+                              <div className="flex items-start justify-between gap-2 mb-2">
+                                <p className="text-sm font-bold text-slate-900 flex items-center gap-2">
+                                  <Sparkles className="w-4 h-4 text-blue-600 flex-shrink-0" />
+                                  Agent B vs Agent C (representative customer)
+                                </p>
+                                {personaOffer.agent_c_vs_agent_b.explanation_source === 'llm' && (
+                                  <span className="text-[10px] uppercase tracking-wide font-semibold text-blue-700 bg-white/80 border border-blue-100 px-2 py-0.5 rounded-full">
+                                    AI explanation
+                                  </span>
+                                )}
+                              </div>
+                              <p className="text-xs text-slate-600 mb-2">
+                                Based on the segment&apos;s representative customer: Agent B fit rank vs Agent C one best
+                                offer.
+                              </p>
+                              {personaOffer.agent_b_top_products && personaOffer.agent_b_top_products.length > 0 && (
+                                <p className="text-xs text-slate-500 mb-3">
+                                  Agent B top matches:{' '}
+                                  {personaOffer.agent_b_top_products.map((p, i) => (
+                                    <span key={p.product_id ?? i}>
+                                      <strong className="text-slate-700">{p.product_name ?? p.product_id}</strong>
+                                      {p.score != null && (
+                                        <span className="text-slate-400"> ({(p.score * 100).toFixed(0)}%)</span>
+                                      )}
+                                      {i < (personaOffer.agent_b_top_products?.length ?? 0) - 1 ? ' · ' : ''}
+                                    </span>
+                                  ))}
+                                </p>
+                              )}
+                              <p className="text-sm text-slate-800 leading-relaxed">{personaOffer.agent_c_vs_agent_b.explanation}</p>
+                            </div>
+                          )}
                         </div>
                       </motion.div>
                     ) : (
@@ -800,7 +1054,8 @@ export default function BankingAgentC() {
                   Churn risk intelligence
                 </h2>
                 <p className="text-slate-600 text-sm mt-1 max-w-2xl">
-                  <strong className="text-slate-800">Customer</strong>: High/Critical at-risk individuals and 1:1 actions.{' '}
+                  <strong className="text-slate-800">Customer</strong>: Two tables — up to 10 highest-risk (High/Critical) and up
+                  to 10 lowest-risk (Low band), with 1:1 actions.{' '}
                   <strong className="text-slate-800">Persona</strong>: Segment-level churn rollup aligned with the persona list
                   above—use <span className="font-semibold text-indigo-700">Open segment</span> to load that persona in{' '}
                   <strong className="text-slate-800">One best offer</strong>.
@@ -845,95 +1100,55 @@ export default function BankingAgentC() {
             {customersSuccess && (customersData?.data?.customers?.length ?? 0) > 0 && (
               <>
                 {churnRiskView === 'customer' && (
-                  <div className="rounded-xl border border-slate-200 bg-white shadow-sm overflow-hidden">
-                    <div className="overflow-x-auto">
-                      <table className="w-full text-sm min-w-[960px]">
-                        <thead>
-                          <tr className="bg-slate-50 border-b border-slate-200">
-                            <th className="text-left py-3 px-4 font-semibold text-slate-700">Customer</th>
-                            <th className="text-left py-3 px-4 font-semibold text-slate-700">Segment</th>
-                            <th className="text-right py-3 px-4 font-semibold text-slate-700">Risk score</th>
-                            <th className="text-left py-3 px-4 font-semibold text-slate-700 min-w-[200px] max-w-md">
-                              Reason
-                            </th>
-                            <th className="text-left py-3 px-4 font-semibold text-slate-700 min-w-[220px] max-w-lg">
-                              Retention strategy
-                            </th>
-                            <th className="text-left py-3 px-4 font-semibold text-slate-700">Suggested action</th>
-                            <th className="text-left py-3 px-4 font-semibold text-slate-700">Action</th>
-                          </tr>
-                        </thead>
-                        <tbody>
-                          {cohort.slice(0, 15).map((c) => (
-                            <tr
-                              key={c.customer_id}
-                              className="border-b border-slate-100 hover:bg-slate-50/50 transition-colors"
-                            >
-                              <td className="py-3 px-4">
-                                <p className="font-medium text-slate-900">{c.customer_name}</p>
-                                <p className="text-slate-500 text-xs">{c.customer_id}</p>
-                              </td>
-                              <td className="py-3 px-4 text-slate-600">{c.persona ?? '—'}</td>
-                              <td className="py-3 px-4 text-right">
-                                <span
-                                  className={`font-semibold ${
-                                    c.churn_risk_category === 'Critical'
-                                      ? 'text-red-600'
-                                      : c.churn_risk_category === 'High'
-                                      ? 'text-amber-600'
-                                      : 'text-slate-600'
-                                  }`}
-                                >
-                                  {c.churn_risk_score?.toFixed(0) ?? '—'}
-                                </span>
-                                <span className="text-slate-400 ml-1 text-xs">{c.churn_risk_category}</span>
-                              </td>
-                              <td
-                                className="py-3 px-4 text-slate-600 text-xs leading-snug align-top max-w-md"
-                                title={churnReasonText(c)}
-                              >
-                                {churnReasonText(c)}
-                              </td>
-                              <td
-                                className="py-3 px-4 text-slate-600 text-xs leading-snug align-top max-w-lg whitespace-pre-line"
-                                title={formatRetentionStrategy(c.retention_strategy ?? '')}
-                              >
-                                {formatRetentionStrategy(c.retention_strategy?.trim() || '') || '—'}
-                                {c.customer_metrics && (
-                                  <p className="mt-2 text-[11px] text-slate-500">
-                                    90d txns {c.customer_metrics.txn_count_90d ?? '—'} | mobile {pct(c.customer_metrics.mobile_share_90d)} |
-                                    active products {c.customer_metrics.active_products_180d ?? '—'}
-                                  </p>
-                                )}
-                              </td>
-                              <td className="py-3 px-4 text-slate-600 text-xs">
-                                {c.recommended_retention_action?.replace(/_/g, ' ') ?? '—'}
-                              </td>
-                              <td className="py-3 px-4">
-                                <button
-                                  type="button"
-                                  onClick={() => {
-                                    setUi((p) => ({
-                                      ...p,
-                                      offerScope: 'customer',
-                                      churnRiskView: 'customer',
-                                      selectedCustomerId: c.customer_id,
-                                    }));
-                                  }}
-                                  className="inline-flex items-center gap-1 text-violet-600 font-medium hover:text-violet-700"
-                                >
-                                  Get offer
-                                  <ArrowRight className="w-4 h-4" />
-                                </button>
-                              </td>
-                            </tr>
-                          ))}
-                        </tbody>
-                      </table>
-                    </div>
-                    {cohort.length === 0 && (
-                      <div className="py-12 text-center text-slate-500 text-sm">
-                        No High/Critical at-risk customers in the current cohort window, or churn data is still loading.
+                  <div className="space-y-4">
+                    <p className="text-xs text-slate-500 px-1">
+                      Two samples from your data: up to 10 <strong className="text-slate-700">High/Critical</strong> (highest
+                      scores) and up to 10 <strong className="text-slate-700">Low</strong> (lowest scores). Use{' '}
+                      <strong>Show more</strong> where needed.
+                    </p>
+                    {churnCohortLoading && !hasChurnCohortRows ? (
+                      <div className="flex items-center justify-center gap-2 py-10 text-slate-500 text-sm rounded-xl border border-slate-200 bg-white">
+                        <Loader2 className="w-5 h-5 animate-spin text-violet-500" />
+                        Loading churn samples…
+                      </div>
+                    ) : (
+                      <>
+                        <ChurnCohortCustomerTable
+                          rows={cohortHighRisk}
+                          title="High / Critical risk"
+                          description="Highest churn scores — prioritize retention and outreach."
+                          headerClassName="bg-amber-50/95 border-amber-100"
+                          getReasonText={churnReasonText}
+                          onGetOffer={(customerId) =>
+                            setUi((p) => ({
+                              ...p,
+                              offerScope: 'customer',
+                              churnRiskView: 'customer',
+                              selectedCustomerId: customerId,
+                            }))
+                          }
+                        />
+                        <ChurnCohortCustomerTable
+                          rows={cohortLowRisk}
+                          title="Low risk"
+                          description="Lowest churn scores in the Low band — relationship growth and standard care."
+                          headerClassName="bg-emerald-50/95 border-emerald-100"
+                          getReasonText={churnReasonText}
+                          onGetOffer={(customerId) =>
+                            setUi((p) => ({
+                              ...p,
+                              offerScope: 'customer',
+                              churnRiskView: 'customer',
+                              selectedCustomerId: customerId,
+                            }))
+                          }
+                        />
+                      </>
+                    )}
+                    {!churnCohortLoading && !hasChurnCohortRows && (
+                      <div className="py-12 text-center text-slate-500 text-sm rounded-xl border border-slate-200 bg-white">
+                        No churn samples available (need High/Critical and/or Low customers in your data), or churn features are
+                        still loading.
                       </div>
                     )}
                   </div>
@@ -983,11 +1198,8 @@ export default function BankingAgentC() {
                               <td className="py-3 px-4 text-slate-600 text-xs">
                                 {(row.top_retention_action || '—').replace(/_/g, ' ')}
                               </td>
-                              <td
-                                className="py-3 px-4 text-slate-600 text-xs leading-snug align-top max-w-md whitespace-pre-line"
-                                title={formatRetentionStrategy(row.retention_strategy)}
-                              >
-                                {formatRetentionStrategy(row.retention_strategy)}
+                              <td className="py-3 px-4 text-slate-600 align-top max-w-md">
+                                <CollapsibleChurnText text={formatRetentionStrategy(row.retention_strategy)} />
                                 {row.persona_metrics && (
                                   <p className="mt-2 text-[11px] text-slate-500">
                                     avg 90d txns {row.persona_metrics.avg_txn_count_90d ?? '—'} | mobile {pct(row.persona_metrics.avg_mobile_share_90d)} |

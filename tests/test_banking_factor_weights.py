@@ -73,7 +73,7 @@ def test_extract_weights_nested_and_legacy():
 
 
 def test_heuristic_fallback_four_tuple(monkeypatch):
-    """When LLM is unavailable, heuristic returns four-tuple with empty rationales."""
+    """When LLM is unavailable, heuristic returns four-tuple with data-grounded rationales."""
 
     class FakeTogether:
         def generate_text(self, *args, **kwargs):
@@ -86,6 +86,7 @@ def test_heuristic_fallback_four_tuple(monkeypatch):
     assert abs(sum(w.values()) - 100.0) < 1.6
     for k in factor_keys():
         assert k in w
+        assert str(rats.get(k, "")).strip() != ""
 
 
 def test_merge_rationales_fills_keys():

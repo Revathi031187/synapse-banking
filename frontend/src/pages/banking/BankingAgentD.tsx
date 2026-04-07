@@ -1,7 +1,7 @@
 import React, { useMemo } from 'react';
 import { Link } from 'react-router-dom';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
-import { motion, AnimatePresence } from 'framer-motion';
+import { motion } from 'framer-motion';
 import {
   Bot,
   Users,
@@ -9,11 +9,6 @@ import {
   Loader2,
   Trash2,
   Sparkles,
-  Bookmark,
-  FileWarning,
-  MousePointerClick,
-  ChevronDown,
-  ChevronUp,
   CreditCard,
   ArrowRight,
   LayoutGrid,
@@ -28,13 +23,6 @@ const DEFAULT_AGENT_D_UI = {
   mode: 'customer' as 'persona' | 'customer',
   personaId: '',
   customerId: '',
-  savedGoals: [] as string[],
-  abandoned: [] as string[],
-  clicked: [] as string[],
-  pickSaved: '',
-  pickAbandoned: '',
-  pickClicked: '',
-  advancedOpen: false,
   persistedOrchestrate: null as { customerId: string; response: unknown } | null,
 };
 
@@ -58,29 +46,7 @@ function BoldParts({ text }: { text: string }) {
 export default function BankingAgentD() {
   const queryClient = useQueryClient();
   const [ui, setUi] = useSessionStorageState(AGENT_D_UI_KEY, DEFAULT_AGENT_D_UI);
-  const {
-    mode,
-    personaId,
-    customerId,
-    savedGoals,
-    abandoned,
-    clicked,
-    pickSaved,
-    pickAbandoned,
-    pickClicked,
-    advancedOpen,
-    persistedOrchestrate,
-  } = ui;
-
-  const setSavedGoals = (v: React.SetStateAction<string[]>) =>
-    setUi((prev) => ({ ...prev, savedGoals: typeof v === 'function' ? v(prev.savedGoals) : v }));
-  const setAbandoned = (v: React.SetStateAction<string[]>) =>
-    setUi((prev) => ({ ...prev, abandoned: typeof v === 'function' ? v(prev.abandoned) : v }));
-  const setClicked = (v: React.SetStateAction<string[]>) =>
-    setUi((prev) => ({ ...prev, clicked: typeof v === 'function' ? v(prev.clicked) : v }));
-  const setPickSaved = (pickSaved: string) => setUi((prev) => ({ ...prev, pickSaved }));
-  const setPickAbandoned = (pickAbandoned: string) => setUi((prev) => ({ ...prev, pickAbandoned }));
-  const setPickClicked = (pickClicked: string) => setUi((prev) => ({ ...prev, pickClicked }));
+  const { mode, personaId, customerId, persistedOrchestrate } = ui;
 
   const personasQuery = useQuery({
     queryKey: ['banking-personas-d'],
@@ -167,19 +133,6 @@ export default function BankingAgentD() {
     }
   }, [mode, personaId, segmentCustomersQuery.isSuccess, segmentCustomers, customerId]);
 
-  const productsQuery = useQuery({
-    queryKey: ['banking-products-d'],
-    queryFn: async () => {
-      const res = await fetch(`${API_BASE}/api/banking/products`);
-      if (!res.ok) throw new Error('products');
-      return res.json();
-    },
-  });
-  const products = useMemo(() => {
-    const raw = productsQuery.data?.products ?? [];
-    return Array.isArray(raw) ? raw : [];
-  }, [productsQuery.data]);
-
   const orchestrateMutation = useMutation({
     mutationFn: async () => {
       const res = await fetch(`${API_BASE}/api/banking/agent_d/orchestrate`, {
@@ -187,9 +140,9 @@ export default function BankingAgentD() {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           customer_id: customerId,
-          saved_goals: savedGoals,
-          incomplete_applications: abandoned,
-          clicked_product_ids: clicked,
+          saved_goals: [],
+          incomplete_applications: [],
+          clicked_product_ids: [],
         }),
       });
       if (!res.ok) {
@@ -235,7 +188,6 @@ export default function BankingAgentD() {
   }>;
   const bRecs = sv?.agent_b_product_recommendations ?? [];
   const cOffer = sv?.agent_c_primary_offer;
-  const journey = sv?.digital_journey_signals;
   const focus = sv?.focus_product;
   const autoPinnedProductId = (data?.next_visit_directives as { priority_pin_product_id?: string } | undefined)
     ?.priority_pin_product_id;
@@ -246,12 +198,6 @@ export default function BankingAgentD() {
         product_name: String(autoPinnedProductId),
       } as (typeof liveStack)[number])
     : null;
-
-  const addPid = (list: string[], setList: (v: string[]) => void, pid: string) => {
-    const p = pid.trim();
-    if (!p || list.includes(p)) return;
-    setList([...list, p]);
-  };
 
   const canLoad = !!customerId;
 
@@ -437,104 +383,6 @@ export default function BankingAgentD() {
             </div>
           )}
 
-          {/* Optional banking signals */}
-          <div className="border border-dashed border-slate-200 rounded-xl overflow-hidden">
-            <button
-              type="button"
-              onClick={() => setUi((prev) => ({ ...prev, advancedOpen: !prev.advancedOpen }))}
-              className="w-full flex items-center justify-between px-4 py-3 text-left text-sm font-medium text-slate-700 hover:bg-slate-50"
-            >
-              <span>Optional: simulate digital journey signals</span>
-              {advancedOpen ? <ChevronUp className="w-4 h-4" /> : <ChevronDown className="w-4 h-4" />}
-            </button>
-            <AnimatePresence>
-              {advancedOpen && (
-                <motion.div
-                  initial={{ height: 0, opacity: 0 }}
-                  animate={{ height: 'auto', opacity: 1 }}
-                  exit={{ height: 0, opacity: 0 }}
-                  className="border-t border-slate-100 bg-slate-50/80 px-4 py-4 space-y-4"
-                >
-                  <p className="text-xs text-slate-500">
-                    Model <strong>incomplete applications</strong> (abandoned card/loan application),{' '}
-                    <strong>saved goals</strong> (watchlist), or <strong>in-app engagement</strong>. Leave empty to
-                    mirror &quot;no application on file&quot; — supervisor then aligns with Agent C.
-                  </p>
-                  <div className="grid md:grid-cols-3 gap-3">
-                    {[
-                      {
-                        label: 'Incomplete applications',
-                        icon: FileWarning,
-                        color: 'rose',
-                        list: abandoned,
-                        set: setAbandoned,
-                        pick: pickAbandoned,
-                        setPick: setPickAbandoned,
-                      },
-                      {
-                        label: 'Saved goals / watchlist',
-                        icon: Bookmark,
-                        color: 'amber',
-                        list: savedGoals,
-                        set: setSavedGoals,
-                        pick: pickSaved,
-                        setPick: setPickSaved,
-                      },
-                      {
-                        label: 'Digital engagement',
-                        icon: MousePointerClick,
-                        color: 'emerald',
-                        list: clicked,
-                        set: setClicked,
-                        pick: pickClicked,
-                        setPick: setPickClicked,
-                      },
-                    ].map((col) => (
-                      <div key={col.label} className="text-sm space-y-2">
-                        <div className={`flex items-center gap-1 font-medium text-slate-800`}>
-                          <col.icon className="w-4 h-4" />
-                          {col.label}
-                        </div>
-                        <select
-                          className="w-full border rounded-lg px-2 py-1.5 text-xs"
-                          value={col.pick}
-                          onChange={(e) => col.setPick(e.target.value)}
-                        >
-                          <option value="">Add product…</option>
-                          {products.map((p: { product_id: string; product_name: string }) => (
-                            <option key={p.product_id} value={p.product_id}>
-                              {p.product_name}
-                            </option>
-                          ))}
-                        </select>
-                        <button
-                          type="button"
-                          className="text-xs px-2 py-1 rounded bg-white border"
-                          onClick={() => col.pick && addPid(col.list, col.set, col.pick)}
-                        >
-                          Add
-                        </button>
-                        <div className="flex flex-wrap gap-1">
-                          {col.list.map((id) => (
-                            <span
-                              key={id}
-                              className="text-xs px-2 py-0.5 bg-white border rounded flex items-center gap-1"
-                            >
-                              {id}
-                              <button type="button" onClick={() => col.set(col.list.filter((x) => x !== id))}>
-                                ×
-                              </button>
-                            </span>
-                          ))}
-                        </div>
-                      </div>
-                    ))}
-                  </div>
-                </motion.div>
-              )}
-            </AnimatePresence>
-          </div>
-
           <div className="flex flex-wrap gap-3 items-center">
             <button
               type="button"
@@ -683,39 +531,6 @@ export default function BankingAgentD() {
                     </p>
                   )}
                 </div>
-              </div>
-            </section>
-
-            {/* Digital journey */}
-            <section className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
-              <h3 className="text-sm font-bold text-slate-800 mb-3">Digital journey signals (this session)</h3>
-              {!journey?.has_incomplete_application &&
-                !(journey?.saved_goals_watchlist?.length > 0) &&
-                !(journey?.digital_engagement?.length > 0) && (
-                  <p className="text-sm text-slate-600 bg-slate-50 rounded-lg px-4 py-6 text-center border border-dashed border-slate-200">
-                    <strong>No incomplete application</strong> or other journey flags in this simulation. Supervisor
-                    defaults to aligning Agent B with <strong>Agent C&apos;s primary offer</strong> (when available).
-                  </p>
-                )}
-              <div className="space-y-3 text-sm">
-                {journey?.incomplete_applications?.length > 0 && (
-                  <div className="text-rose-800">
-                    <strong>Incomplete application(s):</strong>{' '}
-                    {journey.incomplete_applications.map((x: { product_name: string }) => x.product_name).join(', ')}
-                  </div>
-                )}
-                {journey?.saved_goals_watchlist?.length > 0 && (
-                  <div className="text-amber-800">
-                    <strong>Saved goals:</strong>{' '}
-                    {journey.saved_goals_watchlist.map((x: { product_name: string }) => x.product_name).join(', ')}
-                  </div>
-                )}
-                {journey?.digital_engagement?.length > 0 && (
-                  <div className="text-emerald-800">
-                    <strong>Engaged with:</strong>{' '}
-                    {journey.digital_engagement.map((x: { product_name: string }) => x.product_name).join(', ')}
-                  </div>
-                )}
               </div>
             </section>
 

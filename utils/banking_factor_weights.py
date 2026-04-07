@@ -114,6 +114,33 @@ def ai_weights_cache_fingerprint(
     return hashlib.sha256(raw).hexdigest()[:40]
 
 
+def heuristic_rationales_from_customer_data(
+    keys: List[str],
+    weights_percent: Dict[str, float],
+    persona_name: str,
+    customer_context: Optional[Dict[str, Any]],
+) -> Dict[str, str]:
+    """
+    When the LLM path is unavailable, still attach short data-grounded copy so Agent B
+    shows per-factor explanations before Submit (persona + customer feature summary).
+    """
+    summary = build_customer_feature_summary(customer_context).strip()
+    if not summary:
+        summary = (
+            "persona-only context — select Customer mode and a customer for row-level metrics "
+            "(deposits, credit, engagement) in these explanations."
+        )
+    raw: Dict[str, str] = {}
+    for k in keys:
+        label = FACTOR_LABELS.get(k, k)
+        raw[k] = (
+            f"Heuristic allocation for “{persona_name}”. "
+            f"Data snapshot: {summary}. "
+            f"This factor reflects {label.lower()} — adjust the slider if underwriting or channel fit should weigh differently."
+        )[:450]
+    return _finalize_rationales_for_weights(keys, weights_percent, raw)
+
+
 def heuristic_weights_for_persona(persona_name: str) -> Dict[str, float]:
     """Persona-tuned weights when LLM is unavailable."""
     w = {k: float(v) for k, v in _scorer_weights().items()}
@@ -302,9 +329,10 @@ Hard rules for "rationales" (max 280 characters each):
         logger.warning("LLM factor weights failed: %s", e)
 
     h = heuristic_weights_for_persona(persona_name)
+    rats = heuristic_rationales_from_customer_data(keys, h, persona_name, customer_context)
     return (
         h,
         "heuristic",
-        "Persona-based template (AI model unavailable). Adjust sliders and Submit.",
-        {k: "" for k in keys},
+        "Persona + customer data template (AI model unavailable). Review per-factor explanations below, then Submit.",
+        rats,
     )

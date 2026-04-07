@@ -116,3 +116,19 @@ def test_apply_directives_boost_and_pin():
     )
     assert out[0]["product_id"] == "A"
     assert float(out[0]["score"]) > 0.5
+
+
+def test_apply_directives_pin_stub_uses_catalog_name(products_df):
+    """Pinned SKU not in B list should show catalog product_name, not raw ID."""
+    recs = [{"product_id": "OTHER", "score": 0.5}]
+    out = AgentD_Banking.apply_directives_to_recommendations(
+        recs,
+        {
+            "boost_product_ids": [],
+            "deprioritize_product_ids": [],
+            "priority_pin_product_id": "FMB_P001",
+        },
+        products_df,
+    )
+    assert out[0]["product_id"] == "FMB_P001"
+    assert out[0]["product_name"] == "Checking A"

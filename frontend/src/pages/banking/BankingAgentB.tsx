@@ -221,20 +221,6 @@ export default function BankingAgentB() {
     agentDDirectivesQuery.data,
   ]);
 
-  const isFirstContextEffect = useRef(true);
-  React.useEffect(() => {
-    if (isFirstContextEffect.current) {
-      isFirstContextEffect.current = false;
-      return;
-    }
-    setUi((prev) => ({
-      ...prev,
-      lastAiFactorRationales: {},
-      lastRunFactorWeights: null,
-      executeData: null,
-    }));
-  }, [customerId, persona, mode]);
-
   // Query to get available personas
   const personasQuery = useQuery({
     queryKey: ['banking-personas'],
@@ -242,7 +228,8 @@ export default function BankingAgentB() {
       const response = await fetch(`${API_BASE_URL}/api/banking/personas`);
       if (!response.ok) throw new Error('Failed to fetch personas');
       return response.json();
-    }
+    },
+    staleTime: 60_000,
   });
 
   const personas = personasQuery.data?.personas || [];
@@ -255,6 +242,7 @@ export default function BankingAgentB() {
   }, [personas, persona]);
 
   // Query to get customers list (for customer mode)
+  // Load even in persona mode so the customer dropdown is ready when switching modes
   const customersQuery = useQuery({
     queryKey: ['banking-customers'],
     queryFn: async () => {
@@ -262,7 +250,7 @@ export default function BankingAgentB() {
       if (!response.ok) throw new Error('Failed to fetch customers');
       return response.json();
     },
-    enabled: mode === 'customer'
+    staleTime: 60_000,
   });
 
   const factorMetaQuery = useQuery({
@@ -343,20 +331,6 @@ export default function BankingAgentB() {
     },
   });
 
-  const resetWeightsMutation = useMutation({
-    mutationFn: async () => {
-      const res = await fetch(`${API_BASE_URL}/api/banking/agent_b/factor-weights/reset`, { method: 'POST' });
-      if (!res.ok) throw new Error('Reset failed');
-      return res.json();
-    },
-    onSuccess: (j) => {
-      if (j.weights_percent) setUi((prev) => ({ ...prev, factorWeights: j.weights_percent as Record<string, number> }));
-      factorWeightsQuery.refetch();
-      setWeightsSavedOk(j.message || 'Defaults restored');
-      setTimeout(() => setWeightsSavedOk(null), 4000);
-    },
-  });
-
   const aiWeightsMutation = useMutation({
     mutationFn: async (vars: { personaId: number; customerId?: string }) => {
       const body: Record<string, unknown> = { persona_id: vars.personaId };
@@ -382,6 +356,25 @@ export default function BankingAgentB() {
             ? (j.factor_rationales as Record<string, string>)
             : {},
       }));
+    },
+  });
+
+  const resetWeightsMutation = useMutation({
+    mutationFn: async () => {
+      const res = await fetch(`${API_BASE_URL}/api/banking/agent_b/factor-weights/reset`, { method: 'POST' });
+      if (!res.ok) throw new Error('Reset failed');
+      return res.json();
+    },
+    onSuccess: (j) => {
+      setUi((prev) => ({
+        ...prev,
+        ...(j.weights_percent ? { factorWeights: j.weights_percent as Record<string, number> } : {}),
+        lastAiFactorRationales: {},
+      }));
+      aiWeightsMutation.reset();
+      factorWeightsQuery.refetch();
+      setWeightsSavedOk(j.message || 'Defaults restored');
+      setTimeout(() => setWeightsSavedOk(null), 4000);
     },
   });
 
@@ -478,6 +471,25 @@ export default function BankingAgentB() {
     },
   });
 
+  const isFirstContextEffect = useRef(true);
+  // Only clear when customer/persona/mode changes — do NOT depend on `executeMutation`:
+  // its object identity updates after each mutate (success/pending), which would run
+  // this effect right after a successful run and call reset(), wiping the new results.
+  React.useEffect(() => {
+    if (isFirstContextEffect.current) {
+      isFirstContextEffect.current = false;
+      return;
+    }
+    executeMutation.reset();
+    setUi((prev) => ({
+      ...prev,
+      lastAiFactorRationales: {},
+      lastRunFactorWeights: null,
+      executeData: null,
+    }));
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- intentional: avoid tying to mutation object identity
+  }, [customerId, persona, mode]);
+
   const handleSearch = () => {
     // Validation
     if (mode === 'customer' && !customerId) {
@@ -491,7 +503,17 @@ export default function BankingAgentB() {
     executeMutation.mutate();
   };
 
-  const executePayload = executeMutation.data ?? (executeData as typeof executeMutation.data | undefined);
+  /** Avoid showing a previous customer's results when sessionStorage still holds stale executeData */
+  const executePayload = useMemo(() => {
+    const raw = executeMutation.data ?? (executeData as typeof executeMutation.data | undefined);
+    if (!raw) return undefined;
+    if (mode === 'customer' && customerId) {
+      const rid = String((raw as { customer_id?: string }).customer_id ?? '').trim();
+      if (rid && rid !== String(customerId).trim()) return undefined;
+    }
+    return raw;
+  }, [executeMutation.data, executeData, mode, customerId]);
+
   const results = executePayload?.results;
   const recommendations = results?.recommendations || [];
   const insights = results?.insights || {};
@@ -637,8 +659,14 @@ export default function BankingAgentB() {
                     ))
                   )}
                 </select>
-                {personas.length === 0 && !personasQuery.isLoading && (
-                  <p className="text-sm text-amber-700 mt-2">Run Agent A clustering to load personas.</p>
+                {personasQuery.isError && (
+                  <p className="text-sm text-red-600 mt-2">
+                    Could not load personas ({personasQuery.error?.message ?? 'network error'}). Check API is running and
+                    CORS/proxy.
+                  </p>
+                )}
+                {personas.length === 0 && !personasQuery.isLoading && !personasQuery.isError && (
+                  <p className="text-sm text-amber-700 mt-2">Run Agent A clustering for named personas, or use the segment fallback from loaded data.</p>
                 )}
               </div>
             ) : (
@@ -656,6 +684,11 @@ export default function BankingAgentB() {
                     </option>
                   ))}
                 </select>
+                {customersQuery.isError && (
+                  <p className="text-sm text-red-600 mt-2">
+                    Could not load customers ({customersQuery.error?.message ?? 'network error'}).
+                  </p>
+                )}
                 <div className="mt-3 space-y-2">
                   {customerId &&
                     (agentDDirectivesQuery.data?.next_visit_directives as { priority_pin_product_id?: string } | null)
@@ -774,6 +807,17 @@ export default function BankingAgentB() {
                       {aiWeightsMutation.data?.note}
                     </p>
                   )}
+                  {hasAiRunRationales && (
+                    <div className="rounded-lg border border-violet-200 bg-violet-50/90 px-3 py-2.5 text-xs text-violet-950 leading-relaxed">
+                      <p className="font-semibold text-violet-900 mb-1">Factor explanations (review before Submit)</p>
+                      <p>
+                        Each slider below shows why that share of the 100-point score is justified for this
+                        persona/customer, using fields from your data (credit, deposits, engagement, etc.). Adjust any
+                        slider, then <strong>Submit weights</strong> when the total is 100%. Request{' '}
+                        <strong>AI recommended weights</strong> again to refresh this text.
+                      </p>
+                    </div>
+                  )}
                   {weightsSavedOk && (
                     <p className="text-sm text-emerald-800 bg-emerald-50 border border-emerald-200 rounded-lg px-3 py-2">
                       {weightsSavedOk}
@@ -830,37 +874,44 @@ export default function BankingAgentB() {
                           {g.keys.map((key) => (
                             <div
                               key={key}
-                              className="flex items-center justify-between gap-3 min-w-0 border-b border-gray-100 sm:border-0 pb-2 sm:pb-0 last:border-0"
+                              className="min-w-0 border-b border-gray-100 sm:border-0 pb-3 sm:pb-0 last:border-0 space-y-1.5"
                             >
-                              <label
-                                className="text-sm font-medium text-gray-800 leading-snug pr-2 min-w-0"
-                                title={key}
-                              >
-                                {effectiveFactorLabels[key] || key}
-                              </label>
-                              <div className="flex items-center gap-1 shrink-0">
-                                <input
-                                  type="number"
-                                  min={0}
-                                  max={100}
-                                  step={0.5}
-                                  value={
-                                    Number.isFinite(Number(factorWeights[key]))
-                                      ? Number(factorWeights[key]).toFixed(1)
-                                      : String(BANKING_DEFAULTS_PERCENT[key] ?? 0)
-                                  }
-                                  onChange={(e) => {
-                                    const v = parseFloat(e.target.value);
-                                    if (!Number.isNaN(v))
-                                      setFactorWeights({
-                                        ...factorWeights,
-                                        [key]: Math.max(0, Math.min(100, v)),
-                                      });
-                                  }}
-                                  className="w-[4.25rem] border border-gray-300 rounded-md px-2 py-1.5 text-right text-sm font-semibold tabular-nums bg-white"
-                                />
-                                <span className="text-sm text-gray-500 w-5">%</span>
+                              <div className="flex items-center justify-between gap-3">
+                                <label
+                                  className="text-sm font-medium text-gray-800 leading-snug pr-2 min-w-0"
+                                  title={key}
+                                >
+                                  {effectiveFactorLabels[key] || key}
+                                </label>
+                                <div className="flex items-center gap-1 shrink-0">
+                                  <input
+                                    type="number"
+                                    min={0}
+                                    max={100}
+                                    step={0.5}
+                                    value={
+                                      Number.isFinite(Number(factorWeights[key]))
+                                        ? Number(factorWeights[key]).toFixed(1)
+                                        : String(BANKING_DEFAULTS_PERCENT[key] ?? 0)
+                                    }
+                                    onChange={(e) => {
+                                      const v = parseFloat(e.target.value);
+                                      if (!Number.isNaN(v))
+                                        setFactorWeights({
+                                          ...factorWeights,
+                                          [key]: Math.max(0, Math.min(100, v)),
+                                        });
+                                    }}
+                                    className="w-[4.25rem] border border-gray-300 rounded-md px-2 py-1.5 text-right text-sm font-semibold tabular-nums bg-white"
+                                  />
+                                  <span className="text-sm text-gray-500 w-5">%</span>
+                                </div>
                               </div>
+                              {String(lastAiFactorRationales[key] || '').trim() !== '' && (
+                                <p className="text-[11px] sm:text-xs text-violet-900/95 bg-violet-50/80 border border-violet-100 rounded-md px-2 py-1.5 leading-snug">
+                                  {lastAiFactorRationales[key]}
+                                </p>
+                              )}
                             </div>
                           ))}
                         </div>
@@ -869,8 +920,8 @@ export default function BankingAgentB() {
                     <p className="text-xs text-gray-500">
                       Each <strong>Run</strong> sends the current slider values to the scorer.{' '}
                       <strong>Submit weights</strong> also saves them as the server default when no body is sent.
-                      After a run, see <strong>Factor weights used in this run</strong> below for AI rationales (if
-                      you used AI recommended weights).
+                      After a rule-based run, the <strong>Factor weights used in this run</strong> section below repeats
+                      the same rationales for reference.
                     </p>
                   </div>
                 </div>

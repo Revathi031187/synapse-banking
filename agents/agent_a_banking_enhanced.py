@@ -456,6 +456,13 @@ class AgentA_Banking_Enhanced:
             avg_deposits = cluster_data['total_deposits'].mean()
             wealth_factor = min(avg_deposits / 50000.0, 1.5)  # Up to 1.5x boost for wealthy segments
             intent_score = min(intent_score * wealth_factor, 0.99)
+
+        # Spread segments that would otherwise round to the same % (e.g. many at 0.55)
+        if self.customers_df is not None and 'cross_sell_receptivity' in self.customers_df.columns:
+            pop_mean_cs = float(self.customers_df['cross_sell_receptivity'].mean())
+            delta_cs = float(cross_sell_base - pop_mean_cs)
+            intent_score = float(intent_score + delta_cs * 0.28)
+        intent_score = float(min(max(intent_score, 0.08), 0.97))
         
         logger.debug(f"  Intent calculation: cross_sell={cross_sell_base:.2f}, product_vel={product_velocity:.2f}, txn_eng={txn_engagement:.2f}, digital={digital_engagement:.2f}, final={intent_score:.2f}")
         
@@ -973,12 +980,15 @@ class AgentA_Banking_Enhanced:
                     logger.warning(f"Could not enrich persona with image data: {e}")
         
         # SECOND PASS: Generate explanations now that all personas exist
+        # Explanations use peer percentiles across all segments; self.personas must be the
+        # in-progress dict (execute() assigns self.personas only after this returns—was empty before).
         logger.info("🔍 Generating unique segment explanations...")
+        self.personas = personas
         for cluster_id, persona in personas.items():
             try:
-                # Ensure all needed data is in characteristics
+                # Ensure all needed data is in characteristics (per-persona values only)
                 persona['characteristics']['avg_age'] = persona['characteristics'].get('avg_age', 45)
-                persona['characteristics']['avg_income'] = persona['characteristics'].get('avg_income', avg_income)
+                persona['characteristics']['avg_income'] = persona['characteristics'].get('avg_income', 0)
                 
                 explanation = self._generate_segment_explanation(
                     persona_name=persona['persona_name'],

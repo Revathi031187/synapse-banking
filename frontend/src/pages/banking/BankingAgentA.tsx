@@ -24,6 +24,7 @@ import {
 } from 'recharts';
 
 import { getBankingApiBase } from '../../utils/apiBase';
+import { formatCompactUsd } from '../../utils/formatCurrency';
 import { useSessionStorageState } from '../../hooks/useSessionStorageState';
 
 const BANKING_COLORS = ['#1e40af', '#0891b2', '#059669', '#f59e0b', '#dc2626'];
@@ -345,21 +346,23 @@ export default function BankingAgentA() {
                       <span className="text-sm text-gray-600">Avg Balance</span>
                       <span className="font-semibold text-blue-700 flex items-center gap-1">
                         <DollarSign className="w-4 h-4" />
-                        {persona.avg_balance?.toLocaleString() || 'N/A'}
+                        {formatCompactUsd(persona.avg_balance)}
                       </span>
                     </div>
                     
                     <div className="flex justify-between items-center">
-                      <span className="text-sm text-gray-600">Banking Events</span>
+                      <span className="text-sm text-gray-600">Avg products held</span>
                       <span className="font-semibold text-gray-900">
-                        {persona.avg_transactions || 'N/A'}
+                        {persona.characteristics?.avg_products != null
+                          ? `${Number(persona.characteristics.avg_products).toFixed(1)}`
+                          : '—'}
                       </span>
                     </div>
                     
                     <div className="flex justify-between items-center">
                       <span className="text-sm text-gray-600">Intent Score</span>
                       <span className="font-semibold text-green-600">
-                        {persona.avg_intent_score ? `${(persona.avg_intent_score * 100).toFixed(0)}%` : 'N/A'}
+                        {persona.avg_intent_score != null ? `${(persona.avg_intent_score * 100).toFixed(1)}%` : 'N/A'}
                       </span>
                     </div>
                   </div>

@@ -23,13 +23,14 @@ logger = get_logger("TogetherAI")
 TOGETHER_API_KEY = (os.getenv("TOGETHER_API_KEY") or "").strip()
 TOGETHER_API_BASE = "https://api.together.xyz/v1"
 
-# Chat models to try in order (Turbo names change; Lite/Qwen are widely available)
+# Chat models to try in order (serverless / Lite first — Meta-Llama-3.1-8B-Instruct-Turbo is often
+# non-serverless on Together and returns 400 unless a dedicated endpoint exists)
 DEFAULT_CHAT_MODELS = [
     "meta-llama/Meta-Llama-3-8B-Instruct-Lite",
-    "meta-llama/Meta-Llama-3.1-8B-Instruct-Turbo",
     "meta-llama/Llama-3.2-3B-Instruct-Turbo",
     "Qwen/Qwen2.5-7B-Instruct-Turbo",
     "meta-llama/Meta-Llama-3-8B-Instruct-Reference",
+    "meta-llama/Meta-Llama-3.1-8B-Instruct-Turbo",
 ]
 
 if not TOGETHER_API_KEY:
@@ -116,7 +117,7 @@ class TogetherAIService:
         self, 
         prompt: str, 
         system_message: str = "You are a helpful AI assistant specialized in marketing and customer analysis.",
-        model: str = "meta-llama/Meta-Llama-3.1-8B-Instruct-Turbo",
+        model: str = "meta-llama/Meta-Llama-3-8B-Instruct-Lite",
         max_tokens: int = 500,
         temperature: float = 0.7
     ) -> str:
@@ -483,6 +484,49 @@ Be professional and strategic."""
             system_message=system_message,
             max_tokens=150,
             temperature=0.7
+        )
+
+    def generate_agent_b_vs_c_explanation(
+        self,
+        persona_name: str,
+        churn_category: str,
+        agent_b_top_name: str,
+        agent_b_top_score: float,
+        agent_c_name: str,
+        agent_c_score: float,
+        agent_b_products_line: str,
+    ) -> str:
+        """
+        Explain why Agent C's one-best offer may differ from Agent B's top match-ranked product.
+        Must reference both product names (banking advisors / marketers).
+        """
+        prompt = f"""You are a banking strategy assistant. Write 3–4 short sentences (plain text, no bullets).
+
+Context:
+- Customer segment (persona): {persona_name}
+- Churn risk band: {churn_category or "Not elevated"}
+- Agent B (product recommender) ranks products by persona/fit. Its top match is "{agent_b_top_name}" at {agent_b_top_score*100:.0f}% match strength.
+- Agent C (one-best-offer / retention engine) selected "{agent_c_name}" at {agent_c_score*100:.0f}% after applying retention and business rules.
+
+Agent B top products (for reference): {agent_b_products_line}
+
+Explain clearly:
+1) Why leading with "{agent_c_name}" can improve retention or purchase likelihood compared to leading with "{agent_b_top_name}" for this customer context.
+2) Mention both product names naturally.
+3) If churn is High or Critical, tie the story to protecting the relationship; otherwise focus on best next product to deepen the relationship.
+
+Do not use markdown asterisks or numbered lists."""
+
+        system_message = (
+            "You are a concise banking marketing strategist. Be specific and professional. "
+            "Always include the exact product names given."
+        )
+
+        return self.generate_text(
+            prompt=prompt,
+            system_message=system_message,
+            max_tokens=320,
+            temperature=0.55,
         )
 
     def generate_marketing_opportunities(

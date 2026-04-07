@@ -10,6 +10,7 @@ import BankingAgentB from './pages/banking/BankingAgentB';
 import BankingMacroDashboard from './pages/banking/BankingMacroDashboard';
 import BankingAgentC from './pages/banking/BankingAgentC';
 import BankingAgentD from './pages/banking/BankingAgentD';
+import BankingAskGenie from './pages/banking/BankingAskGenie';
 
 // Academy Sports pages (Keep for reference)
 import AcademyDashboard from './pages/academy/AcademyDashboard';
@@ -52,6 +53,7 @@ function App() {
             <Route path="agent-b" element={<BankingAgentB />} />
             <Route path="agent-c" element={<BankingAgentC />} />
             <Route path="agent-d" element={<BankingAgentD />} />
+            <Route path="ask-genie" element={<BankingAskGenie />} />
             <Route path="customer/:customerId/recommendations" element={<AcademyRecommendations />} />
           </Route>
           

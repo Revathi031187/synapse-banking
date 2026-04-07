@@ -75,7 +75,8 @@ class Banking12FactorScorer:
         self.customer_products = {}
         if 'product_id' in self.transactions_df.columns:
             for cid, group in self.transactions_df.groupby('customer_id'):
-                self.customer_products[cid] = group['product_id'].unique().tolist()
+                key = str(cid).strip()
+                self.customer_products[key] = group['product_id'].unique().tolist()
         
         # Product popularity by segment
         self.segment_product_popularity = {}
@@ -378,52 +379,121 @@ class Banking12FactorScorer:
             }
         }
     
+    def _product_kind_for_need(self, product: Dict) -> str:
+        """
+        Map catalog row to a coarse product kind. F&M CSV uses category='Personal' for almost
+        everything, so we must use subcategory + name (not category) for life-stage logic.
+        """
+        sub = str(product.get('subcategory', '') or '').strip().lower()
+        name = str(product.get('product_name', '') or '').lower()
+        if sub == 'checking':
+            return 'Checking'
+        if sub == 'savings':
+            return 'Savings'
+        if sub == 'investment':
+            return 'Investment'
+        if sub == 'credit':
+            return 'Credit_Card'
+        if sub == 'loan':
+            if 'auto' in name:
+                return 'Auto_Loan'
+            if 'mortgage' in name or 'home' in name:
+                return 'Mortgage'
+            return 'Other_Loan'
+        return 'Other'
+
     def _calculate_financial_need_match(
-        self, age: int, income: float, deposits: float, 
+        self, age: int, income: float, deposits: float,
         num_products: int, category: str, product: Dict
     ) -> Dict:
-        """Match product to customer's financial life stage and needs"""
-        
-        score = 0.5  # Default moderate match
-        explanation = ""
-        
-        # Age-based needs
+        """Match product to customer's financial life stage and needs (uses subcategory, not broad CSV category)."""
+        kind = self._product_kind_for_need(product)
+        score = 0.55
+        explanation = "Moderate fit based on your profile"
+
+        # --- Age + product kind (primary driver of differentiation between customers) ---
         if age < 35:
-            if category in ['Checking', 'Credit_Card', 'Student_Loan']:
-                score = 0.9
-                explanation = "Excellent match for young professionals"
-            elif category in ['Investment', 'Retirement_IRA']:
-                score = 0.6
-                explanation = "Good for early retirement planning"
+            if kind in ('Checking', 'Credit_Card'):
+                score = 0.92
+                explanation = "Strong fit: everyday banking and credit for early career"
+            elif kind == 'Investment':
+                score = 0.68
+                explanation = "Early retirement planning; still building other priorities"
+            elif kind == 'Auto_Loan':
+                score = 0.84
+                explanation = "Auto financing is common for younger households"
+            elif kind == 'Mortgage':
+                score = 0.88
+                explanation = "Typical home-buying life stage"
+            elif kind == 'Savings':
+                score = 0.8
+                explanation = "Building savings habit"
         elif age >= 55:
-            if category in ['Retirement_IRA', 'CD', 'Investment']:
-                score = 0.95
-                explanation = "Perfect for retirement-focused customers"
-            elif category == 'Mortgage':
-                score = 0.3
-                explanation = "Less relevant for retirement age"
+            if kind == 'Investment':
+                score = 0.96
+                explanation = "Retirement-focused: CDs, IRAs, and growth products align well"
+            elif kind in ('Checking', 'Savings'):
+                score = 0.84
+                explanation = "Stable cash management and liquidity"
+            elif kind == 'Auto_Loan':
+                score = 0.4
+                explanation = "New auto financing is often lower priority near or after retirement"
+            elif kind == 'Mortgage':
+                score = 0.52
+                explanation = "Refinance may apply; new purchase less common than peak earning years"
+            elif kind == 'Credit_Card':
+                score = 0.66
+                explanation = "Credit still useful; balance with income stability"
+            elif kind == 'Other_Loan':
+                score = 0.5
+                explanation = "Evaluate need case-by-case at this life stage"
         else:
-            # Middle age (35-54)
-            if category in ['Mortgage', 'Investment', 'Insurance']:
+            # 35–54: peak borrowing / wealth-building — avoid tying auto loans to CDs/IRAs (same score → same #1 for everyone)
+            if kind == 'Investment':
+                score = 0.92
+                explanation = "Mid-career: prioritize growth, retirement, and rate products"
+            elif kind == 'Mortgage':
                 score = 0.9
-                explanation = "Ideal for wealth-building phase"
-        
-        # Deposit-based needs
-        if deposits > 100000:
-            if category in ['Investment', 'Wealth_Management', 'Premium_Checking']:
-                score = max(score, 0.95)
-                explanation = "Premium products for high net worth"
-        elif deposits < 50000:
-            if category in ['Basic_Checking', 'Savings', 'Credit_Building']:
-                score = max(score, 0.85)
-                explanation = "Foundation products for wealth building"
-        
-        # Income-based needs
+                explanation = "Typical home and refinance life stage"
+            elif kind == 'Auto_Loan':
+                score = 0.76
+                explanation = "Auto credit matters; usually not the only top priority vs deposits/investments"
+            elif kind == 'Checking':
+                score = 0.81
+                explanation = "Primary banking relationship"
+            elif kind == 'Savings':
+                score = 0.79
+                explanation = "Building reserves alongside other goals"
+            elif kind == 'Credit_Card':
+                score = 0.77
+                explanation = "Revolving credit fits mid-career cash flow"
+            elif kind == 'Other_Loan':
+                score = 0.72
+                explanation = "Evaluate specialized lending vs core relationship products"
+
+        # --- Deposits: shift emphasis without erasing age signal ---
+        if deposits >= 150000:
+            if kind == 'Investment':
+                score = max(score, 0.96)
+                explanation = "Higher balances suit CDs, IRAs, and investment products"
+            elif kind == 'Auto_Loan':
+                score = min(score, 0.72)
+                explanation = "Strong liquidity may reduce urgency for new installment debt"
+        elif deposits < 45000:
+            if kind in ('Checking', 'Savings'):
+                score = max(score, 0.86)
+                explanation = "Foundation products while growing balances"
+            if kind == 'Auto_Loan' and income < 72000:
+                score = max(score, 0.78)
+                explanation = "Affordable financing may matter more with moderate balances"
+
+        # --- Income + young adults ---
         if income < 60000 and age < 35:
-            if 'Student' in str(product.get('product_name', '')) or 'Basic' in str(product.get('product_name', '')):
+            if 'junior' in str(product.get('product_name', '')).lower() or 'teen' in str(product.get('product_name', '')).lower():
                 score = max(score, 0.9)
-                explanation = "Affordable starter products"
-        
+                explanation = "Entry-level products for younger, moderate-income households"
+
+        score = max(0.2, min(1.0, float(score)))
         return {
             'score': score,
             'explanation': explanation
@@ -676,8 +746,9 @@ class Banking12FactorScorer:
             'Agricultural_Loan': ['Crop_Insurance', 'Equipment_Financing', 'Operating_Line']
         }
         
-        # Get customer's current products
-        current_products = self.customer_products.get(customer_id, [])
+        # Get customer's current products (keys normalized to str in __init__)
+        lookup_id = str(customer_id).strip() if customer_id is not None else ''
+        current_products = self.customer_products.get(lookup_id, [])
         
         if not current_products:
             return {

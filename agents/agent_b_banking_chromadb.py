@@ -6,7 +6,7 @@ Adapted from agent_b_academy_chromadb.py for banking domain
 
 import pandas as pd
 import numpy as np
-from typing import Dict, List
+from typing import Any, Dict, List, Optional
 import logging
 from pathlib import Path
 import sys
@@ -88,11 +88,25 @@ class AgentB_Banking:
             if self.customers_df is not None and self.transactions_df is not None:
                 print("✅ Attempting to initialize...")
                 try:
+                    # Prefer Agent A's clustered customers + transactions so segment popularity / pairing match the live session
+                    scorer_customers = self.customers_df
+                    scorer_txn = self.transactions_df
+                    if self.agent_a and getattr(self.agent_a, 'customers_df', None) is not None:
+                        ca = self.agent_a.customers_df
+                        if ca is not None and len(ca) > 0:
+                            scorer_customers = ca
+                    if self.agent_a and getattr(self.agent_a, 'transactions_df', None) is not None:
+                        ta = self.agent_a.transactions_df
+                        if ta is not None and len(ta) > 0:
+                            scorer_txn = ta
+                    personas_for = self.personas
+                    if self.agent_a and getattr(self.agent_a, 'personas', None):
+                        personas_for = self.agent_a.personas
                     self.enhanced_scorer = Banking12FactorScorer(
-                        customers_df=self.customers_df,
+                        customers_df=scorer_customers,
                         products_df=self.products_df,
-                        transactions_df=self.transactions_df,
-                        personas=self.personas
+                        transactions_df=scorer_txn,
+                        personas=personas_for or {},
                     )
                     print("✅✅✅ BANKING 12-FACTOR SCORER INITIALIZED! ✅✅✅")
                     logger.info(f"✅ Initialized Banking 12-Factor Scorer")
@@ -228,7 +242,7 @@ class AgentB_Banking:
             try:
                 from agents.agent_d_banking import AgentD_Banking
                 recommendations = AgentD_Banking.apply_directives_to_recommendations(
-                    recommendations, sup
+                    recommendations, sup, self.products_df
                 )
             except Exception as e:
                 logger.warning(f"Supervisor directives not applied: {e}")
@@ -992,44 +1006,74 @@ class AgentB_Banking:
         else:
             return "Personalized product recommendations based on your financial profile"
     
-    def _get_customer_info(self, customer_id: str) -> Dict:
+    def _coalesce_customer_metrics(self, row: Dict[str, Any]) -> Dict[str, Any]:
+        """Replace NaN/None with defaults so 12-factor scoring differs per customer, not all NaN-default."""
+        out = dict(row)
+        defaults = {
+            'credit_score': 700,
+            'income': 50000.0,
+            'total_deposits': 10000.0,
+            'age': 40,
+            'num_products': 2,
+            'digital_engagement_score': 0.5,
+            'cross_sell_receptivity': 0.5,
+            'tenure_months': 12,
+        }
+        for k, dflt in defaults.items():
+            v = out.get(k)
+            if v is None or (isinstance(v, float) and (np.isnan(v) or np.isinf(v))):
+                out[k] = dflt
+            elif pd.isna(v):
+                out[k] = dflt
+        out['customer_id'] = str(out.get('customer_id', '')).strip()
+        return out
+
+    def _get_customer_info(self, customer_id: str) -> Optional[Dict]:
         """
-        Get customer information including persona and transaction history
-        
-        Args:
-            customer_id: Customer ID
-            
-        Returns:
-            Dictionary with customer information
+        Get customer information including persona and transaction history.
+        Prefer Agent A's customers_df (has cluster + same IDs as the UI) over Agent B's bundled CSV.
         """
-        if self.customers_df is None:
-            return None
-        
         cid = str(customer_id).strip()
-        col = self.customers_df['customer_id'].astype(str).str.strip()
-        customer_row = self.customers_df[col == cid]
-        
+        if not cid:
+            return None
+
+        df_source = None
+        if self.agent_a and getattr(self.agent_a, 'customers_df', None) is not None:
+            df_source = self.agent_a.customers_df
+        elif self.customers_df is not None:
+            df_source = self.customers_df
+        else:
+            return None
+
+        col = df_source['customer_id'].astype(str).str.strip()
+        customer_row = df_source[col == cid]
         if customer_row.empty:
             return None
-        
-        customer_info = customer_row.iloc[0].to_dict()
-        
-        # Get transaction history if available
-        if self.transactions_df is not None and not self.transactions_df.empty:
-            customer_transactions = self.transactions_df[self.transactions_df['customer_id'] == customer_id]
+
+        customer_info = self._coalesce_customer_metrics(customer_row.iloc[0].to_dict())
+
+        txn_df = None
+        if self.agent_a and getattr(self.agent_a, 'transactions_df', None) is not None:
+            txn_df = self.agent_a.transactions_df
+        elif self.transactions_df is not None:
+            txn_df = self.transactions_df
+
+        if txn_df is not None and not txn_df.empty and 'customer_id' in txn_df.columns:
+            tcol = txn_df['customer_id'].astype(str).str.strip()
+            customer_transactions = txn_df[tcol == cid]
             customer_info['transaction_count'] = len(customer_transactions)
             if 'product_id' in customer_transactions.columns:
                 customer_info['owned_products'] = customer_transactions['product_id'].unique().tolist()
             else:
                 customer_info['owned_products'] = []
         else:
-            customer_info['transaction_count'] = customer_info.get('num_products', 0)
+            customer_info['transaction_count'] = int(customer_info.get('num_products', 0) or 0)
             customer_info['owned_products'] = []
-        
-        # Extract persona from cluster
-        if 'cluster' in customer_info:
-            customer_info['persona'] = self._get_persona_from_cluster(customer_info['cluster'])
-        
+
+        cl = customer_info.get('cluster')
+        if cl is not None and not (isinstance(cl, float) and pd.isna(cl)):
+            customer_info['persona'] = self._get_persona_from_cluster(cl)
+
         return customer_info
     
     def _get_persona_from_cluster(self, cluster_id: int) -> str:

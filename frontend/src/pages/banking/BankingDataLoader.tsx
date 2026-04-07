@@ -8,6 +8,107 @@ import { useSessionStorageState } from '../../hooks/useSessionStorageState';
 
 const DATA_LOADER_UI_KEY = 'banking-data-loader-v1';
 
+function UnityCatalogPreloadedCard({ apiBase }: { apiBase: string }) {
+  const { data: ucStatus, isLoading, refetch } = useQuery({
+    queryKey: ['banking-uc-preloaded-status'],
+    queryFn: async () => {
+      const res = await fetch(`${apiBase}/api/banking/uc/preloaded/status`);
+      if (!res.ok) return null;
+      return res.json();
+    },
+  });
+
+  const ucUpload = useMutation({
+    mutationFn: async () => {
+      const res = await fetch(`${apiBase}/api/banking/uc/preloaded/upload`, { method: 'POST' });
+      const data = await res.json();
+      if (!res.ok) {
+        const d = data?.detail;
+        const msg = typeof d === 'string' ? d : JSON.stringify(d || data);
+        throw new Error(msg);
+      }
+      return data;
+    },
+    onSuccess: () => refetch(),
+  });
+
+  const ready = ucStatus?.ready_for_uc_upload;
+
+  return (
+    <div className="bg-gradient-to-br from-slate-50 to-indigo-50 rounded-xl border-2 border-indigo-200 p-6 shadow-sm">
+      <div className="flex items-start gap-3 mb-3">
+        <Upload className="w-8 h-8 text-indigo-700 shrink-0" />
+        <div>
+          <h2 className="text-xl font-bold text-gray-900">Unity Catalog — preloaded data</h2>
+          <p className="text-gray-600 text-sm mt-1">
+            Push the same CSVs the app uses under <code className="bg-white/80 px-1 rounded text-xs">data/preloaded/fmb_bank</code> to{' '}
+            <code className="bg-white/80 px-1 rounded text-xs">catalog.schema</code> as Delta tables{' '}
+            <code className="bg-white/80 px-1 rounded text-xs">customers</code>,{' '}
+            <code className="bg-white/80 px-1 rounded text-xs">products</code>,{' '}
+            <code className="bg-white/80 px-1 rounded text-xs">transactions</code>.
+          </p>
+        </div>
+      </div>
+
+      {isLoading && <p className="text-sm text-gray-500">Checking Databricks configuration…</p>}
+
+      {ucStatus && (
+        <ul className="text-sm text-gray-700 space-y-1 mb-4">
+          <li>
+            <strong>Target:</strong> {ucStatus.catalog}.{ucStatus.schema} (volume: {ucStatus.uc_volume_name})
+          </li>
+          <li>
+            SQL warehouse: {ucStatus.sql_warehouse_id_set ? 'set' : 'missing'}{' '}
+            <span className="text-gray-500">(DATABRICKS_SQL_WAREHOUSE_ID)</span>
+          </li>
+          <li>
+            Host / token: {ucStatus.databricks_host_set && ucStatus.databricks_token_set ? 'set' : 'missing'}
+          </li>
+        </ul>
+      )}
+
+      <div className="flex flex-wrap gap-2 items-center">
+        <button
+          type="button"
+          disabled={!ready || ucUpload.isPending}
+          onClick={() => ucUpload.mutate()}
+          className="inline-flex items-center gap-2 px-4 py-2 rounded-lg bg-indigo-700 text-white text-sm font-semibold hover:bg-indigo-800 disabled:opacity-50 disabled:cursor-not-allowed"
+        >
+          {ucUpload.isPending ? 'Uploading…' : 'Upload preloaded data to UC'}
+        </button>
+        <button
+          type="button"
+          onClick={() => refetch()}
+          className="text-sm text-indigo-700 font-medium hover:underline"
+        >
+          Refresh status
+        </button>
+      </div>
+
+      {!ready && ucStatus && (
+        <p className="text-xs text-amber-800 mt-3 bg-amber-50 border border-amber-200 rounded-lg p-3">
+          Set <code className="font-mono">DATABRICKS_HOST</code>, <code className="font-mono">DATABRICKS_TOKEN</code>, and{' '}
+          <code className="font-mono">DATABRICKS_SQL_WAREHOUSE_ID</code> on the API server. Optional:{' '}
+          <code className="font-mono">DOMAIN_CATALOG</code>, <code className="font-mono">DOMAIN_SCHEMA</code>,{' '}
+          <code className="font-mono">DATABRICKS_UC_VOLUME_NAME</code> (default <code className="font-mono">fmb_preloaded</code>).
+          The PAT needs Files API + SQL + UC volume access.
+        </p>
+      )}
+
+      {ucUpload.isSuccess && ucUpload.data?.tables && (
+        <div className="mt-3 text-sm text-green-800 bg-green-50 border border-green-200 rounded-lg p-3">
+          Updated: {(ucUpload.data.tables as string[]).join(', ')}
+        </div>
+      )}
+      {ucUpload.isError && (
+        <div className="mt-3 text-sm text-red-800 bg-red-50 border border-red-200 rounded-lg p-3">
+          {(ucUpload.error as Error).message}
+        </div>
+      )}
+    </div>
+  );
+}
+
 export default function BankingDataLoader() {
   const API_BASE_URL = getBankingApiBase();
   const queryClient = useQueryClient();
@@ -89,6 +190,8 @@ export default function BankingDataLoader() {
         </h1>
         <p className="text-gray-600 text-lg">Select and load the banking customer dataset to begin persona analysis</p>
       </div>
+
+      <UnityCatalogPreloadedCard apiBase={API_BASE_URL} />
       
       {/* Dataset Selection */}
       <div className="space-y-6">

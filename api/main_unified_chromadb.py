@@ -23,7 +23,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 from fastapi.responses import FileResponse
 from pydantic import BaseModel
-from typing import Optional, Dict, Any, List
+from typing import Optional, Dict, Any, List, Tuple
 import traceback
 from datetime import datetime
 import pandas as pd
@@ -223,6 +223,10 @@ class AgentBLogitConfig(BaseModel):
     top_n: int = 10
     mode: str = "hybrid_weighted"  # logit_only, hybrid_average, hybrid_weighted
     use_agent_d_directives: Optional[bool] = False  # banking: apply Agent D supervisor pin / boost / deprioritize
+
+
+class GenieAskRequest(BaseModel):
+    question: str
 
 
 class InitializeRequest(BaseModel):
@@ -2662,6 +2666,110 @@ async def export_banking_personas():
         raise HTTPException(status_code=500, detail=str(e))
 
 
+# ============================================================================
+# BANKING — DATABRICKS GENIE (Unity Catalog + optional Delta persona sync)
+# ============================================================================
+
+
+@app.get("/api/banking/genie/status")
+async def banking_genie_status():
+    """Whether Genie env vars are set; helps debug Databricks Apps deployments."""
+    from utils.databricks_genie import (
+        genie_env_configured,
+        resolve_unity_catalog,
+        get_customers_table_fqn,
+        is_databricks_runtime,
+    )
+
+    catalog, schema = resolve_unity_catalog()
+    cfg = genie_env_configured()
+    return {
+        "success": True,
+        "catalog": catalog,
+        "schema": schema,
+        "databricks_runtime": is_databricks_runtime(),
+        "persona_assignments_table": f"{catalog}.{schema}.persona_assignments",
+        "persona_definitions_table": f"{catalog}.{schema}.persona_definitions",
+        "customers_table_hint": get_customers_table_fqn(),
+        **cfg,
+    }
+
+
+@app.post("/api/banking/genie/sync-personas")
+async def banking_genie_sync_personas():
+    """
+    Build persona_assignments / persona_definitions from Agent A results and overwrite
+    Delta tables on Databricks (Spark). Locally: returns skipped message.
+    """
+    from utils.databricks_genie import sync_personas_to_catalog_tables
+
+    if not system_state["banking"].get("agent_a_results"):
+        raise HTTPException(
+            status_code=400,
+            detail="No Agent A results. Run Banking Agent A segmentation first.",
+        )
+    r = system_state["banking"]["agent_a_results"]
+    personas = r.get("personas") or {}
+    customers = r.get("customers_with_clusters") or []
+    out = sync_personas_to_catalog_tables(personas, customers)
+    if out.get("error") and not out.get("skipped"):
+        raise HTTPException(status_code=400, detail=out["error"])
+    return {"success": bool(out.get("success")), **out}
+
+
+@app.post("/api/banking/genie/ask")
+async def banking_genie_ask(body: GenieAskRequest):
+    """
+    Prepend Unity Catalog persona context, then call Genie (new conversation per request).
+    """
+    from utils.databricks_genie import ask_genie, build_genie_persona_context
+
+    q = (body.question or "").strip()
+    if not q:
+        raise HTTPException(status_code=400, detail="question is required")
+
+    r = system_state["banking"].get("agent_a_results") or {}
+    ctx = build_genie_persona_context(
+        r.get("personas") or {},
+        r.get("customers_with_clusters") or [],
+    )
+    try:
+        result = ask_genie(q, ctx)
+    except Exception as e:
+        logger.exception("Genie ask failed")
+        raise HTTPException(status_code=502, detail=str(e)) from e
+    return result
+
+
+# ============================================================================
+# BANKING — Unity Catalog: push preloaded fmb_bank CSVs from the API host
+# ============================================================================
+
+
+@app.get("/api/banking/uc/preloaded/status")
+async def banking_uc_preloaded_status():
+    """Whether DATABRICKS_* + warehouse env is set to upload preloaded CSVs to UC."""
+    from utils.uc_preloaded_upload import uc_upload_status_extended
+
+    return {"success": True, **uc_upload_status_extended()}
+
+
+@app.post("/api/banking/uc/preloaded/upload")
+async def banking_uc_preloaded_upload():
+    """
+    Read data/preloaded/fmb_bank/*.csv from this repo, upload to UC Volume, then
+    CREATE OR REPLACE Delta tables in catalog.schema (customers, products, transactions).
+    """
+    from utils.uc_preloaded_upload import upload_preloaded_fmb_to_uc
+
+    out = upload_preloaded_fmb_to_uc(project_root)
+    if out.get("success"):
+        return out
+    if not out.get("ready_for_uc_upload"):
+        raise HTTPException(status_code=400, detail=out.get("error", "UC upload not configured"))
+    raise HTTPException(status_code=502, detail=out.get("error", "UC upload failed"))
+
+
 @app.get("/api/banking/macro-segments")
 async def get_banking_macro_segments():
     """Get Banking macro segments"""
@@ -2891,21 +2999,30 @@ async def get_banking_personas():
                     'emoji': persona_data.get('emoji', '🏦'),
                 })
         else:
+            # Raw CSV has no cluster until Agent A runs — same as get_all_customers: default cluster 0
+            if getattr(banking_agent_a, 'customers_df', None) is None:
+                try:
+                    banking_agent_a.load_data()
+                except Exception as load_err:
+                    logger.warning(f"Personas: could not load banking CSV: {load_err}")
             df = getattr(banking_agent_a, 'customers_df', None)
-            if df is not None and len(df) > 0 and 'cluster' in df.columns:
-                c = pd.to_numeric(df['cluster'], errors='coerce')
-                for cid in sorted(c.dropna().unique(), key=lambda x: int(x)):
-                    cid_i = int(cid)
+            if df is not None and len(df) > 0:
+                work = df.copy()
+                if 'cluster' not in work.columns:
+                    work['cluster'] = 0
+                c = pd.to_numeric(work['cluster'], errors='coerce').fillna(0)
+                for cid in sorted(c.dropna().unique(), key=lambda x: int(float(x))):
+                    cid_i = int(float(cid))
                     n = int((c == cid).sum())
                     personas_list.append({
                         'id': str(cid_i),
                         'name': f'Segment {cid_i} ({n} customers)',
                         'size': n,
-                        'percentage': 0.0,
+                        'percentage': 100.0 * n / len(work) if len(work) else 0.0,
                         'emoji': '🏦',
                     })
                 if personas_list:
-                    logger.info(f"✅ Personas fallback from clusters: {len(personas_list)} segments")
+                    logger.info(f"✅ Personas fallback from clusters (CSV / pre–Agent A): {len(personas_list)} segments")
 
         logger.info(f"✅ Returning {len(personas_list)} banking personas")
         return {'personas': personas_list}
@@ -3295,7 +3412,9 @@ async def execute_banking_agent_b_logit(config: AgentBLogitConfig):
                 from agents.agent_d_banking import AgentD_Banking
 
                 recommendations = AgentD_Banking.apply_directives_to_recommendations(
-                    list(recommendations), d
+                    list(recommendations),
+                    d,
+                    getattr(banking_agent_b_logit, "products_df", None),
                 )
                 logger.info(f"📌 Banking Hybrid ML: applied Agent D supervisor directives for {cid_key}")
         metrics = results.get('metrics', {}) or {}
@@ -3530,6 +3649,122 @@ class AgentDOrchestrateBody(BaseModel):
     clicked_product_ids: List[str] = []
 
 
+def _chromadb_execute_all_recs_and_raw(customer_id: str) -> Tuple[Optional[dict], List[dict]]:
+    """
+    Rule-based Agent B execute — same as /api/banking/agent_b/execute.
+
+    Returns (all_recs for Agent C merge, raw execute recommendation rows for B vs C copy).
+    On failure: (None, []).
+    """
+    init_banking_agent_b()
+    if banking_agent_b is None or banking_agent_b_chromadb is None:
+        return None, []
+
+    fw = system_state['banking'].get('agent_b_factor_weights_pct')
+    exec_params = {
+        'customer_id': customer_id,
+        'search_query': '',
+        'category': None,
+        'top_n': 24,
+        'explain': False,
+    }
+    if fw:
+        exec_params['factor_weights'] = fw
+
+    b_exec = banking_agent_b_chromadb.execute(exec_params)
+    recs = b_exec.get('recommendations') or []
+    if b_exec.get('status') != 'success' or not recs:
+        logger.warning(
+            "chromadb execute: no recommendations (%s)",
+            b_exec.get('status') or b_exec.get('error'),
+        )
+        return None, []
+
+    tailored = []
+    for r in recs:
+        tailored.append({
+            'product_id': str(r.get('product_id', '')),
+            'product_name': r.get('product_name'),
+            'category': r.get('category'),
+            'score': float(r.get('score') or 0),
+            'reasoning': (r.get('rank_explanation') or r.get('reason') or '')[:800],
+            'annual_fee': r.get('annual_fee'),
+            'min_balance': r.get('min_balance'),
+            'interest_rate_apy': r.get('interest_rate_apy'),
+        })
+    all_recs = {
+        'customer_id': customer_id,
+        'tailored_recommendations': tailored,
+        'similar_products': [],
+        'segment_recommendations': [],
+        'recommendation_metadata': {'scoring_source': 'agent_b_execute_chromadb', 'n': len(tailored)},
+    }
+    return all_recs, recs
+
+
+def _normalize_segment_rows_for_agent_c_merge(segment_rows: List) -> List[dict]:
+    """
+    Enhanced Agent B segment recs use `popularity` but often omit `score`, so Agent C merge
+    never prefers them over execute rows. Map popularity to a 0–1 score band comparable to B scores.
+    """
+    out: List[dict] = []
+    for r in segment_rows or []:
+        if not isinstance(r, dict):
+            continue
+        x = dict(r)
+        raw = x.get("score")
+        try:
+            s = float(raw) if raw is not None else 0.0
+        except (TypeError, ValueError):
+            s = 0.0
+        if s <= 0:
+            pop = float(x.get("popularity") or 0)
+            x["score"] = round(min(0.94, max(0.18, pop * 0.75 + 0.18)), 4)
+        out.append(x)
+    return out
+
+
+def _banking_all_recs_for_agent_c(customer_id: str) -> Tuple[Optional[dict], List[dict]]:
+    """
+    Agent C should not use execute-only pool (that makes C #1 == B #1). Merge rule-based execute
+    (tailored) with Enhanced segment popularity so cross-signal products can win after C ranking.
+    """
+    all_recs, exec_raw = _chromadb_execute_all_recs_and_raw(customer_id)
+    if not all_recs:
+        return None, []
+    init_banking_agent_b()
+    if banking_agent_b is None:
+        return all_recs, exec_raw
+    try:
+        er = banking_agent_b.get_all_recommendations(customer_id)
+        if not isinstance(er, dict) or er.get("error"):
+            return all_recs, exec_raw
+        seg = _normalize_segment_rows_for_agent_c_merge(er.get("segment_recommendations") or [])
+        merged = dict(all_recs)
+        merged["segment_recommendations"] = seg
+        meta = dict(all_recs.get("recommendation_metadata") or {})
+        meta["agent_c_pool"] = "execute_plus_segment_popularity"
+        meta["n_segment"] = len(seg)
+        merged["recommendation_metadata"] = meta
+        return merged, exec_raw
+    except Exception as e:
+        logger.warning(f"Agent C: could not merge Enhanced segment recs: {e}")
+        return all_recs, exec_raw
+
+
+def _banking_all_recs_for_agent_d_orchestrate(customer_id: str) -> dict:
+    """
+    Recommendation pool aligned with the Agent B UI (/api/banking/agent_b/execute).
+    """
+    all_recs, _ = _chromadb_execute_all_recs_and_raw(customer_id)
+    if all_recs:
+        return all_recs
+    if banking_agent_b is None:
+        return {'error': 'Agent B not initialized', 'customer_id': customer_id}
+    logger.warning("Agent D: chromadb execute unavailable; using Enhanced v2 get_all_recommendations")
+    return banking_agent_b.get_all_recommendations(customer_id, None, None)
+
+
 @app.post("/api/banking/agent_d/orchestrate")
 async def banking_agent_d_orchestrate(body: AgentDOrchestrateBody):
     """
@@ -3551,9 +3786,19 @@ async def banking_agent_d_orchestrate(body: AgentDOrchestrateBody):
             ledger_store[cid] = {'impressions': {}, 'last_session_product_ids': [], 'last_directives': {}}
         ledger = ledger_store[cid]
 
-        all_recs = banking_agent_b.get_all_recommendations(cid, None, None)
+        # Agent B stack / supervisor ordering: same pool as Agent B execute (UI alignment)
+        all_recs, _ = _chromadb_execute_all_recs_and_raw(cid)
+        if not all_recs:
+            all_recs = banking_agent_b.get_all_recommendations(cid)
         if all_recs.get('error'):
             raise HTTPException(status_code=404, detail=all_recs.get('error', 'Recommendations failed'))
+
+        # Agent C one-best-offer must use the SAME merged pool as GET /agent_c/one-best-offer/{id}
+        # (execute + segment popularity). Using execute-only for orchestrate alone caused mismatches vs the Agent C page.
+        all_recs_for_c, exec_raw = _banking_all_recs_for_agent_c(cid)
+        if not all_recs_for_c:
+            all_recs_for_c = banking_agent_b.get_all_recommendations(cid)
+            exec_raw = []
 
         customer_details = banking_agent_a.get_customer_details(cid)
         churn_score = churn_category = None
@@ -3590,10 +3835,11 @@ async def banking_agent_d_orchestrate(body: AgentDOrchestrateBody):
         agent_c_result = banking_agent_c.get_one_best_offer(
             customer_id=cid,
             customer_details=customer_details,
-            all_recommendations=all_recs,
+            all_recommendations=all_recs_for_c,
             churn_risk_score=churn_score,
             churn_category=churn_category,
             fallback_products=fallback_products or None,
+            agent_b_reference_recs=exec_raw if exec_raw else None,
         )
 
         pname = (customer_details or {}).get('persona') or ''
@@ -3678,7 +3924,10 @@ async def get_banking_one_best_offer(customer_id: str):
             raise HTTPException(status_code=404, detail="Run Agent A first to load segments.")
         init_banking_agent_b()
         customer_details = banking_agent_a.get_customer_details(customer_id)
-        all_recs = banking_agent_b.get_all_recommendations(customer_id, None, None)
+        all_recs, exec_raw = _banking_all_recs_for_agent_c(customer_id)
+        if not all_recs:
+            all_recs = banking_agent_b.get_all_recommendations(customer_id)
+            exec_raw = []
         if all_recs.get("error"):
             raise HTTPException(status_code=404, detail=all_recs.get("error", "Customer or recommendations not found."))
         churn_score = None
@@ -3744,6 +3993,7 @@ async def get_banking_one_best_offer(customer_id: str):
             churn_risk_score=churn_score,
             churn_category=churn_category,
             fallback_products=fallback_products if fallback_products else None,
+            agent_b_reference_recs=exec_raw if exec_raw else None,
         )
         data = numpy_to_python_types(result)
         if churn_extra:
@@ -3811,7 +4061,10 @@ async def get_banking_persona_best_offer(persona_id: int = 0):
             representative = segment_customers.iloc[i]
             customer_id = str(representative["customer_id"])
             customer_details = banking_agent_a.get_customer_details(customer_id)
-            all_recs = banking_agent_b.get_all_recommendations(customer_id, None, None)
+            all_recs, exec_raw = _banking_all_recs_for_agent_c(customer_id)
+            if not all_recs:
+                all_recs = banking_agent_b.get_all_recommendations(customer_id)
+                exec_raw = []
             if all_recs.get("error"):
                 continue
             churn_score = None
@@ -3837,6 +4090,7 @@ async def get_banking_persona_best_offer(persona_id: int = 0):
                 churn_risk_score=churn_score,
                 churn_category=churn_category,
                 fallback_products=fallback_products if fallback_products else None,
+                agent_b_reference_recs=exec_raw if exec_raw else None,
             )
             if result.get("offer") is not None:
                 break
@@ -3988,10 +4242,12 @@ def _agent_c_customer_metrics_from_row(row):
 async def get_banking_churn_cohort(
     risk: str = "High,Critical",
     limit: int = 50,
-    skip: int = 0
+    skip: int = 0,
+    order: str = "desc",
 ):
     """
-    Get high churn-risk customers for targeting. risk comma-separated: Low, Medium, High, Critical.
+    Get churn-risk customers for targeting. risk comma-separated: Low, Medium, High, Critical.
+    order: "desc" = highest churn_risk_score first (default); "asc" = lowest first (e.g. Low-risk samples).
     """
     try:
         if not system_state['banking']['agent_a_results']:
@@ -4008,7 +4264,8 @@ async def get_banking_churn_cohort(
         mask = df["churn_risk_category"].isin(categories)
         subset = df[mask].copy()
         total = len(subset)
-        subset = subset.sort_values("churn_risk_score", ascending=False).iloc[skip : skip + limit]
+        asc = str(order).strip().lower() in ("asc", "ascending", "low_first", "low-first")
+        subset = subset.sort_values("churn_risk_score", ascending=asc).iloc[skip : skip + limit]
         personas = banking_agent_a.personas
         from utils.churn_feature_generator import format_churn_risk_reason, format_retention_strategy
 
@@ -4054,6 +4311,7 @@ async def get_banking_churn_cohort(
             "total": total,
             "skip": skip,
             "limit": limit,
+            "order": "asc" if asc else "desc",
         }
     except HTTPException:
         raise
