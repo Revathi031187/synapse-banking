@@ -3430,12 +3430,32 @@ async def execute_banking_agent_b_logit(config: AgentBLogitConfig):
             if d and (has_pin or has_boost or has_dep):
                 from agents.agent_d_banking import AgentD_Banking
 
+                cust_ctx = None
+                persona_refresh = (results.get("persona") or "").strip() or "Customer"
+                if config.customer_id and banking_agent_b_chromadb is not None:
+                    try:
+                        cust_ctx = banking_agent_b_chromadb._get_customer_info(str(config.customer_id).strip())
+                    except Exception:
+                        cust_ctx = None
+
                 recommendations = AgentD_Banking.apply_directives_to_recommendations(
                     list(recommendations),
                     d,
                     getattr(banking_agent_b_logit, "products_df", None),
+                    customer_context=cust_ctx,
+                    persona_name=persona_refresh,
                 )
                 logger.info(f"📌 Banking Hybrid ML: applied Agent D supervisor directives for {cid_key}")
+                if banking_agent_b_chromadb is not None:
+                    try:
+                        banking_agent_b_chromadb._refresh_rank_explanations_after_reorder(
+                            recommendations,
+                            min(int(config.top_n), len(recommendations)),
+                            persona_refresh,
+                            "Unknown",
+                        )
+                    except Exception as ex:
+                        logger.warning(f"Hybrid ML: rank refresh after supervisor: {ex}")
         metrics = results.get('metrics', {}) or {}
         
         # Fee range from recommendations if not in metrics
@@ -3824,13 +3844,14 @@ async def banking_agent_d_orchestrate(body: AgentDOrchestrateBody):
         try:
             from utils.churn_feature_generator import add_essential_churn_features
             df_c = banking_agent_a.customers_df
-            if df_c is not None and 'churn_risk_score' in df_c.columns:
+            if df_c is not None and hasattr(df_c, "columns") and "churn_risk_score" in df_c.columns:
                 df_churn = df_c
             else:
                 df_churn = add_essential_churn_features(
                     banking_agent_a.customers_df, banking_agent_a.transactions_df
                 )
-            row = df_churn[df_churn['customer_id'] == cid]
+            # Match GET /agent_c/one-best-offer: string-safe customer_id join (int vs str in CSV)
+            row = df_churn[df_churn["customer_id"].astype(str) == str(cid)]
             if len(row) > 0:
                 row = row.iloc[0]
                 churn_score = float(row.get('churn_risk_score', 0))
@@ -3839,7 +3860,9 @@ async def banking_agent_d_orchestrate(body: AgentDOrchestrateBody):
             pass
 
         fallback_products = []
-        products_df = getattr(banking_agent_a, 'products_df', None)
+        products_df = getattr(banking_agent_a, "products_df", None)
+        if products_df is None:
+            products_df = system_state["banking"].get("products")
         if products_df is not None and len(products_df) > 0:
             for _, row in products_df.iterrows():
                 fallback_products.append({
@@ -3906,6 +3929,7 @@ async def banking_agent_d_click(body: BankingAgentDClickBody):
     d = led.setdefault('last_directives', {})
     d['priority_pin_product_id'] = pid
     d['focus_source'] = 'clicked_recommendation'
+    d['focus_offer_reasoning'] = ''
     boost = [x for x in (d.get('boost_product_ids') or []) if str(x).strip() != pid]
     d['boost_product_ids'] = [pid] + boost
 
@@ -3915,12 +3939,21 @@ async def banking_agent_d_click(body: BankingAgentDClickBody):
 @app.get("/api/banking/agent_d/directives/{customer_id}")
 async def banking_agent_d_directives(customer_id: str):
     """Last supervisor directives for this customer (for Agent B use_agent_d_directives)."""
+    from agents.agent_d_banking import AgentD_Banking as AgentDForPinReason
+
     ledger = system_state['banking'].setdefault('agent_d_ledger', {}).get(str(customer_id).strip()) or {}
+    d = ledger.get('last_directives') or {}
+    priority_pin_reason_ui = ""
+    if str(d.get('priority_pin_product_id') or '').strip():
+        init_banking_agent_b()
+        pdf = getattr(banking_agent_b_chromadb, 'products_df', None) if banking_agent_b_chromadb else None
+        priority_pin_reason_ui = AgentDForPinReason.priority_pin_reason_text(d, pdf)
     return {
         'success': True,
         'customer_id': customer_id,
-        'next_visit_directives': ledger.get('last_directives') or {},
+        'next_visit_directives': d,
         'impressions_summary': ledger.get('impressions') or {},
+        'priority_pin_reason_ui': priority_pin_reason_ui,
     }
 
 

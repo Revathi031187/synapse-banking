@@ -1,133 +1,71 @@
-import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
+import React, { useEffect } from 'react';
 import { Link } from 'react-router-dom';
+import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { motion, AnimatePresence } from 'framer-motion';
 import { useState } from 'react';
-import { FolderOpen, Database, CheckCircle2, AlertCircle, Eye, X, Upload } from 'lucide-react';
+import {
+  Database, CheckCircle2, AlertCircle, Eye, X, Upload,
+  Play, Users, TrendingUp, BarChart3, Download, DollarSign, Sparkles, ArrowRight
+} from 'lucide-react';
+import {
+  BarChart,
+  Bar,
+  ScatterChart,
+  Scatter,
+  XAxis,
+  YAxis,
+  CartesianGrid,
+  Tooltip,
+  ResponsiveContainer,
+  Cell
+} from 'recharts';
+
 import { getBankingApiBase } from '../../utils/apiBase';
+import { formatCompactUsd } from '../../utils/formatCurrency';
 import { useSessionStorageState } from '../../hooks/useSessionStorageState';
 
+const BANKING_COLORS = ['#1e40af', '#0891b2', '#059669', '#f59e0b', '#dc2626'];
+
 const DATA_LOADER_UI_KEY = 'banking-data-loader-v1';
-
-function UnityCatalogPreloadedCard({ apiBase }: { apiBase: string }) {
-  const { data: ucStatus, isLoading, refetch } = useQuery({
-    queryKey: ['banking-uc-preloaded-status'],
-    queryFn: async () => {
-      const res = await fetch(`${apiBase}/api/banking/uc/preloaded/status`);
-      if (!res.ok) return null;
-      return res.json();
-    },
-  });
-
-  const ucUpload = useMutation({
-    mutationFn: async () => {
-      const res = await fetch(`${apiBase}/api/banking/uc/preloaded/upload`, { method: 'POST' });
-      const data = await res.json();
-      if (!res.ok) {
-        const d = data?.detail;
-        const msg = typeof d === 'string' ? d : JSON.stringify(d || data);
-        throw new Error(msg);
-      }
-      return data;
-    },
-    onSuccess: () => refetch(),
-  });
-
-  const ready = ucStatus?.ready_for_uc_upload;
-
-  return (
-    <div className="bg-gradient-to-br from-slate-50 to-indigo-50 rounded-xl border-2 border-indigo-200 p-6 shadow-sm">
-      <div className="flex items-start gap-3 mb-3">
-        <Upload className="w-8 h-8 text-indigo-700 shrink-0" />
-        <div>
-          <h2 className="text-xl font-bold text-gray-900">Unity Catalog — preloaded data</h2>
-          <p className="text-gray-600 text-sm mt-1">
-            Push the same CSVs the app uses under <code className="bg-white/80 px-1 rounded text-xs">data/preloaded/fmb_bank</code> to{' '}
-            <code className="bg-white/80 px-1 rounded text-xs">catalog.schema</code> as Delta tables{' '}
-            <code className="bg-white/80 px-1 rounded text-xs">customers</code>,{' '}
-            <code className="bg-white/80 px-1 rounded text-xs">products</code>,{' '}
-            <code className="bg-white/80 px-1 rounded text-xs">transactions</code>.
-          </p>
-        </div>
-      </div>
-
-      {isLoading && <p className="text-sm text-gray-500">Checking Databricks configuration…</p>}
-
-      {ucStatus && (
-        <ul className="text-sm text-gray-700 space-y-1 mb-4">
-          <li>
-            <strong>Target:</strong> {ucStatus.catalog}.{ucStatus.schema} (volume: {ucStatus.uc_volume_name})
-          </li>
-          <li>
-            SQL warehouse: {ucStatus.sql_warehouse_id_set ? 'set' : 'missing'}{' '}
-            <span className="text-gray-500">(DATABRICKS_SQL_WAREHOUSE_ID)</span>
-          </li>
-          <li>
-            Host / token: {ucStatus.databricks_host_set && ucStatus.databricks_token_set ? 'set' : 'missing'}
-          </li>
-        </ul>
-      )}
-
-      <div className="flex flex-wrap gap-2 items-center">
-        <button
-          type="button"
-          disabled={!ready || ucUpload.isPending}
-          onClick={() => ucUpload.mutate()}
-          className="inline-flex items-center gap-2 px-4 py-2 rounded-lg bg-indigo-700 text-white text-sm font-semibold hover:bg-indigo-800 disabled:opacity-50 disabled:cursor-not-allowed"
-        >
-          {ucUpload.isPending ? 'Uploading…' : 'Upload preloaded data to UC'}
-        </button>
-        <button
-          type="button"
-          onClick={() => refetch()}
-          className="text-sm text-indigo-700 font-medium hover:underline"
-        >
-          Refresh status
-        </button>
-      </div>
-
-      {!ready && ucStatus && (
-        <p className="text-xs text-amber-800 mt-3 bg-amber-50 border border-amber-200 rounded-lg p-3">
-          Set <code className="font-mono">DATABRICKS_HOST</code>, <code className="font-mono">DATABRICKS_TOKEN</code>, and{' '}
-          <code className="font-mono">DATABRICKS_SQL_WAREHOUSE_ID</code> on the API server. Optional:{' '}
-          <code className="font-mono">DOMAIN_CATALOG</code>, <code className="font-mono">DOMAIN_SCHEMA</code>,{' '}
-          <code className="font-mono">DATABRICKS_UC_VOLUME_NAME</code> (default <code className="font-mono">fmb_preloaded</code>).
-          The PAT needs Files API + SQL + UC volume access.
-        </p>
-      )}
-
-      {ucUpload.isSuccess && ucUpload.data?.tables && (
-        <div className="mt-3 text-sm text-green-800 bg-green-50 border border-green-200 rounded-lg p-3">
-          Updated: {(ucUpload.data.tables as string[]).join(', ')}
-        </div>
-      )}
-      {ucUpload.isError && (
-        <div className="mt-3 text-sm text-red-800 bg-red-50 border border-red-200 rounded-lg p-3">
-          {(ucUpload.error as Error).message}
-        </div>
-      )}
-    </div>
-  );
-}
+const AGENT_A_UI_KEY = 'banking-agent-a-v1';
+const DEFAULT_AGENT_A_UI = { nClusters: 5, gamma: 0.5, resultsEnabled: false };
 
 export default function BankingDataLoader() {
   const API_BASE_URL = getBankingApiBase();
   const queryClient = useQueryClient();
+
+  // ── Data Loader state ──────────────────────────────────────────────────────
   const [ui, setUi] = useSessionStorageState(DATA_LOADER_UI_KEY, { selectedDataset: '' });
   const { selectedDataset } = ui;
   const setSelectedDataset = (name: string) => setUi((prev) => ({ ...prev, selectedDataset: name }));
   const [viewingTable, setViewingTable] = useState<string | null>(null);
   const [tableData, setTableData] = useState<any | null>(null);
-  
-  // Fetch available datasets
-  const { data: datasetsData, isLoading } = useQuery({
+
+  // ── Agent A state ──────────────────────────────────────────────────────────
+  const [agentAUi, setAgentAUi] = useSessionStorageState(AGENT_A_UI_KEY, DEFAULT_AGENT_A_UI);
+  const { nClusters, gamma, resultsEnabled } = agentAUi;
+
+  useEffect(() => {
+    const checkCache = () => {
+      const cachedResults = queryClient.getQueryData(['banking-agent-a-results']);
+      if (cachedResults) {
+        setAgentAUi((prev) => ({ ...prev, resultsEnabled: true }));
+      }
+    };
+    checkCache();
+    const timeout = setTimeout(checkCache, 100);
+    return () => clearTimeout(timeout);
+  }, [queryClient]);
+
+  // ── Data Loader queries / mutations ────────────────────────────────────────
+  const { data: datasetsData, isLoading: datasetsLoading } = useQuery({
     queryKey: ['banking-datasets'],
     queryFn: async () => {
       const res = await fetch(`${API_BASE_URL}/api/banking/datasets`);
       return res.json();
     }
   });
-  
-  // Load dataset mutation
+
   const loadMutation = useMutation({
     mutationFn: async (datasetName: string) => {
       const res = await fetch(`${API_BASE_URL}/api/banking/datasets/load`, {
@@ -140,36 +78,109 @@ export default function BankingDataLoader() {
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['banking-status'] });
-      // Clear Agent A results when new dataset is loaded
       queryClient.removeQueries({ queryKey: ['banking-agent-a-results'] });
     }
   });
-  
-  // Function to view table data
+
   const handleViewTable = async (tableName: string) => {
     try {
       const datasetToUse = selectedDataset || datasetsData?.datasets?.[0]?.name || 'banking_v1';
       const res = await fetch(`${API_BASE_URL}/api/banking/datasets/view/${datasetToUse}/${tableName}`);
-      
       if (!res.ok) {
-        console.error('Failed to fetch table:', res.status, res.statusText);
         alert(`Failed to load table: ${res.statusText}`);
         return;
       }
-      
       const data = await res.json();
-      console.log('✅ Table data loaded:', tableName, data);
       setTableData(data);
       setViewingTable(tableName);
     } catch (error) {
-      console.error('Error loading table:', error);
       alert(`Error loading table: ${error}`);
     }
   };
-  
+
+  // ── Agent A queries / mutations ────────────────────────────────────────────
+  const executeMutation = useMutation({
+    mutationFn: async () => {
+      const response = await fetch(`${API_BASE_URL}/api/banking/agent_a/execute`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ n_clusters: nClusters, gamma })
+      });
+      if (!response.ok) {
+        const errorText = await response.text();
+        throw new Error(`Failed to execute Agent A: ${errorText}`);
+      }
+      return response.json();
+    },
+    onSuccess: async () => {
+      setAgentAUi((prev) => ({ ...prev, resultsEnabled: true }));
+      try {
+        const response = await fetch(`${API_BASE_URL}/api/banking/agent_a/results`);
+        if (response.ok) {
+          const resultsData = await response.json();
+          queryClient.setQueryData(['banking-agent-a-results'], resultsData.results || resultsData);
+        }
+      } catch (error) {
+        console.error('Error fetching results:', error);
+      }
+    }
+  });
+
+  const resultsQuery = useQuery({
+    queryKey: ['banking-agent-a-results'],
+    queryFn: async () => {
+      const response = await fetch(`${API_BASE_URL}/api/banking/agent_a/results`);
+      if (!response.ok) {
+        if (response.status === 404) return null;
+        throw new Error('Failed to fetch results');
+      }
+      const data = await response.json();
+      return data.results || data;
+    },
+    staleTime: Infinity,
+    gcTime: Infinity,
+    refetchOnMount: false,
+    refetchOnWindowFocus: false,
+    enabled: resultsEnabled,
+    retry: 1
+  });
+
+  const handleExport = async () => {
+    try {
+      const response = await fetch(`${API_BASE_URL}/api/banking/agent_a/export`);
+      if (!response.ok) {
+        let detail = `Export failed (HTTP ${response.status})`;
+        try {
+          const err = await response.json();
+          if (typeof err?.detail === 'string' && err.detail.trim()) detail = err.detail;
+        } catch { /* non-json body */ }
+        throw new Error(detail);
+      }
+      const blob = await response.blob();
+      if (blob.size === 0) throw new Error('Export returned an empty file');
+      const url = window.URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      const cd = response.headers.get('content-disposition') || '';
+      const match = cd.match(/filename="?([^"]+)"?/i);
+      a.download = match?.[1] || 'banking_personas.csv';
+      document.body.appendChild(a);
+      a.click();
+      window.URL.revokeObjectURL(url);
+      document.body.removeChild(a);
+    } catch (error) {
+      alert((error as Error).message || 'Export failed');
+    }
+  };
+
+  // ── Derived values ─────────────────────────────────────────────────────────
   const datasets = datasetsData?.datasets || [];
-  
-  if (isLoading) {
+  const results = resultsQuery.data;
+  const segmentationLoading = executeMutation.isPending || resultsQuery.isLoading;
+  const personas = results?.personas || {};
+  const vizData = results?.visualization_data || {};
+
+  if (datasetsLoading) {
     return (
       <div className="flex items-center justify-center h-64">
         <div className="text-center">
@@ -179,24 +190,14 @@ export default function BankingDataLoader() {
       </div>
     );
   }
-  
-  return (
-    <div className="space-y-8 animate-fadeIn">
-      {/* Header */}
-      <div>
-        <h1 className="text-4xl font-bold text-gray-900 mb-2 flex items-center space-x-3">
-          <FolderOpen className="w-10 h-10 text-blue-700" />
-          <span>🏦 Banking Data Loader</span>
-        </h1>
-        <p className="text-gray-600 text-lg">Select and load the banking customer dataset to begin persona analysis</p>
-      </div>
 
-      <UnityCatalogPreloadedCard apiBase={API_BASE_URL} />
-      
-      {/* Dataset Selection */}
-      <div className="space-y-6">
+  return (
+    <div className="space-y-10 animate-fadeIn">
+
+      {/* ── SECTION 1: Dataset Loader ────────────────────────────────────── */}
+      <section className="space-y-6">
         <h2 className="text-2xl font-bold text-gray-900">Available Datasets</h2>
-        
+
         {datasets.length === 0 && (
           <div className="bg-amber-50 border-2 border-amber-300 rounded-xl p-6">
             <div className="flex items-start space-x-3">
@@ -216,7 +217,7 @@ export default function BankingDataLoader() {
             </div>
           </div>
         )}
-        
+
         <div className="grid gap-6">
           {datasets.map((dataset: any) => (
             <motion.div
@@ -234,9 +235,8 @@ export default function BankingDataLoader() {
                 <div className="flex items-start justify-between mb-4">
                   <div className="flex-1">
                     <div className="flex items-center space-x-2 mb-2">
-                      <h3 className="text-2xl font-bold text-gray-900 flex items-center space-x-2">
-                        <span>🏦</span>
-                        <span>{dataset.display_name || dataset.name}</span>
+                      <h3 className="text-lg font-semibold text-gray-900">
+                        {dataset.display_name === 'Banking Platform V1' ? 'Banking Dataset' : (dataset.display_name || dataset.name)}
                       </h3>
                       {dataset.status === 'ready' && (
                         <span className="inline-flex items-center px-3 py-1 bg-green-100 text-green-800 rounded-full text-sm font-semibold">
@@ -252,8 +252,7 @@ export default function BankingDataLoader() {
                       )}
                     </div>
                     <p className="text-gray-600 text-sm mb-3">{dataset.description}</p>
-                    
-                    {/* Tables Info */}
+
                     {dataset.tables && (
                       <div className="grid md:grid-cols-3 gap-3 mt-4">
                         {dataset.tables.map((table: any) => (
@@ -262,10 +261,7 @@ export default function BankingDataLoader() {
                               <div className="text-sm font-semibold text-gray-900">{table.display_name}</div>
                               {table.loaded && (
                                 <button
-                                  onClick={(e) => {
-                                    e.stopPropagation();
-                                    handleViewTable(table.name);
-                                  }}
+                                  onClick={(e) => { e.stopPropagation(); handleViewTable(table.name); }}
                                   className="text-blue-700 hover:text-blue-800 p-1"
                                   title="View data"
                                 >
@@ -289,14 +285,10 @@ export default function BankingDataLoader() {
                     )}
                   </div>
                 </div>
-                
-                {/* Load Button */}
+
                 <div className="mt-4 pt-4 border-t border-blue-100">
                   <button
-                    onClick={(e) => {
-                      e.stopPropagation();
-                      loadMutation.mutate(dataset.name);
-                    }}
+                    onClick={(e) => { e.stopPropagation(); loadMutation.mutate(dataset.name); }}
                     disabled={loadMutation.isPending || dataset.status !== 'ready'}
                     className="btn-primary w-full flex items-center justify-center gap-2 disabled:opacity-50 disabled:cursor-not-allowed"
                   >
@@ -317,51 +309,349 @@ export default function BankingDataLoader() {
             </motion.div>
           ))}
         </div>
-      </div>
-      
-      {loadMutation.isSuccess && (
-        <motion.div
-          initial={{ opacity: 0, scale: 0.95 }}
-          animate={{ opacity: 1, scale: 1 }}
-          className="bg-green-50 border-2 border-green-300 rounded-xl p-6"
-        >
-          <div className="flex items-start space-x-3">
-            <CheckCircle2 className="w-6 h-6 text-green-600 flex-shrink-0 mt-1" />
+
+        {loadMutation.isSuccess && (
+          <motion.div
+            initial={{ opacity: 0, scale: 0.95 }}
+            animate={{ opacity: 1, scale: 1 }}
+            className="bg-green-50 border-2 border-green-300 rounded-xl p-6"
+          >
+            <div className="flex items-start space-x-3">
+              <CheckCircle2 className="w-6 h-6 text-green-600 flex-shrink-0 mt-1" />
+              <div>
+                <div className="text-green-900 font-bold text-lg mb-1">Dataset Loaded Successfully!</div>
+                <p className="text-green-800 text-sm">
+                  The banking dataset has been loaded into ChromaDB. Configure and run Customer Segmentation below.
+                </p>
+              </div>
+            </div>
+          </motion.div>
+        )}
+
+        {loadMutation.isError && (
+          <motion.div
+            initial={{ opacity: 0, scale: 0.95 }}
+            animate={{ opacity: 1, scale: 1 }}
+            className="bg-red-50 border-2 border-red-300 rounded-xl p-6"
+          >
+            <div className="flex items-start space-x-3">
+              <AlertCircle className="w-6 h-6 text-red-600 flex-shrink-0 mt-1" />
+              <div>
+                <div className="text-red-900 font-bold text-lg mb-2">Failed to Load Dataset</div>
+                <p className="text-red-800 text-sm">{(loadMutation.error as Error).message}</p>
+              </div>
+            </div>
+          </motion.div>
+        )}
+      </section>
+
+      {/* Divider */}
+      <div className="border-t-2 border-blue-100" />
+
+      {/* ── SECTION 2: Customer Segmentation (Agent A) ───────────────────── */}
+      <section className="space-y-6">
+        <div>
+          <h1 className="text-2xl font-bold text-gray-900 mb-1">Customer Segmentation</h1>
+          <p className="text-gray-500 text-sm">AI-powered persona identification for retail banking customers</p>
+        </div>
+
+        {/* Parameters Card */}
+        <div className="bg-white rounded-xl shadow-sm border border-blue-200 p-6">
+          <div className="flex items-center gap-3 mb-6">
+            <div className="w-12 h-12 bg-blue-700 rounded-xl flex items-center justify-center">
+              <BarChart3 className="w-6 h-6 text-white" />
+            </div>
+            <h2 className="text-base font-semibold text-gray-900">Segmentation Parameters</h2>
+          </div>
+
+          <div className="grid md:grid-cols-2 gap-6 mb-6">
             <div>
-              <div className="text-green-900 font-bold text-lg mb-2">✅ Dataset Loaded Successfully!</div>
-              <p className="text-green-800 text-sm mb-3">
-                The banking dataset has been loaded into ChromaDB. You can now proceed to run Agent A for customer segmentation.
-              </p>
-              <Link
-                to="/banking/agent-a"
-                className="inline-flex items-center gap-2 bg-blue-700 text-white px-4 py-2 rounded-lg font-semibold hover:bg-blue-800 transition-colors text-sm"
-              >
-                Proceed to Agent A →
-              </Link>
+              <label className="block text-sm font-semibold text-gray-700 mb-2">Number of Personas</label>
+              <input
+                type="number"
+                min="3"
+                max="10"
+                className="input-field"
+                value={nClusters}
+                onChange={(e) => setAgentAUi((prev) => ({ ...prev, nClusters: Number(e.target.value) }))}
+              />
+              <p className="text-xs text-gray-500 mt-1">Recommended: 5-7 for retail banking</p>
+            </div>
+
+            <div>
+              <label className="block text-sm font-semibold text-gray-700 mb-2">Gamma (Diversity Weight)</label>
+              <input
+                type="number"
+                step="0.1"
+                min="0"
+                max="1"
+                className="input-field"
+                value={gamma}
+                onChange={(e) => setAgentAUi((prev) => ({ ...prev, gamma: Number(e.target.value) }))}
+              />
+              <p className="text-xs text-gray-500 mt-1">Higher values = more diverse segments</p>
             </div>
           </div>
-        </motion.div>
-      )}
-      
-      {loadMutation.isError && (
-        <motion.div
-          initial={{ opacity: 0, scale: 0.95 }}
-          animate={{ opacity: 1, scale: 1 }}
-          className="bg-red-50 border-2 border-red-300 rounded-xl p-6"
-        >
-          <div className="flex items-start space-x-3">
-            <AlertCircle className="w-6 h-6 text-red-600 flex-shrink-0 mt-1" />
+
+          <button
+            onClick={() => executeMutation.mutate()}
+            disabled={segmentationLoading}
+            className="btn-primary w-full flex items-center justify-center gap-2"
+          >
+            {segmentationLoading ? (
+              <>
+                <div className="animate-spin rounded-full h-5 w-5 border-b-2 border-white"></div>
+                <span>Running Segmentation...</span>
+              </>
+            ) : (
+              <>
+                <Play className="w-5 h-5" />
+                <span>Run Segmentation Analysis</span>
+              </>
+            )}
+          </button>
+
+          {executeMutation.isError && (
+            <div className="mt-4 bg-red-50 border border-red-200 rounded-lg p-4">
+              <div className="flex items-center gap-2 text-red-800">
+                <AlertCircle className="w-5 h-5" />
+                <span className="font-semibold">Error</span>
+              </div>
+              <p className="text-sm text-red-700 mt-1">{(executeMutation.error as Error).message}</p>
+            </div>
+          )}
+        </div>
+
+        {/* Results Section */}
+        {results && (
+          <>
+            {/* Summary Stats */}
+            <div className="grid md:grid-cols-4 gap-4">
+              <div className="bg-white rounded-xl shadow-sm border border-blue-200 p-6">
+                <div className="flex items-center gap-3 mb-2">
+                  <Users className="w-6 h-6 text-blue-700" />
+                  <div className="text-sm text-gray-600">Total Customers</div>
+                </div>
+                <div className="text-3xl font-bold text-gray-900">{results.total_customers || 0}</div>
+              </div>
+
+              <div className="bg-white rounded-xl shadow-sm border border-blue-200 p-6">
+                <div className="flex items-center gap-3 mb-2">
+                  <BarChart3 className="w-6 h-6 text-blue-700" />
+                  <div className="text-sm text-gray-600">Personas</div>
+                </div>
+                <div className="text-3xl font-bold text-gray-900">{Object.keys(personas).length}</div>
+              </div>
+
+              <div className="bg-white rounded-xl shadow-sm border border-blue-200 p-6">
+                <div className="flex items-center gap-3 mb-2">
+                  <TrendingUp className="w-6 h-6 text-green-600" />
+                  <div className="text-sm text-gray-600">Silhouette Score</div>
+                </div>
+                <div className="text-3xl font-bold text-gray-900">
+                  {results.silhouette_score ? results.silhouette_score.toFixed(3) : 'N/A'}
+                </div>
+              </div>
+
+              <div className="bg-white rounded-xl shadow-sm border border-blue-200 p-6">
+                <button
+                  onClick={handleExport}
+                  className="btn-secondary w-full flex items-center justify-center gap-2"
+                >
+                  <Download className="w-5 h-5" />
+                  <span>Export</span>
+                </button>
+              </div>
+            </div>
+
+            {/* Visualizations */}
+            <div className="grid md:grid-cols-2 gap-6">
+              {vizData.scatter_data && vizData.scatter_data.length > 0 && (
+                <div className="bg-white rounded-xl shadow-sm border border-blue-200 p-6">
+                  <h3 className="text-xl font-bold text-gray-900 mb-4 flex items-center gap-2">
+                    <BarChart3 className="w-5 h-5 text-blue-700" />
+                    Customer Distribution
+                  </h3>
+                  <ResponsiveContainer width="100%" height={300}>
+                    <ScatterChart>
+                      <CartesianGrid strokeDasharray="3 3" stroke="#e5e7eb" />
+                      <XAxis type="number" dataKey="x" name="Balance" stroke="#6b7280" />
+                      <YAxis type="number" dataKey="y" name="Engagement" stroke="#6b7280" />
+                      <Tooltip cursor={{ strokeDasharray: '3 3' }} />
+                      <Scatter data={vizData.scatter_data} fill="#1e40af">
+                        {vizData.scatter_data.map((entry: any, index: number) => (
+                          <Cell key={`cell-${index}`} fill={BANKING_COLORS[entry.cluster % BANKING_COLORS.length]} />
+                        ))}
+                      </Scatter>
+                    </ScatterChart>
+                  </ResponsiveContainer>
+                </div>
+              )}
+
+              {vizData.persona_sizes && vizData.persona_sizes.length > 0 && (
+                <div className="bg-white rounded-xl shadow-sm border border-blue-200 p-6">
+                  <h3 className="text-xl font-bold text-gray-900 mb-4 flex items-center gap-2">
+                    <Users className="w-5 h-5 text-blue-700" />
+                    Persona Sizes
+                  </h3>
+                  <ResponsiveContainer width="100%" height={300}>
+                    <BarChart data={vizData.persona_sizes}>
+                      <CartesianGrid strokeDasharray="3 3" stroke="#e5e7eb" />
+                      <XAxis dataKey="persona" stroke="#6b7280" />
+                      <YAxis stroke="#6b7280" />
+                      <Tooltip />
+                      <Bar dataKey="count" fill="#1e40af">
+                        {vizData.persona_sizes.map((_: any, index: number) => (
+                          <Cell key={`cell-${index}`} fill={BANKING_COLORS[index % BANKING_COLORS.length]} />
+                        ))}
+                      </Bar>
+                    </BarChart>
+                  </ResponsiveContainer>
+                </div>
+              )}
+            </div>
+
+            {/* Personas Grid */}
             <div>
-              <div className="text-red-900 font-bold text-lg mb-2">Failed to Load Dataset</div>
-              <p className="text-red-800 text-sm">
-                {(loadMutation.error as Error).message}
-              </p>
+              <h2 className="text-lg font-semibold text-gray-900 mb-4">Customer Personas</h2>
+              <div className="grid md:grid-cols-3 gap-6">
+                {Object.entries(personas).map(([personaId, persona]: [string, any], idx) => (
+                  <div key={personaId} className="bg-white rounded-xl shadow-sm border border-blue-200 hover:shadow-lg transition-all p-6">
+                    <div className="flex items-center gap-3 mb-4">
+                      <div
+                        className="w-12 h-12 rounded-xl flex items-center justify-center"
+                        style={{ backgroundColor: BANKING_COLORS[idx % BANKING_COLORS.length] + '20' }}
+                      >
+                        <span className="text-2xl">{persona.emoji || '👤'}</span>
+                      </div>
+                      <div className="flex-1">
+                        <h3 className="text-lg font-bold text-gray-900">{persona.name}</h3>
+                        <div className="text-sm text-gray-600">{persona.size} customers</div>
+                      </div>
+                    </div>
+
+                    <div className="space-y-3">
+                      <div className="flex justify-between items-center">
+                        <span className="text-sm text-gray-600">Avg Balance</span>
+                        <span className="font-semibold text-blue-700 flex items-center gap-1">
+                          <DollarSign className="w-4 h-4" />
+                          {formatCompactUsd(persona.avg_balance)}
+                        </span>
+                      </div>
+
+                      <div className="flex justify-between items-center">
+                        <span className="text-sm text-gray-600">Avg products held</span>
+                        <span className="font-semibold text-gray-900">
+                          {persona.characteristics?.avg_products != null
+                            ? `${Number(persona.characteristics.avg_products).toFixed(1)}`
+                            : '—'}
+                        </span>
+                      </div>
+
+                      <div className="flex justify-between items-center">
+                        <span className="text-sm text-gray-600">Intent Score</span>
+                        <span className="font-semibold text-green-600">
+                          {persona.avg_intent_score != null ? `${(persona.avg_intent_score * 100).toFixed(1)}%` : 'N/A'}
+                        </span>
+                      </div>
+                    </div>
+
+                    {persona.top_characteristics && persona.top_characteristics.length > 0 && (
+                      <div className="mt-4 pt-4 border-t border-gray-200">
+                        <div className="text-sm font-semibold text-gray-700 mb-2">Key Characteristics</div>
+                        <div className="space-y-1">
+                          {persona.top_characteristics.slice(0, 3).map((char: string, i: number) => (
+                            <div key={i} className="text-xs text-gray-600 flex items-start gap-1">
+                              <span className="text-blue-700">•</span>
+                              <span>{char}</span>
+                            </div>
+                          ))}
+                        </div>
+                      </div>
+                    )}
+
+                    {persona.ai_summary && (
+                      <div className="mt-4 bg-blue-50 border border-blue-200 rounded-lg p-3">
+                        <div className="flex items-center gap-2 mb-2">
+                          <Sparkles className="w-4 h-4 text-blue-700" />
+                          <div className="text-xs font-semibold text-blue-900">AI Summary</div>
+                        </div>
+                        <p className="text-xs text-gray-700">{persona.ai_summary}</p>
+                      </div>
+                    )}
+                  </div>
+                ))}
+              </div>
+            </div>
+
+            {/* Insights Panel */}
+            <div className="bg-gradient-to-br from-blue-50 to-amber-50 rounded-xl border border-blue-200 p-6">
+              <div className="flex items-center gap-3 mb-4">
+                <div className="w-12 h-12 bg-blue-700 rounded-xl flex items-center justify-center">
+                  <Sparkles className="w-6 h-6 text-white" />
+                </div>
+                <h3 className="text-base font-semibold text-gray-900">Key Insights</h3>
+              </div>
+              <div className="grid md:grid-cols-2 gap-4">
+                <div className="bg-white rounded-lg p-4">
+                  <div className="text-sm font-semibold text-gray-900 mb-2">Segmentation Quality</div>
+                  <p className="text-sm text-gray-600">
+                    Silhouette score of {results.silhouette_score?.toFixed(3) || 'N/A'} indicates
+                    {results.silhouette_score && results.silhouette_score > 0.5 ? ' excellent' :
+                     results.silhouette_score && results.silhouette_score > 0.3 ? ' good' : ' moderate'} cluster separation.
+                  </p>
+                </div>
+                <div className="bg-white rounded-lg p-4">
+                  <div className="text-sm font-semibold text-gray-900 mb-2">Next Steps</div>
+                  <p className="text-sm text-gray-600 mb-3">
+                    Explore macro and micro segments in the interactive dashboard.
+                  </p>
+                  <Link
+                    to="/banking/macro-dashboard"
+                    className="inline-flex items-center gap-2 text-blue-700 font-semibold hover:text-blue-800 transition-colors"
+                  >
+                    <BarChart3 className="w-4 h-4" />
+                    View Segments Dashboard
+                    <ArrowRight className="w-4 h-4" />
+                  </Link>
+                </div>
+              </div>
+            </div>
+          </>
+        )}
+
+        {/* No Results State */}
+        {!results && !segmentationLoading && (
+          <div className="bg-blue-50 border border-blue-200 rounded-xl p-8 text-center">
+            <div className="w-16 h-16 bg-blue-100 rounded-xl flex items-center justify-center mx-auto mb-4">
+              <Users className="w-8 h-8 text-blue-700" />
+            </div>
+            <h3 className="text-xl font-bold text-gray-900 mb-2">Ready to Segment Customers</h3>
+            <p className="text-gray-600 mb-4">
+              Configure the parameters above and click "Run Segmentation Analysis" to identify customer personas.
+            </p>
+            <div className="bg-white rounded-lg p-4 max-w-2xl mx-auto text-left">
+              <div className="text-sm font-semibold text-gray-900 mb-2">About Customer Segmentation</div>
+              <ul className="space-y-2 text-sm text-gray-600">
+                <li className="flex items-start gap-2">
+                  <CheckCircle2 className="w-4 h-4 text-blue-700 mt-0.5 flex-shrink-0" />
+                  <span>Identifies distinct customer personas based on banking behavior</span>
+                </li>
+                <li className="flex items-start gap-2">
+                  <CheckCircle2 className="w-4 h-4 text-blue-700 mt-0.5 flex-shrink-0" />
+                  <span>Analyzes account balances, transaction patterns, and engagement levels</span>
+                </li>
+                <li className="flex items-start gap-2">
+                  <CheckCircle2 className="w-4 h-4 text-blue-700 mt-0.5 flex-shrink-0" />
+                  <span>Enables targeted product recommendations and personalized marketing</span>
+                </li>
+              </ul>
             </div>
           </div>
-        </motion.div>
-      )}
-      
-      {/* Table Viewer Modal */}
+        )}
+      </section>
+
+      {/* ── Table Viewer Modal ───────────────────────────────────────────────── */}
       <AnimatePresence>
         {viewingTable && tableData && (
           <motion.div
@@ -369,10 +659,7 @@ export default function BankingDataLoader() {
             animate={{ opacity: 1 }}
             exit={{ opacity: 0 }}
             className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4"
-            onClick={() => {
-              setViewingTable(null);
-              setTableData(null);
-            }}
+            onClick={() => { setViewingTable(null); setTableData(null); }}
           >
             <motion.div
               initial={{ scale: 0.9, opacity: 0 }}
@@ -381,7 +668,6 @@ export default function BankingDataLoader() {
               className="bg-white rounded-xl shadow-2xl max-w-6xl w-full max-h-[90vh] overflow-hidden"
               onClick={(e) => e.stopPropagation()}
             >
-              {/* Modal Header */}
               <div className="bg-gradient-to-r from-blue-700 to-blue-800 text-white p-6 flex items-center justify-between">
                 <div>
                   <h3 className="text-2xl font-bold flex items-center gap-2">
@@ -393,17 +679,13 @@ export default function BankingDataLoader() {
                   </p>
                 </div>
                 <button
-                  onClick={() => {
-                    setViewingTable(null);
-                    setTableData(null);
-                  }}
+                  onClick={() => { setViewingTable(null); setTableData(null); }}
                   className="text-white hover:bg-blue-600 p-2 rounded-lg transition-colors"
                 >
                   <X className="w-6 h-6" />
                 </button>
               </div>
-              
-              {/* Modal Body */}
+
               <div className="p-6 overflow-auto max-h-[calc(90vh-120px)]">
                 <div className="overflow-x-auto">
                   <table className="min-w-full divide-y divide-gray-200">
@@ -423,16 +705,12 @@ export default function BankingDataLoader() {
                       {tableData.data?.map((row: any, idx: number) => (
                         <tr key={idx} className="hover:bg-gray-50">
                           {tableData.columns?.map((col: string) => (
-                            <td
-                              key={col}
-                              className="px-4 py-3 text-sm text-gray-900 whitespace-nowrap"
-                            >
-                              {typeof row[col] === 'number' 
+                            <td key={col} className="px-4 py-3 text-sm text-gray-900 whitespace-nowrap">
+                              {typeof row[col] === 'number'
                                 ? row[col].toLocaleString()
                                 : row[col] !== null && row[col] !== undefined
                                   ? String(row[col])
-                                  : '-'
-                              }
+                                  : '-'}
                             </td>
                           ))}
                         </tr>

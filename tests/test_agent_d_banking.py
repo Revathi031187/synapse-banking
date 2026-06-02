@@ -1,5 +1,10 @@
 """Unit tests for Agent D Banking orchestration."""
 
+import os
+
+# Avoid Together API calls during unit tests
+os.environ["BANKING_PIN_STORY_LLM"] = "0"
+
 import pytest
 import pandas as pd
 
@@ -101,6 +106,23 @@ def test_deprioritize_after_repeated_shows(products_df, all_recs, agent_c):
     assert len(dep) > 0
 
 
+def test_priority_pin_reason_text_uses_catalog_name(products_df):
+    d = {"priority_pin_product_id": "FMB_P012", "focus_source": "clicked_recommendation"}
+    text = AgentD_Banking.priority_pin_reason_text(d, products_df)
+    assert "Credit Card" in text
+    assert "\n\n" in text or len(text) > 80
+
+
+def test_build_supervisor_pin_story_has_structure(products_df):
+    d = {"priority_pin_product_id": "FMB_P012", "focus_source": "agent_c_primary", "focus_offer_reasoning": "Great fit."}
+    story = AgentD_Banking.build_supervisor_pin_story(
+        d, "Credit Card", pinned_rec=None, catalog_row=products_df.iloc[1].to_dict(), customer_context=None, persona_name="Test Persona"
+    )
+    assert story.get("headline")
+    assert len(story.get("paragraphs") or []) >= 3
+    assert story.get("retention")
+
+
 def test_apply_directives_boost_and_pin():
     recs = [
         {"product_id": "A", "score": 0.5},
@@ -112,10 +134,13 @@ def test_apply_directives_boost_and_pin():
             "boost_product_ids": ["A"],
             "deprioritize_product_ids": [],
             "priority_pin_product_id": "A",
+            "focus_source": "clicked_recommendation",
         },
     )
     assert out[0]["product_id"] == "A"
     assert float(out[0]["score"]) > 0.5
+    assert out[0].get("priority_pin_story")
+    assert len(out[0]["priority_pin_story"].get("paragraphs") or []) >= 3
 
 
 def test_apply_directives_pin_stub_uses_catalog_name(products_df):
@@ -132,3 +157,27 @@ def test_apply_directives_pin_stub_uses_catalog_name(products_df):
     )
     assert out[0]["product_id"] == "FMB_P001"
     assert out[0]["product_name"] == "Checking A"
+    assert out[0].get("priority_pin_story")
+
+
+def test_agent_c_one_best_offer_stable_tiebreak_by_product_id():
+    """Equal boosted scores must pick the same SKU everywhere (GET one-best-offer vs Agent D orchestrate)."""
+    from agents.agent_c_banking import AgentC_Banking
+
+    c = AgentC_Banking()
+    all_recs = {
+        "tailored_recommendations": [
+            {"product_id": "FMB_B001", "product_name": "Later id", "score": 0.9, "category": "Personal"},
+            {"product_id": "FMB_A001", "product_name": "Earlier id", "score": 0.9, "category": "Personal"},
+        ],
+        "similar_products": [],
+        "segment_recommendations": [],
+    }
+    out = c.get_one_best_offer(
+        customer_id="C1",
+        customer_details={"persona": "Test", "metrics": {}},
+        all_recommendations=all_recs,
+        churn_risk_score=None,
+        churn_category=None,
+    )
+    assert (out.get("offer") or {}).get("product_id") == "FMB_A001"

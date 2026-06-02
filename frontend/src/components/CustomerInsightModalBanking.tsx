@@ -429,7 +429,7 @@ export default function CustomerInsightModalBanking({
 
                               {expandedExplanations[`${idx}`] && (
                                 <div className="mt-2 p-3 bg-gradient-to-br from-blue-50 to-indigo-50 border border-blue-200 rounded-lg text-xs animate-fadeIn">
-                                  <p className="font-semibold text-indigo-900 mb-2">🏦 Banking 12-Factor Scoring Breakdown</p>
+                                  <p className="font-semibold text-indigo-900 mb-2">Banking 12-Factor Scoring Breakdown</p>
                                   
                                   <div className="space-y-2 mb-2">
                                     {/* Show key banking factors */}

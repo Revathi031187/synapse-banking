@@ -484,35 +484,13 @@ export default function BankingAgentC() {
   );
 
   return (
-    <div className="min-h-screen bg-gradient-to-b from-slate-50 via-white to-amber-50/30">
-      {/* Hero */}
-      <motion.div
-        initial={{ opacity: 0, y: 12 }}
-        animate={{ opacity: 1, y: 0 }}
-        transition={{ duration: 0.4 }}
-        className="relative overflow-hidden rounded-b-3xl bg-gradient-to-br from-violet-600 via-indigo-600 to-blue-700 text-white shadow-xl"
-      >
-        <div className="absolute inset-0 bg-[url('data:image/svg+xml;base64,PHN2ZyB3aWR0aD0iNjAiIGhlaWdodD0iNjAiIHZpZXdCb3g9IjAgMCA2MCA2MCIgeG1sbnM9Imh0dHA6Ly93d3cudzMub3JnLzIwMDAvc3ZnIj48ZyBmaWxsPSJub25lIiBmaWxsLXJ1bGU9ImV2ZW5vZGQiPjxnIGZpbGw9IiNmZmYiIGZpbGwtb3BhY2l0eT0iMC4wNiI+PGNpcmNsZSBjeD0iMzAiIGN5PSIzMCIgcj0iMiIvPjwvZz48L2c+PC9zdmc+')] opacity-60" />
-        <div className="relative max-w-6xl mx-auto px-6 py-12">
-          <div className="flex items-center gap-4 mb-4">
-            <div className="w-14 h-14 rounded-2xl bg-white/20 backdrop-blur flex items-center justify-center">
-              <Sparkles className="w-8 h-8" />
-            </div>
-            <div>
-              <h1 className="text-3xl font-bold tracking-tight">Agent C: One Best Offer</h1>
-              <p className="text-white/90 text-lg mt-1">
-                Hyper-personalized 1:1 offer per customer with full explainability
-              </p>
-            </div>
-          </div>
-          <p className="text-white/80 max-w-2xl">
-            One recommended product per customer, why the AI chose it, and how to run it across
-            channels—so campaigns are actionable for marketing and branch.
-          </p>
-        </div>
-      </motion.div>
+    <div className="space-y-6 animate-fadeIn">
+      <div>
+        <h1 className="text-xl font-semibold text-gray-900">One Best Offer</h1>
+        <p className="text-gray-500 text-sm mt-1">Hyper-personalized 1:1 offer per customer with full explainability</p>
+      </div>
 
-      <div className="max-w-6xl mx-auto px-6 py-10">
+      <div className="space-y-8">
         {/* One best offer: customer vs persona */}
         <motion.section
           initial={{ opacity: 0, y: 8 }}

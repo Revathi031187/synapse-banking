@@ -1,10 +1,34 @@
 import React from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { Link } from 'react-router-dom';
-import { 
-  ChevronDown, ChevronUp, Users, Target, TrendingUp, DollarSign, 
-  Activity, Layers, AlertCircle, Sparkles
+import {
+  ChevronDown, ChevronUp, Users, Target, TrendingUp, DollarSign,
+  Activity, Layers, AlertCircle
 } from 'lucide-react';
+
+const BOILERPLATE_PATTERNS = [
+  /^(here are (the |some )?(opportunities|behaviors|key behaviors|marketing opportunities))/i,
+  /^(the following (are|opportunities|behaviors)|below are|these are)/i,
+  /^(opportunities for marketers|key behaviors for)/i,
+  /with capacity for premium product adoption/i,
+  /^high income earners.*capacity for/i,
+];
+
+/** Strip LLM boilerplate phrases that add no information */
+function cleanList(items: string[]): string[] {
+  return items
+    .map(s => s.trim())
+    .filter(s => s.length > 6 && !BOILERPLATE_PATTERNS.some(re => re.test(s)));
+}
+
+/** Remove markdown bold markers, leading symbols, and emoji characters */
+function cleanText(text: string): string {
+  return text
+    .replace(/\*\*/g, '')
+    .replace(/^[\-•→✓]\s*/, '')
+    .replace(/[\u{1F000}-\u{1FAFF}]|[\u{2600}-\u{27BF}]|[\u{FE00}-\u{FE0F}]/gu, '')
+    .trim();
+}
 
 import { getBankingApiBase } from '../../utils/apiBase';
 import { formatCompactUsd } from '../../utils/formatCurrency';
@@ -171,7 +195,7 @@ export default function BankingMacroDashboard() {
 
   if (macroLoading) {
     return (
-      <div className="flex items-center justify-center min-h-screen">
+      <div className="flex items-center justify-center min-h-[400px]">
         <div className="text-center">
           <div className="animate-spin rounded-full h-16 w-16 border-b-2 border-blue-700 mx-auto mb-4"></div>
           <p className="text-gray-600 text-lg">Loading macro dashboard...</p>
@@ -182,31 +206,31 @@ export default function BankingMacroDashboard() {
 
   if (macroError || !macroData || personaList.length === 0) {
     return (
-      <div className="container mx-auto px-4 py-8">
-        <div className="max-w-2xl mx-auto">
+      <div className="flex justify-center py-8">
+        <div className="w-full max-w-2xl">
           <div className="bg-gradient-to-br from-amber-50 to-orange-50 border-2 border-amber-300 rounded-xl p-8 text-center">
             <div className="mb-4">
               <AlertCircle className="w-16 h-16 text-amber-600 mx-auto" />
             </div>
-            <h1 className="text-2xl font-bold text-gray-900 mb-3">⚠️ Agent A Not Run Yet</h1>
+            <h1 className="text-xl font-semibold text-gray-900 mb-3">Segmentation Not Run Yet</h1>
             <p className="text-gray-700 mb-6">
-              Macro segments are not available because <strong>Agent A segmentation hasn't been executed</strong>.
+              Macro segments are not available because <strong>Customer Segmentation hasn't been executed</strong>.
             </p>
             <div className="bg-white rounded-lg p-4 mb-6 text-left">
-              <p className="text-sm font-semibold text-gray-900 mb-2">📋 To view macro segments:</p>
+              <p className="text-sm font-semibold text-gray-900 mb-2">To view macro segments:</p>
               <ol className="text-sm text-gray-700 space-y-1 ml-4">
-                <li>1. Go to <strong>Agent A: Customer Segmentation</strong> page</li>
-                <li>2. Click <strong>"Run Segmentation Analysis"</strong></li>
+                <li>1. Go to the <strong>Data Loader</strong> tab</li>
+                <li>2. Load the dataset, then click <strong>"Run Segmentation Analysis"</strong></li>
                 <li>3. Wait for segmentation to complete</li>
                 <li>4. Return to this page to view macro segments</li>
               </ol>
             </div>
-            <Link 
-              to="/banking/agent-a" 
+            <Link
+              to="/banking/data-loader"
               className="inline-flex items-center gap-2 bg-blue-700 text-white px-6 py-3 rounded-lg font-semibold hover:bg-blue-800 transition-colors"
             >
               <Target className="w-5 h-5" />
-              Go to Agent A
+              Go to Data Loader
             </Link>
           </div>
         </div>
@@ -215,24 +239,13 @@ export default function BankingMacroDashboard() {
   }
 
   return (
-    <div className="min-h-screen bg-gray-50">
-      {/* Professional Header */}
-      <div className="bg-gradient-to-r from-blue-700 via-blue-800 to-blue-900 text-white py-5 shadow-md">
-        <div className="container mx-auto px-6">
-          <div className="flex items-center justify-between">
-            <div className="flex items-center gap-3">
-              <div className="w-12 h-12 bg-white rounded-lg flex items-center justify-center">
-                <span className="text-2xl">🏦</span>
-              </div>
-              <div>
-                <h1 className="text-2xl font-bold tracking-tight">Banking Macro Segmentation Dashboard</h1>
-              </div>
-            </div>
-          </div>
-        </div>
+    <div className="space-y-6 animate-fadeIn">
+      <div>
+        <h1 className="text-xl font-semibold text-gray-900">Segments View</h1>
+        <p className="text-gray-500 text-sm mt-1">Macro and micro customer segments</p>
       </div>
 
-      <div className="container mx-auto px-6 py-8">
+      <div>
         {/* Macro Persona Cards Grid */}
         <div className="grid grid-cols-1 md:grid-cols-3 lg:grid-cols-5 gap-6 mb-8">
           {personaList.map((persona) => (
@@ -398,145 +411,94 @@ function MacroPersonaCard({ persona, isExpanded, onToggle }: any) {
                   : 'bg-gradient-to-r from-blue-500 to-blue-600 hover:from-blue-600 hover:to-blue-700 text-white transform hover:scale-105'
               }`}
             >
-              <span className="text-sm font-extrabold">{isExpanded ? '✕ Hide' : '👁️ View'} Micro-Segments</span>
+              <span className="text-sm font-extrabold">{isExpanded ? 'Hide' : 'View'} Micro-Segments</span>
               {isExpanded ? <ChevronUp size={16} /> : <ChevronDown size={16} />}
             </button>
           </div>
         </div>
       </div>
 
-      {/* Action Buttons Row */}
-      <div className="mt-2 space-y-2">
-        <button 
-          onClick={(e) => {
-            e.stopPropagation();
-            setShowExplanation(!showExplanation);
+      {/* Segment Insights Toggle */}
+      <div className="mt-2">
+        <button
+          onClick={(e) => { e.stopPropagation(); setShowExplanation(!showExplanation); }}
+          className="w-full text-sm font-medium py-2 px-4 rounded-lg border transition-all duration-200"
+          style={{
+            borderColor: cardColor + '60',
+            color: cardColor,
+            backgroundColor: showExplanation ? cardColor + '10' : 'white',
           }}
-          className="w-full bg-white hover:bg-gray-50 text-gray-700 font-medium py-2 px-4 rounded-lg border border-gray-300 transition-colors"
-          style={{ height: '36px' }}
         >
-          {showExplanation ? 'Hide' : 'Show'} Segment Insights
+          {showExplanation ? 'Hide' : 'View'} Segment Insights
         </button>
       </div>
-      
-      {/* Expandable Explanation (matching Academy Sports) */}
+
+      {/* Segment Insights Panel */}
       {showExplanation && (
-        <div className="mt-2 p-5 bg-gradient-to-br from-blue-50 to-indigo-50 rounded-lg border-2 border-blue-200 shadow-md" style={{ minHeight: '280px' }}>
-          {persona.segment_explanation ? (
-            <>
-              <div className="flex items-center gap-3 mb-4">
-                <div className="w-10 h-10 bg-blue-700 rounded-full flex items-center justify-center">
-                  <Sparkles className="w-6 h-6 text-white" />
-                </div>
-                <h4 className="text-lg font-bold text-gray-900">
-                  Segment Insights
-                </h4>
-              </div>
+        <div className="mt-2 rounded-lg border border-gray-200 overflow-hidden bg-white">
+          <div className="px-4 py-2.5 border-b border-gray-100 border-l-4" style={{ borderLeftColor: cardColor }}>
+            <span className="text-sm font-semibold text-gray-800">{persona.persona_name || persona.name}</span>
+          </div>
 
-              <div className="space-y-4">
-                {/* Name Explanation */}
-                {persona.segment_explanation.name_explanation && (
-                  <div className="bg-gradient-to-r from-blue-50 to-indigo-50 border-l-4 border-blue-500 rounded-lg p-4 shadow-sm">
-                    <h5 className="font-bold text-blue-900 mb-2 flex items-center gap-2">
-                      <span className="text-lg">📝</span>
-                      <span>Why This Name?</span>
-                    </h5>
-                    <p className="text-sm text-blue-900 leading-relaxed font-medium">
-                      {persona.segment_explanation.name_explanation}
-                    </p>
-                  </div>
-                )}
+          <div className="p-4 space-y-4">
+            {persona.segment_explanation ? (() => {
+              const expl = persona.segment_explanation;
+              const behaviors = cleanList(expl.key_behaviors || []).map(cleanText);
+              const actions   = cleanList(expl.marketing_recommendations || []).map(cleanText);
+              const definition = cleanText(expl.segment_definition || expl.why_in_segment || '');
+              const nameReason = expl.name_explanation ? cleanText(expl.name_explanation) : null;
 
-                {/* Segment Definition */}
-                <div className="bg-white border border-gray-200 rounded-lg p-4 shadow-sm">
-                  <h5 className="font-bold text-gray-900 mb-3 flex items-center gap-2">
-                    <span className="text-lg">🎯</span>
-                    <span>Segment Definition</span>
-                  </h5>
-                  <div className="space-y-2">
-                    {(persona.segment_explanation.segment_definition || persona.segment_explanation.why_in_segment || '').split('\n').map((line: string, idx: number) => {
-                      const parts = line.split('**');
-                      return (
-                        <div key={idx} className="flex items-start text-sm text-gray-700 leading-relaxed">
-                          <span className="mr-2 text-blue-500 font-bold">•</span>
-                          <div className="flex-1">
-                            {parts.map((part, i) => 
-                              i % 2 === 1 ? <strong key={i} className="text-gray-900">{part}</strong> : <span key={i}>{part}</span>
-                            )}
-                          </div>
-                        </div>
-                      );
-                    })}
-                  </div>
-                </div>
-                
-                {/* Key Behaviors */}
-                {persona.segment_explanation.key_behaviors && persona.segment_explanation.key_behaviors.length > 0 && (
-                  <div className="bg-gradient-to-r from-purple-50 to-pink-50 border-l-4 border-purple-500 rounded-lg p-4 shadow-sm">
-                    <h5 className="font-bold text-purple-900 mb-3 flex items-center gap-2">
-                      <span className="text-lg">🎯</span>
-                      <span>Key Behaviors</span>
-                    </h5>
-                    <ul className="space-y-2.5">
-                      {persona.segment_explanation.key_behaviors.map((behavior: string, idx: number) => (
-                        <li key={idx} className="flex items-start text-sm text-purple-900">
-                          <span className="mr-2.5 mt-0.5 text-purple-600 font-bold">✓</span>
-                          <span className="flex-1 leading-relaxed font-medium">{behavior}</span>
-                        </li>
-                      ))}
-                    </ul>
-                  </div>
-                )}
-                
-                {/* Marketing Recommendations */}
-                {persona.segment_explanation.marketing_recommendations && persona.segment_explanation.marketing_recommendations.length > 0 && (
-                  <div className="bg-gradient-to-r from-amber-50 to-orange-50 border-l-4 border-amber-500 rounded-lg p-4 shadow-sm">
-                    <h5 className="font-bold text-amber-900 mb-3 flex items-center gap-2">
-                      <span className="text-lg">💡</span>
-                      <span>Marketing Opportunities</span>
-                    </h5>
-                    <ul className="space-y-2.5">
-                      {persona.segment_explanation.marketing_recommendations.map((rec: string, idx: number) => (
-                        <li key={idx} className="flex items-start text-sm text-amber-900">
-                          <span className="mr-2 mt-0.5 text-amber-600 font-bold">→</span>
-                          <span className="flex-1 leading-relaxed font-medium">{rec}</span>
-                        </li>
-                      ))}
-                    </ul>
-                  </div>
-                )}
-              </div>
-            </>
-          ) : (
-            <>
-              <div className="flex items-center gap-3 mb-4">
-                <div className="w-10 h-10 bg-blue-700 rounded-full flex items-center justify-center">
-                  <Sparkles className="w-6 h-6 text-white" />
-                </div>
-                <h4 className="font-bold text-lg text-gray-900">Segment Insights</h4>
-              </div>
-              
-              <div className="space-y-3 text-sm text-gray-700">
-                <p><strong>Description:</strong> {persona.description || 'No description available'}</p>
-                {persona.characteristics?.avg_products != null && (
-                  <p><strong>Avg products held:</strong> {Number(persona.characteristics.avg_products).toFixed(1)}</p>
-                )}
+              return (
+                <>
+                  {nameReason && (
+                    <p className="text-sm text-gray-500 italic leading-relaxed">{nameReason}</p>
+                  )}
+
+                  {definition && (
+                    <div>
+                      <p className="text-xs font-semibold text-gray-400 uppercase tracking-wide mb-1.5">What defines this segment</p>
+                      <p className="text-sm text-gray-700 leading-relaxed">{definition}</p>
+                    </div>
+                  )}
+
+                  {behaviors.length > 0 && (
+                    <div>
+                      <p className="text-xs font-semibold text-gray-400 uppercase tracking-wide mb-2">Distinct behaviors</p>
+                      <ul className="space-y-1.5">
+                        {behaviors.map((b, i) => (
+                          <li key={i} className="flex gap-2 text-sm text-gray-700 leading-snug">
+                            <span className="shrink-0 text-gray-400 mt-0.5">•</span>
+                            <span>{b}</span>
+                          </li>
+                        ))}
+                      </ul>
+                    </div>
+                  )}
+
+                  {actions.length > 0 && (
+                    <div>
+                      <p className="text-xs font-semibold text-gray-400 uppercase tracking-wide mb-2">Marketing actions</p>
+                      <ol className="space-y-2">
+                        {actions.map((action, i) => (
+                          <li key={i} className="flex gap-2 text-sm text-gray-700 leading-snug">
+                            <span className="shrink-0 font-semibold text-gray-400 w-5">{i + 1}.</span>
+                            <span>{action}</span>
+                          </li>
+                        ))}
+                      </ol>
+                    </div>
+                  )}
+                </>
+              );
+            })() : (
+              <div className="space-y-2 text-sm text-gray-600">
+                <p>{persona.description || 'No description available'}</p>
                 {persona.characteristics?.avg_digital_engagement != null && (
-                  <p><strong>Digital adoption:</strong> {(Number(persona.characteristics.avg_digital_engagement) * 100).toFixed(0)}% (normalized engagement)</p>
-                )}
-                {persona.characteristics && (
-                  <div>
-                    <p className="font-semibold mb-1">Key Characteristics:</p>
-                    <ul className="list-disc list-inside space-y-1 ml-2">
-                      {Object.entries(persona.characteristics).slice(0, 5).map(([key, value]: [string, any]) => (
-                        <li key={key}>{key}: {typeof value === 'number' ? value.toFixed(2) : value}</li>
-                      ))}
-                    </ul>
-                  </div>
+                  <p><span className="font-medium">Digital adoption:</span> {(Number(persona.characteristics.avg_digital_engagement) * 100).toFixed(0)}%</p>
                 )}
               </div>
-            </>
-          )}
+            )}
+          </div>
         </div>
       )}
     </div>
@@ -584,129 +546,101 @@ function MicroSegmentCard({ micro }: { micro: MicroSegment }) {
         </div>
       </div>
 
-      <button
-        onClick={() => setShowDetails(!showDetails)}
-        className="w-full text-sm text-blue-700 hover:text-blue-800 font-medium py-2 px-3 rounded-lg border border-blue-200 hover:bg-blue-50 transition-colors"
-      >
-        {showDetails ? 'Hide' : 'Show'} Insights
-      </button>
+      {(() => {
+        const tierColor =
+          micro.ltv_tier === 'Platinum' ? '#7C3AED' :
+          micro.ltv_tier === 'Gold'     ? '#D97706' :
+          micro.ltv_tier === 'Silver'   ? '#64748B' :
+          micro.ltv_tier === 'Bronze'   ? '#EA580C' : '#3B82F6';
 
-      {/* Expandable Insights (matching Academy Sports) */}
-      {showDetails && (
-        <div className="mt-4 pt-4 border-t border-purple-200 bg-gradient-to-br from-purple-50 to-pink-50 -mx-6 -mb-6 p-4 rounded-b-lg">
-          {micro.segment_explanation ? (
-            <>
-              <div className="flex items-center gap-2 mb-3">
-                <div className="w-8 h-8 bg-purple-600 rounded-full flex items-center justify-center">
-                  <Sparkles className="w-5 h-5 text-white" />
+        return (
+          <>
+            <button
+              onClick={() => setShowDetails(!showDetails)}
+              className="w-full text-sm font-medium py-2 px-3 rounded-lg border border-gray-200 hover:bg-gray-50 text-gray-600 transition-colors"
+            >
+              {showDetails ? 'Hide' : 'Show'} Insights
+            </button>
+
+            {showDetails && (
+              <div className="mt-3 rounded-lg border border-gray-200 overflow-hidden bg-white">
+                <div className="px-4 py-2.5 border-b border-gray-100 border-l-4" style={{ borderLeftColor: tierColor }}>
+                  <span className="text-sm font-semibold text-gray-800">{micro.name}</span>
+                  <span className="ml-2 text-xs text-gray-400">{micro.ltv_tier} Tier</span>
                 </div>
-                <h6 className="font-bold text-gray-900">Micro Segment Insights</h6>
-              </div>
 
-              <div className="space-y-3">
-                {/* Name Explanation */}
-                {micro.segment_explanation.name_explanation && (
-                  <div className="bg-gradient-to-r from-purple-100 to-pink-100 border-l-4 border-purple-600 rounded-lg p-3 shadow-sm">
-                    <h6 className="font-bold text-purple-900 mb-1.5 flex items-center gap-1.5 text-sm">
-                      <span>📝</span>
-                      <span>Why This Name?</span>
-                    </h6>
-                    <p className="text-xs text-purple-900 leading-relaxed font-medium">
-                      {micro.segment_explanation.name_explanation}
-                    </p>
-                  </div>
-                )}
+                <div className="p-4 space-y-4">
+                  {micro.segment_explanation ? (() => {
+                    const definition = cleanText(micro.segment_explanation.segment_definition || micro.segment_explanation.why_in_segment || '');
+                    const behaviors  = cleanList(micro.segment_explanation.key_behaviors || []).map(cleanText);
+                    const actions    = cleanList(micro.segment_explanation.marketing_recommendations || []).map(cleanText);
+                    const nameReason = micro.segment_explanation.name_explanation ? cleanText(micro.segment_explanation.name_explanation) : null;
 
-                {/* Segment Definition */}
-                <div className="bg-white border border-gray-200 rounded-lg p-3 shadow-sm">
-                  <h6 className="font-bold text-gray-900 mb-2 flex items-center gap-1.5 text-sm">
-                    <span>🎯</span>
-                    <span>Definition</span>
-                  </h6>
-                  <div className="space-y-1.5">
-                    {(micro.segment_explanation.segment_definition || micro.segment_explanation.why_in_segment || '').split('\n').map((line, idx) => {
-                      const parts = line.split('**');
-                      return (
-                        <div key={idx} className="flex items-start text-xs text-gray-700 leading-relaxed">
-                          <span className="mr-1.5 text-purple-500 font-bold">•</span>
-                          <div className="flex-1">
-                            {parts.map((part, i) => 
-                              i % 2 === 1 ? <strong key={i} className="text-gray-900">{part}</strong> : <span key={i}>{part}</span>
-                            )}
+                    return (
+                      <>
+                        {nameReason && (
+                          <p className="text-sm text-gray-500 italic leading-relaxed">{nameReason}</p>
+                        )}
+
+                        {definition && (
+                          <div>
+                            <p className="text-xs font-semibold text-gray-400 uppercase tracking-wide mb-1.5">What defines this segment</p>
+                            <p className="text-sm text-gray-700 leading-relaxed">{definition}</p>
                           </div>
-                        </div>
-                      );
-                    })}
-                  </div>
-                </div>
-                
-                {/* Key Behaviors */}
-                {micro.segment_explanation.key_behaviors && micro.segment_explanation.key_behaviors.length > 0 && (
-                  <div className="bg-gradient-to-r from-blue-50 to-cyan-50 border-l-4 border-blue-500 rounded-lg p-3 shadow-sm">
-                    <h6 className="font-bold text-blue-900 mb-2 flex items-center gap-1.5 text-sm">
-                      <span>⚡</span>
-                      <span>Key Behaviors</span>
-                    </h6>
-                    <ul className="space-y-1.5">
-                      {micro.segment_explanation.key_behaviors.map((behavior: string, idx: number) => (
-                        <li key={idx} className="flex items-start text-xs text-blue-900">
-                          <span className="mr-1.5 mt-0.5 text-blue-600 font-bold">✓</span>
-                          <span className="flex-1 leading-relaxed">{behavior}</span>
-                        </li>
-                      ))}
-                    </ul>
-                  </div>
-                )}
-                
-                {/* Marketing Recommendations */}
-                {micro.segment_explanation.marketing_recommendations && micro.segment_explanation.marketing_recommendations.length > 0 && (
-                  <div className="bg-gradient-to-r from-amber-50 to-yellow-50 border-l-4 border-amber-500 rounded-lg p-3 shadow-sm">
-                    <h6 className="font-bold text-amber-900 mb-2 flex items-center gap-1.5 text-sm">
-                      <span>💡</span>
-                      <span>Marketing</span>
-                    </h6>
-                    <ul className="space-y-1.5">
-                      {micro.segment_explanation.marketing_recommendations.slice(0, 3).map((rec: string, idx: number) => (
-                        <li key={idx} className="flex items-start text-xs text-amber-900">
-                          <span className="mr-1.5 mt-0.5 text-amber-600 font-bold">→</span>
-                          <span className="flex-1 leading-relaxed">{rec}</span>
-                        </li>
-                      ))}
-                    </ul>
-                  </div>
-                )}
+                        )}
 
-                {/* Top Customers */}
-                {micro.top_customers && micro.top_customers.length > 0 && (
-                  <div>
-                    <p className="text-xs font-semibold text-gray-700 mb-2">Top Customers:</p>
-                    <div className="space-y-1">
-                      {micro.top_customers.slice(0, 3).map((customer, idx) => (
-                        <div key={idx} className="text-xs text-gray-600 flex justify-between">
-                          <span>{customer.customer_name || customer.customer_id}</span>
-                          <span className="font-semibold">{formatCompactUsd(customer.total_balance || customer.total_deposits || 0)}</span>
-                        </div>
-                      ))}
+                        {behaviors.length > 0 && (
+                          <div>
+                            <p className="text-xs font-semibold text-gray-400 uppercase tracking-wide mb-2">Distinct behaviors</p>
+                            <ul className="space-y-1.5">
+                              {behaviors.map((b, i) => (
+                                <li key={i} className="flex gap-2 text-sm text-gray-700 leading-snug">
+                                  <span className="shrink-0 text-gray-400 mt-0.5">•</span>
+                                  <span>{b}</span>
+                                </li>
+                              ))}
+                            </ul>
+                          </div>
+                        )}
+
+                        {actions.length > 0 && (
+                          <div>
+                            <p className="text-xs font-semibold text-gray-400 uppercase tracking-wide mb-2">Marketing actions</p>
+                            <ol className="space-y-2">
+                              {actions.map((action, i) => (
+                                <li key={i} className="flex gap-2 text-sm text-gray-700 leading-snug">
+                                  <span className="shrink-0 font-semibold text-gray-400 w-5">{i + 1}.</span>
+                                  <span>{action}</span>
+                                </li>
+                              ))}
+                            </ol>
+                          </div>
+                        )}
+                      </>
+                    );
+                  })() : (
+                    <p className="text-sm text-gray-500">No insight data available.</p>
+                  )}
+
+                  {micro.top_customers && micro.top_customers.length > 0 && (
+                    <div className="pt-3 border-t border-gray-100">
+                      <p className="text-xs font-semibold text-gray-400 uppercase tracking-wide mb-2">Top customers</p>
+                      <div className="space-y-1">
+                        {micro.top_customers.slice(0, 3).map((customer, idx) => (
+                          <div key={idx} className="text-xs text-gray-600 flex justify-between">
+                            <span>{customer.customer_name || customer.customer_id}</span>
+                            <span className="font-semibold">{formatCompactUsd(customer.total_balance || customer.total_deposits || 0)}</span>
+                          </div>
+                        ))}
+                      </div>
                     </div>
-                  </div>
-                )}
+                  )}
+                </div>
               </div>
-            </>
-          ) : (
-            <div className="mt-4 pt-4 border-t border-gray-200">
-              <p className="text-xs font-semibold text-gray-700 mb-2">Top Customers:</p>
-              <div className="space-y-1">
-                {micro.top_customers && micro.top_customers.slice(0, 3).map((customer, idx) => (
-                  <div key={idx} className="text-xs text-gray-600 flex justify-between">
-                    <span>{customer.customer_name || customer.customer_id}</span>
-                    <span className="font-semibold">{formatCompactUsd(customer.total_balance || 0)}</span>
-                  </div>
-                ))}
-              </div>
-            </div>
-          )}
-        </div>
-      )}
+            )}
+          </>
+        );
+      })()}
     </div>
   );
 }

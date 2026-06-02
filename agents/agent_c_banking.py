@@ -172,7 +172,10 @@ class AgentC_Banking:
                     base += 0.12
             cc["score"] = base
             boosted.append(cc)
-        boosted.sort(key=lambda x: float(x.get("score") or 0), reverse=True)
+        # Stable ordering: same inputs must match GET /agent_c/one-best-offer and Agent D orchestrate
+        boosted.sort(
+            key=lambda x: (-float(x.get("score") or 0), str(x.get("product_id") or "")),
+        )
         best = boosted[0]
 
         # Agent B reference: prefer rule-based execute order (matches Agent B UI); else merged-pool raw rank

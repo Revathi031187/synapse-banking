@@ -1,5 +1,6 @@
 import { Outlet, NavLink, useNavigate } from 'react-router-dom';
-import { Home, Database, Users, Target, ArrowLeftRight, Sparkles, BarChart3, Layers, MessageSquare } from 'lucide-react';
+import { Home, Database, Users, Target, BarChart3, Search, Crosshair, Star, Activity, Sparkles } from 'lucide-react';
+import latentviewLogo from '../assets/latentview-logo.svg';
 import { useQuery } from '@tanstack/react-query';
 
 interface UnifiedLayoutProps {
@@ -29,9 +30,7 @@ export default function UnifiedLayout({ industry }: UnifiedLayoutProps) {
   
   const industryConfig = {
     banking: {
-      name: 'F&M Bank',
-      subtitle: 'Farmers & Merchants Bank of Central California',
-      tagline: 'Where Banking Is Easy - Since 1916',
+      name: 'SYNAPSE',
       icon: '🏦',
       color: 'blue',
       bgColor: 'bg-blue-50',
@@ -68,14 +67,12 @@ export default function UnifiedLayout({ industry }: UnifiedLayoutProps) {
   const config = industryConfig[industry];
   
   const navLinks = industry === 'banking' ? [
-    { path: `/${industry}`, label: 'Dashboard', icon: Home },
     { path: `/${industry}/data-loader`, label: 'Data Loader', icon: Database },
-    { path: `/${industry}/agent-a`, label: 'Agent A: Personas', icon: Users },
-    { path: `/${industry}/macro-dashboard`, label: 'Segments View', icon: BarChart3 },
-    { path: `/${industry}/agent-b`, label: 'Agent B: Products', icon: Target },
-    { path: `/${industry}/agent-c`, label: 'Agent C: One Best Offer', icon: Sparkles },
-    { path: `/${industry}/agent-d`, label: 'Agent D: Supervisor', icon: Layers },
-    { path: `/${industry}/ask-genie`, label: 'Ask Genie', icon: MessageSquare }
+    { path: `/${industry}/macro-dashboard`, label: 'Segments', icon: Search },
+    { path: `/${industry}/agent-b`, label: 'Recommender', icon: Crosshair },
+    { path: `/${industry}/agent-c`, label: 'Best Offer', icon: Star },
+    { path: `/${industry}/agent-d`, label: 'Director', icon: Activity },
+    { path: `/${industry}/ask-genie`, label: 'Ask Genie', icon: Sparkles, highlight: true }
   ] : industry === 'academy' ? [
     { path: `/${industry}`, label: 'Dashboard', icon: Home },
     { path: `/${industry}/macro-dashboard`, label: 'Visual Dashboard', icon: BarChart3 },
@@ -97,13 +94,15 @@ export default function UnifiedLayout({ industry }: UnifiedLayoutProps) {
             <div className="flex items-center space-x-6">
               <button
                 onClick={() => navigate('/')}
-                className="flex items-center space-x-3 hover:opacity-80 transition-opacity group"
+                className="flex items-center gap-3 hover:opacity-80 transition-opacity"
               >
-                <div className="text-3xl">{config.icon}</div>
-                <div>
-                  <div className="text-gray-900 font-bold text-2xl">
-                    {industry === 'academy' ? 'Academy Sports' : config.name}
-                  </div>
+                <img src={latentviewLogo} alt="LatentView" className="h-16 w-auto" />
+                <div className="w-px h-6 bg-gray-200" />
+                <div
+                  className={industry === 'banking' ? 'text-gray-900' : 'text-xl font-black tracking-widest uppercase text-gray-900'}
+                  style={industry === 'banking' ? { fontFamily: "'Bebas Neue', sans-serif", fontSize: '2rem', letterSpacing: '0.08em' } : undefined}
+                >
+                  {industry === 'academy' ? 'Academy Sports' : config.name}
                 </div>
               </button>
             </div>
@@ -114,7 +113,7 @@ export default function UnifiedLayout({ industry }: UnifiedLayoutProps) {
       {/* Navigation */}
       <div className="bg-white border-b border-gray-200 shadow-sm sticky top-[73px] z-40">
         <div className="max-w-7xl mx-auto px-6">
-          <nav className="flex space-x-2">
+          <nav className="flex justify-center gap-1">
             {navLinks.map((link: any) => (
               <NavLink
                 key={link.path}
@@ -156,7 +155,7 @@ export default function UnifiedLayout({ industry }: UnifiedLayoutProps) {
         <div className="max-w-7xl mx-auto px-6 py-8">
           <div className="flex items-center justify-between">
             <div className="text-gray-600 text-sm">
-              © 2024 NBA Personalization Platform. All rights reserved.
+              © 2026 NBA Personalization Platform. All rights reserved.
             </div>
             <div className="flex items-center space-x-6 text-sm text-gray-600">
               <a href="#" className="hover:text-blue-600 transition-colors">Documentation</a>

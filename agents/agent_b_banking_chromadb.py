@@ -242,10 +242,22 @@ class AgentB_Banking:
             try:
                 from agents.agent_d_banking import AgentD_Banking
                 recommendations = AgentD_Banking.apply_directives_to_recommendations(
-                    recommendations, sup, self.products_df
+                    recommendations,
+                    sup,
+                    self.products_df,
+                    customer_context=customer_info,
+                    persona_name=persona_name,
                 )
             except Exception as e:
                 logger.warning(f"Supervisor directives not applied: {e}")
+            else:
+                if explain:
+                    try:
+                        self._refresh_rank_explanations_after_reorder(
+                            recommendations, effective_top_n, persona_name, tier_name
+                        )
+                    except Exception as e:
+                        logger.warning(f"Supervisor rank refresh skipped: {e}")
         
         # Separate in-stock and out-of-stock
         in_stock_recs = [r for r in recommendations if r.get('in_stock', True)]
@@ -635,6 +647,36 @@ class AgentB_Banking:
                 rec['reason'] = f"**#{rank} Recommended:** {rank_explanation}\n\n{rec['reason']}"
         
         return recommendations
+
+    def _refresh_rank_explanations_after_reorder(
+        self,
+        recommendations: List[Dict],
+        top_n: int,
+        persona_name: str,
+        tier_name: str,
+    ) -> None:
+        """After supervisor pin reorders the list, recompute rank + rank_explanation for the returned window."""
+        if not recommendations:
+            return
+        n = min(int(top_n), len(recommendations))
+        top = recommendations[:n]
+        for rank, rec in enumerate(top, 1):
+            rec["rank"] = rank
+            try:
+                rec["rank_explanation"] = self._generate_rank_explanation(
+                    rank=rank,
+                    product=rec,
+                    all_products=top,
+                    persona_name=persona_name,
+                    tier_name=tier_name,
+                )
+            except Exception as e:
+                logger.warning("Rank explanation refresh failed at rank %s: %s", rank, e)
+                continue
+            base = rec.get("recommendation_text") or (
+                "Comprehensive match score based on banking 12 factors (see detailed calculation below)"
+            )
+            rec["reason"] = f"**#{rank} Recommended:** {rec.get('rank_explanation', '')}\n\n{base}"
     
     def _create_synthetic_customer_from_persona(self, persona_name: str, tier_name: str) -> Dict:
         """

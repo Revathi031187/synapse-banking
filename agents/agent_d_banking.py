@@ -8,7 +8,9 @@ Connects saved goals, incomplete applications, and impression/click history to:
 
 from __future__ import annotations
 
+import json
 import logging
+import os
 from copy import deepcopy
 from typing import Any, Dict, List, Optional, Set, Tuple
 
@@ -292,11 +294,16 @@ class AgentD_Banking:
 
         deprioritize_list = sorted(deprioritize_next)
 
+        offer_reason = ""
+        if offer:
+            offer_reason = str(offer.get("reasoning") or offer.get("reason") or "").strip()
+
         directives = {
             "boost_product_ids": boost_ids,
             "deprioritize_product_ids": deprioritize_list,
             "priority_pin_product_id": priority_pin,
             "focus_source": focus_source,
+            "focus_offer_reasoning": offer_reason[:500] if offer_reason else "",
             "supervisor_story_hint": self._story_hint(
                 incomplete_applications, saved_goals, clicked_product_ids, offer
             ),
@@ -559,10 +566,354 @@ class AgentD_Banking:
         return "\n".join(lines)
 
     @staticmethod
+    def _clip_txt(s: str, max_len: int) -> str:
+        t = (s or "").strip()
+        if len(t) <= max_len:
+            return t
+        return t[: max_len - 1].rstrip() + "…"
+
+    @staticmethod
+    def _money_rough(v: Any) -> Optional[str]:
+        try:
+            x = float(v)
+            if x <= 0:
+                return None
+            if x >= 1_000_000:
+                return f"${x/1_000_000:.1f}M"
+            if x >= 1_000:
+                return f"${x:,.0f}"
+            return f"${x:.0f}"
+        except (TypeError, ValueError):
+            return None
+
+    @staticmethod
+    def build_supervisor_pin_story(
+        directives: Optional[Dict[str, Any]],
+        product_label: str,
+        pinned_rec: Optional[Dict[str, Any]] = None,
+        catalog_row: Optional[Dict[str, Any]] = None,
+        customer_context: Optional[Dict[str, Any]] = None,
+        persona_name: Optional[str] = None,
+    ) -> Dict[str, Any]:
+        """
+        Customer-centric supervisor narrative + structured UI payload (not agent-internals jargon).
+        """
+        label = (product_label or "").strip() or "this product"
+        d = directives or {}
+        src = (d.get("focus_source") or "").strip()
+        offer_snip = AgentD_Banking._clip_txt(str(d.get("focus_offer_reasoning") or ""), 320)
+
+        cx = customer_context or {}
+        persona_disp = (
+            (persona_name or "").strip()
+            or str(cx.get("persona") or "").strip()
+            or "this customer’s segment"
+        )
+        deposits_s = AgentD_Banking._money_rough(cx.get("total_deposits"))
+        income_s = AgentD_Banking._money_rough(cx.get("income"))
+        credit = cx.get("credit_score")
+        n_prod = cx.get("num_products")
+        txn_n = cx.get("transaction_count")
+        tenure = cx.get("tenure_months")
+
+        pr = pinned_rec or {}
+        cr = catalog_row or {}
+        sub = str(pr.get("subcategory") or cr.get("subcategory") or "").strip() or "Banking"
+        apy_raw = pr.get("interest_rate_apy", pr.get("interest_rate", cr.get("interest_rate_apy", cr.get("interest_rate", 0))))
+        try:
+            apy_f = float(apy_raw) if apy_raw is not None and str(apy_raw).strip() != "" else 0.0
+        except (TypeError, ValueError):
+            apy_f = 0.0
+        score = float(pr.get("score") or 0)
+        compat = pr.get("compatibility")
+        if compat is None:
+            compat = round(score * 100, 1)
+        else:
+            try:
+                compat = float(compat)
+            except (TypeError, ValueError):
+                compat = round(score * 100, 1)
+
+        baseline_pct: Optional[float] = None
+        pre_raw = pr.get("_pre_supervisor_score")
+        if pre_raw is not None:
+            try:
+                baseline_pct = round(float(pre_raw) * 100, 1)
+            except (TypeError, ValueError):
+                baseline_pct = None
+        dc = pr.get("detailed_calculation") or {}
+        if baseline_pct is None and isinstance(dc, dict):
+            ts = dc.get("total_score")
+            if ts is not None:
+                try:
+                    baseline_pct = round(float(ts) * 100, 1)
+                except (TypeError, ValueError):
+                    pass
+        need_x = (dc.get("financial_need_match") or {}).get("explanation") if isinstance(dc.get("financial_need_match"), dict) else ""
+        elig_x = (dc.get("eligibility_score") or {}).get("explanation") if isinstance(dc.get("eligibility_score"), dict) else ""
+        fit_bits: List[str] = []
+        if elig_x:
+            fit_bits.append(AgentD_Banking._clip_txt(str(elig_x), 200))
+        if need_x:
+            fit_bits.append(AgentD_Banking._clip_txt(str(need_x), 200))
+
+        profile_bits: List[str] = []
+        if deposits_s:
+            profile_bits.append(f"deposit relationship near {deposits_s}")
+        if income_s:
+            profile_bits.append(f"stated income around {income_s}")
+        if credit is not None and str(credit).strip() != "":
+            try:
+                profile_bits.append(f"credit score near {int(float(credit))}")
+            except (TypeError, ValueError):
+                profile_bits.append("credit profile on file")
+        if n_prod is not None and str(n_prod).strip() != "":
+            profile_bits.append(f"{int(float(n_prod))} banked products today")
+        if txn_n is not None:
+            profile_bits.append(f"{int(txn_n)} recorded transactions in the feed")
+        if tenure is not None and str(tenure).strip() != "":
+            try:
+                profile_bits.append(f"~{int(float(tenure))} months with the bank")
+            except (TypeError, ValueError):
+                pass
+        profile_clause = ", ".join(profile_bits[:4]) if profile_bits else "the balances, products, and digital signals we already hold"
+
+        bullets: List[str] = []
+        sub_l = sub.lower()
+        if "loan" in sub_l or "mortgage" in label.lower() or "mortgage" in sub_l:
+            if apy_f > 0:
+                bullets.append(f"Competitive pricing context at {apy_f:.2f}% for this category")
+            bullets.append("Structured payments that fit long-term housing or refinance goals")
+        elif sub == "Checking":
+            bullets.append("Everyday liquidity and cash-flow management")
+            if apy_f > 0:
+                bullets.append(f"Earns {apy_f:.2f}% on balances where applicable")
+        elif sub == "Savings":
+            bullets.append("Builds reserves with clearer yield visibility")
+        elif sub == "Credit":
+            bullets.append("Revolving capacity for planned or unexpected spend")
+        else:
+            bullets.append(f"{label} matches how {persona_disp} customers typically expand the relationship")
+
+        highlights: List[Dict[str, str]] = []
+        # After supervisor boost, displayed score can hit 100% — show pre-adjustment fit only (honest chip).
+        if baseline_pct is not None and baseline_pct > 0:
+            highlights.append(
+                {"label": "Baseline model fit", "value": f"{min(baseline_pct, 99.9):.1f}%"},
+            )
+        if apy_f > 0:
+            highlights.append({"label": "Featured rate", "value": f"{apy_f:.2f}%"})
+        if deposits_s:
+            highlights.append({"label": "Deposits", "value": deposits_s})
+
+        if src == "clicked_recommendation":
+            headline = f"We’re leading with {label} because they engaged with it"
+            p1 = (
+                f"They recently clicked or opened {label} in the recommendation journey — that is the strongest "
+                f"real-time intent signal in the data we have for this session."
+            )
+            p2 = (
+                f"For someone in the **{persona_disp}** profile, acting on that signal avoids pitching a different "
+                f"product they did not choose and keeps the conversation credible."
+            )
+            p3 = (
+                f"Against their profile ({profile_clause}), {label} remains eligible and on-strategy — "
+                f"the pin simply aligns the ranked list with what they already showed interest in."
+            )
+            if fit_bits:
+                p4 = f"Model detail: {' '.join(fit_bits[:2])}"
+            else:
+                p4 = (
+                    f"Use the factor breakdown below to show how fees, minimums, and need-match still support {label} "
+                    f"even if it was not the highest raw score before the pin."
+                )
+            retention = (
+                "Retention: honoring a self-selected product reduces friction, protects trust, and gives bankers a "
+                "clear story for follow-up instead of resetting to a generic top pick."
+            )
+        elif src == "incomplete_application":
+            headline = f"Finish-line priority: {label}"
+            p1 = f"They started {label} but did not complete it — recovery beats cold cross-sell for conversion and experience."
+            p2 = f"As **{persona_disp}**, nudging completion (docs, rate lock, or next step) is often the fastest win."
+            p3 = f"Given {profile_clause}, leading with this SKU signals you remember where they left off."
+            p4 = fit_bits[0] if fit_bits else f"{label} still fits standard eligibility checks for their tier."
+            retention = "Retention: abandoned applications are a leading churn signal; closing the loop materially improves win-back odds."
+        elif src == "saved_goal":
+            headline = f"They marked {label} as a goal"
+            p1 = f"{label} is on their saved goals or watchlist — stated intent without a fresh click still deserves airtime."
+            p2 = f"For **{persona_disp}**, surfacing the goal first respects what they told the bank they care about."
+            p3 = f"With {profile_clause}, this is a disciplined way to deepen share-of-wallet without guessing."
+            p4 = fit_bits[0] if fit_bits else f"Twelve-factor scoring still shows how {label} fits their needs — see below."
+            retention = "Retention: acknowledging saved goals reinforces that the bank listens, which lifts engagement on the next visit or outbound."
+        elif src == "agent_c_primary":
+            headline = f"Strategic lead offer: {label}"
+            if offer_snip:
+                p1 = f"For **{persona_disp}**, the bank’s primary offer story is: {offer_snip}"
+            else:
+                p1 = (
+                    f"For **{persona_disp}**, {label} is the single coordinated offer the bank wants to lead with — "
+                    f"balancing growth, risk, and eligibility for this customer."
+                )
+            p2 = (
+                f"Using their live profile ({profile_clause}), this product is positioned to deepen the relationship "
+                f"without stretching past what the data supports."
+            )
+            p3 = (
+                f"Showing {label} first keeps mobile, branch, and outbound messaging aligned so the customer is not "
+                f"told one story in the app and another at the desk."
+            )
+            p4 = fit_bits[0] if fit_bits else (
+                f"{label} as a **{sub}** product maps to how similar customers expand — use the rate and benefits "
+                f"below to personalize the conversation."
+            )
+            retention = (
+                "Retention: a consistent ‘hero’ offer reduces confusion, supports pricing discipline, and makes it "
+                "easier to defend why this product—not another—deserves the first conversation."
+            )
+        elif src == "agent_b_top_fallback":
+            headline = f"Segment-fit lead: {label}"
+            p1 = f"No stronger journey signal fired, so {label} — the best raw segment match — is the supervisory default."
+            p2 = f"For **{persona_disp}**, that means leading with the strongest model score while we wait for clicks, goals, or offers."
+            p3 = f"Profile context: {profile_clause}."
+            p4 = fit_bits[0] if fit_bits else f"Expand with the 12-factor narrative below to explain why the score landed where it did."
+            retention = "Retention: even a score-led pin gives a coherent opening; pair it with discovery questions so the next-best products still feel relevant."
+        else:
+            headline = f"Supervisor priority: {label}"
+            p1 = f"The bank marked {label} as the #1 focus for this run for **{persona_disp}**."
+            p2 = f"Customer context: {profile_clause}."
+            p3 = f"Use product economics (rate, fees, minimums) in the card to explain tangible value."
+            p4 = fit_bits[0] if fit_bits else "See the scored factors below for evidence-backed talking points."
+            retention = "Retention: a deliberate lead product reduces random cross-sell and helps teams prepare one strong narrative."
+
+        paragraphs = [p1, p2, p3, p4]
+
+        return {
+            "headline": headline,
+            "subhead": f"Personalized for {persona_disp} using customer + product data on file.",
+            "paragraphs": paragraphs,
+            "bullets": bullets[:4],
+            "highlights": highlights[:4],
+            "retention": retention,
+            "focus_source": src or "supervisor",
+        }
+
+    @staticmethod
+    def enrich_pin_story_with_llm(
+        story: Dict[str, Any],
+        product_label: str,
+        customer_context: Optional[Dict[str, Any]],
+        persona_name: Optional[str],
+        directives: Optional[Dict[str, Any]],
+    ) -> None:
+        """
+        Optional Together AI pass: clearer RM-facing copy. Uses TOGETHER_API_KEY from env.
+        Set BANKING_PIN_STORY_LLM=0 to skip (faster / offline).
+        """
+        if os.getenv("BANKING_PIN_STORY_LLM", "1").strip().lower() in ("0", "false", "no", "off"):
+            return
+        try:
+            from utils.together_ai import together_ai
+
+            key = getattr(together_ai, "api_key", None) or ""
+            if len(str(key).strip()) < 8:
+                return
+        except Exception:
+            return
+
+        cx = customer_context or {}
+        facts = {
+            "persona": persona_name or cx.get("persona"),
+            "customer_name": cx.get("customer_name"),
+            "deposits": cx.get("total_deposits"),
+            "income": cx.get("income"),
+            "credit_score": cx.get("credit_score"),
+            "num_products": cx.get("num_products"),
+            "tenure_months": cx.get("tenure_months"),
+            "transaction_count": cx.get("transaction_count"),
+            "focus_source": (directives or {}).get("focus_source"),
+            "offer_note": AgentD_Banking._clip_txt(str((directives or {}).get("focus_offer_reasoning") or ""), 450),
+            "product": product_label,
+            "draft_paragraphs": story.get("paragraphs") or [],
+            "retention_hint": story.get("retention"),
+            "product_bullets": story.get("bullets") or [],
+        }
+        payload = json.dumps(facts, default=str)[:8000]
+
+        prompt = f"""You are a senior retail-banking coach. Rewrite the storyline into EXACTLY four short paragraphs for a relationship manager.
+
+Rules:
+- Use ONLY facts in CUSTOMER_FACTS_JSON. Do not invent dollar amounts, credit scores, or rates not present there.
+- No internal jargon: do not say "Agent C", "Agent D", "12-factor", "orchestrate", or "supervisor engine".
+- Paragraph 1: why this product fits THIS customer’s situation (money, relationship, segment).
+- Paragraph 2: concrete product value using facts (rate/APY/type if present in bullets or offer_note).
+- Paragraph 3: consistency across channels / trust.
+- Paragraph 4: retention — why opening with this product helps keep or grow the relationship.
+
+CUSTOMER_FACTS_JSON:
+{payload}
+
+Output exactly four lines, each starting with P1:, P2:, P3:, P4:
+P1: ...
+P2: ...
+P3: ...
+P4: ...
+"""
+
+        try:
+            raw = together_ai.generate_text(
+                prompt,
+                system_message="You write concise banker-facing coaching copy. Follow the P1–P4 format exactly.",
+                max_tokens=560,
+                temperature=0.35,
+            )
+        except Exception as e:
+            logger.debug("pin story LLM skipped: %s", e)
+            return
+
+        if not raw or str(raw).strip().startswith("Error"):
+            return
+
+        paras: List[str] = []
+        for line in str(raw).splitlines():
+            s = line.strip()
+            if len(paras) >= 4:
+                break
+            up = s[:3].upper()
+            if up == "P1:":
+                paras.append(s[3:].strip())
+            elif up == "P2:":
+                paras.append(s[3:].strip())
+            elif up == "P3:":
+                paras.append(s[3:].strip())
+            elif up == "P4:":
+                paras.append(s[3:].strip())
+        if len(paras) >= 3:
+            story["paragraphs"] = paras[:4]
+            story["llm_polished"] = True
+
+    @staticmethod
+    def priority_pin_reason_text(
+        directives: Optional[Dict[str, Any]],
+        products_df: Any = None,
+    ) -> str:
+        """Plain-text pin summary for directives API (no customer row)."""
+        pin = _pid((directives or {}).get("priority_pin_product_id") or "")
+        if not pin:
+            return ""
+        cat0 = _get_product_from_catalog(products_df, pin)
+        plab = (cat0.get("product_name") if cat0 else None) or pin
+        story = AgentD_Banking.build_supervisor_pin_story(
+            directives, str(plab), None, cat0, None, None
+        )
+        return "\n\n".join(story.get("paragraphs") or [])
+
+    @staticmethod
     def apply_directives_to_recommendations(
         recommendations: List[Dict[str, Any]],
         directives: Optional[Dict[str, Any]],
         products_df: Any = None,
+        customer_context: Optional[Dict[str, Any]] = None,
+        persona_name: Optional[str] = None,
     ) -> List[Dict[str, Any]]:
         """Re-rank Agent B list using supervisor directives (for Agent B execute)."""
         if not directives or not recommendations:
@@ -570,10 +921,16 @@ class AgentD_Banking:
         boost = set(map(_pid, directives.get("boost_product_ids") or []))
         dep = set(map(_pid, directives.get("deprioritize_product_ids") or []))
         pin = _pid(directives.get("priority_pin_product_id") or "")
+        cat_for_pin = _get_product_from_catalog(products_df, pin) if pin else None
+        plab = (cat_for_pin.get("product_name") if cat_for_pin else None) or pin
 
         out = []
         for r in recommendations:
             c = deepcopy(r)
+            try:
+                c["_pre_supervisor_score"] = float(r.get("score") or 0)
+            except (TypeError, ValueError):
+                c["_pre_supervisor_score"] = 0.0
             pid = _pid(c.get("product_id"))
             base = float(c.get("score") or 0.5)
             if pid in boost:
@@ -587,6 +944,26 @@ class AgentD_Banking:
         if pin:
             pinned = [x for x in out if _pid(x.get("product_id")) == pin]
             rest = [x for x in out if _pid(x.get("product_id")) != pin]
+
+            def _attach_pin_fields(target: Dict[str, Any], cat_row: Optional[Dict[str, Any]]) -> None:
+                story = AgentD_Banking.build_supervisor_pin_story(
+                    directives,
+                    str(target.get("product_name") or plab),
+                    pinned_rec=target,
+                    catalog_row=cat_row or cat_for_pin,
+                    customer_context=customer_context,
+                    persona_name=persona_name,
+                )
+                AgentD_Banking.enrich_pin_story_with_llm(
+                    story,
+                    str(target.get("product_name") or plab),
+                    customer_context,
+                    persona_name,
+                    directives,
+                )
+                target["priority_pin_story"] = story
+                target["priority_pin_reason"] = "\n\n".join(story.get("paragraphs") or [])
+
             if not pinned:
                 # Supervisor-clicked product may not be in B's filtered top-N — still force #1
                 cat = _get_product_from_catalog(products_df, pin)
@@ -599,6 +976,12 @@ class AgentD_Banking:
                     except (TypeError, ValueError):
                         return default
 
+                stub_pre = 0.58
+                if cat:
+                    try:
+                        stub_pre = float(cat.get("score") or 0.58)
+                    except (TypeError, ValueError):
+                        stub_pre = 0.58
                 stub = {
                     "product_id": pin,
                     "product_name": (cat.get("product_name") if cat else None) or pin,
@@ -606,10 +989,11 @@ class AgentD_Banking:
                     "subcategory": (cat.get("subcategory") if cat else None) or "",
                     "score": 1.0,
                     "compatibility": 100.0,
+                    "_pre_supervisor_score": stub_pre,
                     "match_level": "Perfect Match",
                     "in_stock": True,
                     "supervisor_pinned": True,
-                    "reasoning": "Pinned #1 by Agent D (customer clicked this recommendation).",
+                    "reasoning": "Pinned #1 by Agent D supervisor directives for this customer.",
                     "recommendation_text": "Pinned by Agent D supervisor for this customer.",
                     "annual_fee": _fnum(cat.get("annual_fee")) if cat else 0.0,
                     "min_balance": _fnum(cat.get("min_balance")) if cat else 0.0,
@@ -619,9 +1003,11 @@ class AgentD_Banking:
                     "description": "",
                     "scoring_method": "supervisor_pin",
                 }
+                _attach_pin_fields(stub, cat)
                 out = [stub] + rest
             else:
                 for p in pinned:
                     p["supervisor_pinned"] = True
+                    _attach_pin_fields(p, cat_for_pin)
                 out = pinned + rest
         return out

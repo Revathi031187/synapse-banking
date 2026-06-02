@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useMemo, useRef } from 'react';
 import { Link } from 'react-router-dom';
-import { useQuery, useMutation } from '@tanstack/react-query';
+import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import {
   Search,
   CreditCard,
@@ -17,7 +17,6 @@ import {
   Target,
   BarChart2,
   User,
-  Bot,
 } from 'lucide-react';
 import { getBankingApiBase } from '../../utils/apiBase';
 import { useSessionStorageState } from '../../hooks/useSessionStorageState';
@@ -116,6 +115,46 @@ type BankingAgentBUiState = {
   executeData: unknown | null;
 };
 
+type PriorityPinStory = {
+  headline?: string;
+  subhead?: string;
+  paragraphs?: string[];
+  bullets?: string[];
+  highlights?: { label: string; value: string }[];
+  retention?: string;
+  focus_source?: string;
+  llm_polished?: boolean;
+};
+
+function RichParagraph({ text, className }: { text: string; className?: string }) {
+  const parts = text.split(/\*\*/);
+  return (
+    <p className={className}>
+      {parts.map((chunk, i) =>
+        i % 2 === 1 ? (
+          <strong key={i} className="font-semibold text-slate-900">
+            {chunk}
+          </strong>
+        ) : (
+          <span key={i}>{chunk}</span>
+        ),
+      )}
+    </p>
+  );
+}
+
+/** If rank_explanation still says #2/#3 after a pin, drop that stale header block (backend refresh also fixes this). */
+function stripStalePinnedRankIntro(rankExplanation: string | undefined): string {
+  if (!rankExplanation) return '';
+  const blocks = rankExplanation.split(/\n\n/);
+  if (blocks.length < 2) return rankExplanation;
+  const head = blocks[0];
+  if (/(🥉|#3 Option|#2 Alternative|🥈)/.test(head) && !/(🥇|#1 Recommended)/.test(head)) {
+    return blocks.slice(1).join('\n\n');
+  }
+  return rankExplanation;
+}
+
 function mergeAgentBUi(saved: Partial<BankingAgentBUiState>, def: BankingAgentBUiState): BankingAgentBUiState {
   return {
     ...def,
@@ -149,6 +188,7 @@ const DEFAULT_BANKING_AGENT_B_UI: BankingAgentBUiState = {
 const AGENT_B_UI_KEY = 'banking-agent-b-v1';
 
 export default function BankingAgentB() {
+  const queryClient = useQueryClient();
   const API_BASE_URL = getBankingApiBase();
   const [ui, setUi] = useSessionStorageState(AGENT_B_UI_KEY, DEFAULT_BANKING_AGENT_B_UI, mergeAgentBUi);
   const {
@@ -185,6 +225,8 @@ export default function BankingAgentB() {
 
   const [weightsSavedOk, setWeightsSavedOk] = useState<string | null>(null);
   const agentDAutoAppliedRef = React.useRef<string>('');
+  /** Avoid duplicate auto-runs (React Strict Mode) while aligning list to supervisor pin */
+  const supervisorPinAlignSigRef = React.useRef<string | null>(null);
 
   const agentDDirectivesQuery = useQuery({
     queryKey: ['banking-agent-d-directives-b', customerId],
@@ -204,6 +246,7 @@ export default function BankingAgentB() {
 
   React.useEffect(() => {
     agentDAutoAppliedRef.current = '';
+    supervisorPinAlignSigRef.current = null;
   }, [customerId]);
 
   React.useEffect(() => {
@@ -463,6 +506,9 @@ export default function BankingAgentB() {
       return data;
     },
     onSuccess: (data: { _factorWeightsUsed?: Record<string, number> }) => {
+      if (mode === 'customer' && customerId) {
+        void queryClient.invalidateQueries({ queryKey: ['banking-agent-d-directives-b', customerId] });
+      }
       setUi((prev) => ({
         ...prev,
         executeData: data,
@@ -516,6 +562,48 @@ export default function BankingAgentB() {
 
   const results = executePayload?.results;
   const recommendations = results?.recommendations || [];
+  // Re-run execute when supervisor pin exists but the visible list top SKU is not pinned yet (stale session or post–Agent D orchestrate).
+  React.useEffect(() => {
+    if (mode !== 'customer' || !customerId) return;
+    if (!useAgentDDirectives || !agentDDirectivesQuery.isSuccess) return;
+    const pin = String(
+      (agentDDirectivesQuery.data?.next_visit_directives as { priority_pin_product_id?: string } | null)
+        ?.priority_pin_product_id || '',
+    ).trim();
+    if (!pin) {
+      supervisorPinAlignSigRef.current = null;
+      return;
+    }
+    const sig = `${customerId}|${pin}`;
+    const topId = String(recommendations[0]?.product_id ?? '').trim();
+    if (topId === pin) {
+      supervisorPinAlignSigRef.current = sig;
+      return;
+    }
+    if (executeMutation.isPending) return;
+    if (supervisorPinAlignSigRef.current === sig) return;
+    supervisorPinAlignSigRef.current = sig;
+    executeMutation.mutate();
+  }, [
+    mode,
+    customerId,
+    useAgentDDirectives,
+    agentDDirectivesQuery.isSuccess,
+    agentDDirectivesQuery.data,
+    recommendations,
+    executeMutation,
+    executeMutation.isPending,
+  ]);
+
+  const directivePinReasonUi = String(
+    (agentDDirectivesQuery.data as { priority_pin_reason_ui?: string } | undefined)?.priority_pin_reason_ui || '',
+  ).trim();
+  const bankingSupervisorPinReason = (rec: { priority_pin_reason?: string; supervisor_pinned?: boolean }) => {
+    const fromRec = typeof rec.priority_pin_reason === 'string' ? rec.priority_pin_reason.trim() : '';
+    if (fromRec) return fromRec;
+    if (rec.supervisor_pinned && directivePinReasonUi) return directivePinReasonUi;
+    return '';
+  };
   const insights = results?.insights || {};
   const scoringMethodology = results?.scoring_methodology || results?.algorithm_explanation || {};
 
@@ -538,8 +626,8 @@ export default function BankingAgentB() {
   }, [recommendations]);
 
   return (
-    <div className="max-w-7xl mx-auto px-4 py-6 space-y-6">
-      <div className="max-w-5xl mx-auto bg-white rounded-2xl shadow-xl border border-gray-100 overflow-hidden">
+    <div className="space-y-6 animate-fadeIn">
+      <div className="bg-white rounded-2xl shadow-sm border border-gray-100 overflow-hidden">
         {/* Header — Academy-style */}
         <div className="px-6 pt-6 pb-4 flex flex-col lg:flex-row lg:items-start lg:justify-between gap-4 border-b border-gray-100">
           <div className="flex gap-3">
@@ -547,7 +635,7 @@ export default function BankingAgentB() {
               <Target className="w-8 h-8" />
             </div>
             <div>
-              <h1 className="text-2xl md:text-3xl font-bold text-gray-900 tracking-tight">F&M Bank Agent B</h1>
+              <h1 className="text-xl font-semibold text-gray-900">Product Recommendations</h1>
               <p className="text-gray-600 mt-1.5 text-sm md:text-base">
                 Personalized financial product recommendations using feature-based (12-factor) scoring
               </p>
@@ -689,25 +777,6 @@ export default function BankingAgentB() {
                     Could not load customers ({customersQuery.error?.message ?? 'network error'}).
                   </p>
                 )}
-                <div className="mt-3 space-y-2">
-                  {customerId &&
-                    (agentDDirectivesQuery.data?.next_visit_directives as { priority_pin_product_id?: string } | null)
-                      ?.priority_pin_product_id && (
-                      <p
-                        className="text-xs rounded-lg px-3 py-2 border bg-emerald-50 text-emerald-900 border-emerald-200"
-                      >
-                        <Bot className="inline w-3.5 h-3.5 mr-1 align-middle" />
-                        Agent D pinned{' '}
-                        <code className="text-[11px] bg-white/60 px-1 rounded">
-                          {
-                            (agentDDirectivesQuery.data?.next_visit_directives as { priority_pin_product_id: string })
-                              .priority_pin_product_id
-                          }
-                        </code>{' '}
-                        as #1 for this customer. <strong>This is auto-applied on every run.</strong>
-                      </p>
-                    )}
-                </div>
               </div>
             )}
             <div className="flex flex-col">
@@ -960,7 +1029,7 @@ export default function BankingAgentB() {
           </p>
           {scoringMethod === 'logit' && (
             <p className="text-sm text-purple-600 mt-2">
-              🤖 AI learning from banking transaction patterns
+              AI learning from banking transaction patterns
             </p>
           )}
         </div>
@@ -999,9 +1068,9 @@ export default function BankingAgentB() {
                   ? 'bg-gradient-to-r from-purple-500 to-pink-500 text-white'
                   : 'bg-blue-100 text-blue-800'
               }`}>
-                {scoringMethod === 'logit' 
-                  ? '🤖 Hybrid ML (50% ML + 50% Banking Rules)'
-                  : '📊 Banking 12-Factor Scoring'}
+                {scoringMethod === 'logit'
+                  ? 'Hybrid ML (50% ML + 50% Banking Rules)'
+                  : 'Banking 12-Factor Scoring'}
               </div>
             </div>
 
@@ -1010,7 +1079,7 @@ export default function BankingAgentB() {
               <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
                 {/* Match Quality */}
                 <div className="bg-gradient-to-br from-green-50 to-emerald-50 rounded-lg p-4 border border-green-200">
-                  <p className="text-xs text-gray-600 mb-1">🎯 Match Quality</p>
+                  <p className="text-xs text-gray-600 mb-1">Match Quality</p>
                   <p className="text-2xl font-bold text-green-600">
                     {results.metrics?.avg_match_score 
                       ? `${results.metrics.avg_match_score.toFixed(1)}%` 
@@ -1027,7 +1096,7 @@ export default function BankingAgentB() {
 
                 {/* Annual Cost */}
                 <div className="bg-gradient-to-br from-blue-50 to-indigo-50 rounded-lg p-4 border border-blue-200">
-                  <p className="text-xs text-gray-600 mb-1">💰 Annual Cost</p>
+                  <p className="text-xs text-gray-600 mb-1">Annual Cost</p>
                   <p className="text-2xl font-bold text-blue-600">
                     ${results.metrics?.total_annual_cost?.toFixed(0) || insights?.total_annual_cost?.toFixed(0) || '0'}
                   </p>
@@ -1038,7 +1107,7 @@ export default function BankingAgentB() {
 
                 {/* Earning Potential */}
                 <div className="bg-gradient-to-br from-purple-50 to-pink-50 rounded-lg p-4 border border-purple-200">
-                  <p className="text-xs text-gray-600 mb-1">📈 Earning Potential</p>
+                  <p className="text-xs text-gray-600 mb-1">Earning Potential</p>
                   <p className="text-2xl font-bold text-purple-600">
                     +${results.metrics?.estimated_annual_earnings?.toFixed(0) || insights?.estimated_annual_earnings?.toFixed(0) || '0'}
                   </p>
@@ -1049,7 +1118,7 @@ export default function BankingAgentB() {
 
                 {/* Accessibility */}
                 <div className="bg-gradient-to-br from-orange-50 to-amber-50 rounded-lg p-4 border border-orange-200">
-                  <p className="text-xs text-gray-600 mb-1">🔓 Easy Access</p>
+                  <p className="text-xs text-gray-600 mb-1">Easy Access</p>
                   <p className="text-2xl font-bold text-orange-600">
                     {results.metrics?.no_minimum_products || insights?.no_minimum_products || 0}/{results.metrics?.total_products || recommendations.length || 0}
                   </p>
@@ -1065,7 +1134,7 @@ export default function BankingAgentB() {
               <div className="mt-4 p-4 bg-gradient-to-r from-blue-50 to-indigo-50 rounded-lg border border-blue-200">
                 {insights.value_proposition && (
                   <p className="text-sm font-semibold text-blue-900 mb-2">
-                    💎 {insights.value_proposition}
+                    {insights.value_proposition}
                   </p>
                 )}
                 {insights.persona_summary && (
@@ -1169,12 +1238,6 @@ export default function BankingAgentB() {
                     <div className="flex flex-wrap items-center gap-3 mb-2">
                       <span className="text-2xl font-bold text-gray-400">#{index + 1}</span>
                       <h3 className="text-xl font-bold text-gray-900">{rec.product_name}</h3>
-                      {rec.supervisor_pinned && (
-                        <span className="inline-flex items-center gap-2 px-4 py-1.5 rounded-full text-sm font-bold bg-gradient-to-r from-violet-600 to-fuchsia-600 text-white border border-violet-300 shadow-sm">
-                          <Bot className="w-4 h-4 shrink-0" />
-                          Agent D Priority Pin: #1
-                        </span>
-                      )}
                     </div>
                     <div className="flex items-center gap-4 text-sm text-gray-600">
                       <span className="flex items-center gap-1">
@@ -1219,55 +1282,165 @@ export default function BankingAgentB() {
                   </div>
                 </div>
 
-                {/* 💡 Why This Product? - Unified, beautifully formatted */}
-                {(rec.rank_explanation || rec.recommendation_text) && (
-                  <div className="mb-4 overflow-hidden rounded-xl border border-emerald-200 bg-gradient-to-br from-emerald-50/80 to-teal-50/80 shadow-sm">
-                    <div className="border-b border-emerald-200 bg-emerald-100/60 px-4 py-2.5">
-                      <p className="text-sm font-bold text-emerald-900 flex items-center gap-2">
-                        <span className="text-base">💡</span> Why This Product?
-                      </p>
-                    </div>
-                    <div className="p-4 space-y-4">
-                      {rec.rank_explanation && (
-                        <div className="space-y-3">
-                          <p className="text-xs font-bold text-emerald-800 uppercase tracking-wide flex items-center gap-1.5">
-                            <span>🏆</span> Rank #{rec.rank || (index + 1)} · {(rec.score * 100).toFixed(1)}% compatibility
-                          </p>
-                          <div className="text-sm text-gray-800 leading-relaxed space-y-2">
-                            {rec.rank_explanation.split('\n\n').map((section: string, idx: number) => (
-                              <div key={idx} className={idx > 0 ? 'mt-3 pt-3 border-t border-emerald-200' : ''}>
-                                {section.split('\n').map((line: string, lineIdx: number) => {
-                                  const formattedLine = line.replace(/\*\*(.*?)\*\*/g, '<strong class="font-semibold text-emerald-900">$1</strong>');
-                                  const finalLine = formattedLine.replace(/\*(.*?)\*/g, '<em class="text-gray-600 text-xs">$1</em>');
-                                  return (
-                                    <p
-                                      key={lineIdx}
-                                      className={line.startsWith('*') ? 'text-xs italic text-gray-600 mt-2' : 'mb-1'}
-                                      dangerouslySetInnerHTML={{ __html: finalLine }}
-                                    />
-                                  );
-                                })}
+                {(() => {
+                  const pinStory = rec.priority_pin_story as PriorityPinStory | undefined;
+                  const pinFallback = bankingSupervisorPinReason(rec);
+                  const rankRaw = rec.rank_explanation as string | undefined;
+                  const rankBody = rec.supervisor_pinned ? stripStalePinnedRankIntro(rankRaw) : rankRaw;
+                  const showSpotlight = Boolean(rec.supervisor_pinned && (pinStory || pinFallback));
+                  // Pinned narrative lives only in the spotlight — skip green “Why” card to avoid repeating the same copy.
+                  const showEmerald = Boolean(
+                    !rec.supervisor_pinned &&
+                      (rankBody || rec.recommendation_text || pinFallback),
+                  );
+
+                  return (
+                    <>
+                      {showSpotlight && (
+                        <div className="mb-4 relative overflow-hidden rounded-2xl border border-violet-200/90 bg-gradient-to-br from-violet-50 via-fuchsia-50/50 to-indigo-50 shadow-md ring-1 ring-violet-100/80">
+                          <div className="absolute -right-20 -top-20 h-44 w-44 rounded-full bg-fuchsia-200/25 blur-3xl pointer-events-none" />
+                          <div className="absolute -left-10 bottom-0 h-32 w-32 rounded-full bg-indigo-200/20 blur-2xl pointer-events-none" />
+                          <div className="relative p-5 sm:p-6 space-y-4">
+                            <div className="flex flex-wrap items-start gap-4 justify-between">
+                              <div className="min-w-0 flex-1">
+                                <p className="text-[11px] font-bold uppercase tracking-widest text-violet-700">
+                                  Supervisor lead · this customer
+                                </p>
+                                <h4 className="text-lg sm:text-xl font-bold text-slate-900 mt-1.5 leading-snug">
+                                  {pinStory?.headline ?? 'Why this product is listed first'}
+                                </h4>
+                                {pinStory?.subhead && (
+                                  <p className="text-sm text-slate-600 mt-2 leading-relaxed">{pinStory.subhead}</p>
+                                )}
+                                {pinStory?.llm_polished && (
+                                  <p className="text-xs text-violet-600/90 mt-2 font-medium">
+                                    Refined with AI (Together) using your API key — facts only, no invented numbers.
+                                  </p>
+                                )}
                               </div>
-                            ))}
+                              {pinStory?.highlights && pinStory.highlights.length > 0 && (
+                                <div className="flex flex-wrap gap-2 shrink-0">
+                                  {pinStory.highlights.map((h) => (
+                                    <div
+                                      key={h.label}
+                                      className="rounded-xl bg-white/90 border border-violet-100 px-3 py-2 shadow-sm min-w-[5.5rem]"
+                                    >
+                                      <div className="text-[10px] font-semibold uppercase tracking-wide text-violet-600">
+                                        {h.label}
+                                      </div>
+                                      <div className="text-sm font-bold text-slate-900 tabular-nums">{h.value}</div>
+                                    </div>
+                                  ))}
+                                </div>
+                              )}
+                            </div>
+                            {pinStory?.paragraphs && pinStory.paragraphs.length > 0 ? (
+                              <div className="space-y-3 border-t border-violet-100/80 pt-4">
+                                {pinStory.paragraphs.map((para, pi) => (
+                                  <RichParagraph
+                                    key={pi}
+                                    text={para}
+                                    className="text-sm text-slate-700 leading-relaxed"
+                                  />
+                                ))}
+                              </div>
+                            ) : pinFallback ? (
+                              <div className="text-sm text-slate-700 leading-relaxed whitespace-pre-line border-t border-violet-100/80 pt-4">
+                                {pinFallback}
+                              </div>
+                            ) : null}
+                            {pinStory?.bullets && pinStory.bullets.length > 0 && (
+                              <ul className="grid sm:grid-cols-2 gap-2.5 text-sm text-slate-700 pt-1">
+                                {pinStory.bullets.map((b) => (
+                                  <li key={b} className="flex gap-2 items-start rounded-lg bg-white/50 px-3 py-2 border border-violet-100/60">
+                                    <span className="text-violet-600 font-bold shrink-0">✓</span>
+                                    <span>{b}</span>
+                                  </li>
+                                ))}
+                              </ul>
+                            )}
+                            {pinStory?.retention && (
+                              <div className="rounded-xl border border-amber-200/90 bg-gradient-to-r from-amber-50 to-orange-50/80 px-4 py-3 text-sm text-amber-950 leading-relaxed shadow-sm">
+                                <span className="font-bold text-amber-900">Retention · </span>
+                                {pinStory.retention}
+                              </div>
+                            )}
                           </div>
-                          <p className="text-xs text-emerald-800 pt-2 border-t border-emerald-200/80">
-                            📐 Comprehensive match score based on banking 12 factors (see detailed calculation below).
-                          </p>
                         </div>
                       )}
-                      {!rec.rank_explanation && rec.recommendation_text && (
-                        <>
-                          <div className="text-sm text-gray-800 leading-relaxed">
-                            {rec.reason || rec.recommendation_text}
+
+                      {showEmerald && (
+                        <div className="mb-4 overflow-hidden rounded-xl border border-emerald-200 bg-gradient-to-br from-emerald-50/80 to-teal-50/80 shadow-sm">
+                          <div className="border-b border-emerald-200 bg-emerald-100/60 px-4 py-2.5">
+                            <p className="text-sm font-bold text-emerald-900 flex items-center gap-2">
+                              {rec.supervisor_pinned ? 'Model fit & product detail' : 'Why This Product?'}
+                            </p>
                           </div>
-                          <p className="text-xs text-emerald-800 pt-2 border-t border-emerald-200/80">
-                            📐 Comprehensive match score based on banking 12 factors (see detailed calculation below).
-                          </p>
-                        </>
+                          <div className="p-4 space-y-4">
+                            {rankBody ? (
+                              <div className="space-y-3">
+                                <p className="text-xs font-bold text-emerald-800 uppercase tracking-wide flex flex-wrap items-center gap-1.5">
+                                  {rec.supervisor_pinned ? (
+                                    <>
+                                      <span>
+                                        Session position #1 · {(rec.score * 100).toFixed(1)}% model fit
+                                      </span>
+                                      <span className="normal-case font-medium text-violet-700">
+                                        (supervisor priority — factor narrative below)
+                                      </span>
+                                    </>
+                                  ) : (
+                                    <span>
+                                      Rank #{rec.rank || index + 1} · {(rec.score * 100).toFixed(1)}% compatibility
+                                    </span>
+                                  )}
+                                </p>
+                                <div className="text-sm text-gray-800 leading-relaxed space-y-2">
+                                  {rankBody.split('\n\n').map((section: string, idx: number) => (
+                                    <div key={idx} className={idx > 0 ? 'mt-3 pt-3 border-t border-emerald-200' : ''}>
+                                      {section.split('\n').map((line: string, lineIdx: number) => {
+                                        const formattedLine = line.replace(
+                                          /\*\*(.*?)\*\*/g,
+                                          '<strong class="font-semibold text-emerald-900">$1</strong>',
+                                        );
+                                        const finalLine = formattedLine.replace(
+                                          /\*(.*?)\*/g,
+                                          '<em class="text-gray-600 text-xs">$1</em>',
+                                        );
+                                        return (
+                                          <p
+                                            key={lineIdx}
+                                            className={line.startsWith('*') ? 'text-xs italic text-gray-600 mt-2' : 'mb-1'}
+                                            dangerouslySetInnerHTML={{ __html: finalLine }}
+                                          />
+                                        );
+                                      })}
+                                    </div>
+                                  ))}
+                                </div>
+                                <p className="text-xs text-emerald-800 pt-2 border-t border-emerald-200/80">
+                                  📐 Comprehensive match score based on banking 12 factors (see detailed calculation
+                                  below).
+                                </p>
+                              </div>
+                            ) : null}
+                            {!rankBody && rec.recommendation_text && (
+                              <>
+                                <div className="text-sm text-gray-800 leading-relaxed">
+                                  {rec.reason || rec.recommendation_text}
+                                </div>
+                                <p className="text-xs text-emerald-800 pt-2 border-t border-emerald-200/80">
+                                  📐 Comprehensive match score based on banking 12 factors (see detailed calculation
+                                  below).
+                                </p>
+                              </>
+                            )}
+                          </div>
+                        </div>
                       )}
-                    </div>
-                  </div>
-                )}
+                    </>
+                  );
+                })()}
 
                 {/* Score Bar */}
                 <div className="mb-4">
@@ -1320,7 +1493,7 @@ export default function BankingAgentB() {
                                 /* BANKING 12-FACTOR DETAILED CALCULATION */
                                 <div>
                                   <p className="text-xs font-semibold text-indigo-900 mb-3">
-                                    🏦 Banking 12-Factor Scoring System
+                                    Banking 12-Factor Scoring System
                                   </p>
                                   
                                   {/* Total Score */}
@@ -1333,7 +1506,7 @@ export default function BankingAgentB() {
 
                                   {/* TIER 1: Core Banking Criteria (55%) */}
                                   <div className="mb-4 p-3 bg-gradient-to-r from-indigo-50 to-purple-50 rounded-lg border border-indigo-200">
-                                    <p className="text-xs font-bold text-indigo-900 mb-3">🎯 TIER 1: Core Banking Criteria (55%)</p>
+                                    <p className="text-xs font-bold text-indigo-900 mb-3">TIER 1: Core Banking Criteria (55%)</p>
                                     
                                     {/* Eligibility Score */}
                                     {rec.detailed_calculation.eligibility_score && (
@@ -1343,7 +1516,7 @@ export default function BankingAgentB() {
                                           <span className="text-sm font-bold text-indigo-700">{(rec.detailed_calculation.eligibility_score.score * 100).toFixed(1)}%</span>
                                         </div>
                                         <div className="text-xs text-gray-700 mb-1">
-                                          📌 {rec.detailed_calculation.eligibility_score.explanation}
+                                          {rec.detailed_calculation.eligibility_score.explanation}
                                         </div>
                                         <details className="mt-1">
                                           <summary className="text-xs text-blue-600 cursor-pointer hover:text-blue-800 font-medium">
@@ -1367,7 +1540,7 @@ export default function BankingAgentB() {
                                           <span className="text-sm font-bold text-indigo-700">{(rec.detailed_calculation.financial_need_match.score * 100).toFixed(1)}%</span>
                                         </div>
                                         <div className="text-xs text-gray-700 mb-1">
-                                          📌 {rec.detailed_calculation.financial_need_match.explanation}
+                                          {rec.detailed_calculation.financial_need_match.explanation}
                                         </div>
                                         <details className="mt-1">
                                           <summary className="text-xs text-blue-600 cursor-pointer hover:text-blue-800 font-medium">
@@ -1391,7 +1564,7 @@ export default function BankingAgentB() {
                                           <span className="text-sm font-bold text-indigo-700">{(rec.detailed_calculation.relationship_depth.score * 100).toFixed(1)}%</span>
                                         </div>
                                         <div className="text-xs text-gray-700 mb-1">
-                                          📌 {rec.detailed_calculation.relationship_depth.explanation}
+                                          {rec.detailed_calculation.relationship_depth.explanation}
                                         </div>
                                         <details className="mt-1">
                                           <summary className="text-xs text-blue-600 cursor-pointer hover:text-blue-800 font-medium">
@@ -1410,17 +1583,17 @@ export default function BankingAgentB() {
 
                                   {/* TIER 2: Strategic Fit & Product Value (28%) */}
                                   <div className="mb-4 p-3 bg-gradient-to-r from-blue-50 to-cyan-50 rounded-lg border border-blue-200">
-                                    <p className="text-xs font-bold text-blue-900 mb-3">💎 TIER 2: Strategic Fit & Product Value (28%)</p>
+                                    <p className="text-xs font-bold text-blue-900 mb-3">TIER 2: Strategic Fit & Product Value (28%)</p>
                                     
                                     {/* Product Value - NEW! */}
                                     {rec.detailed_calculation.product_value && (
                                       <div className="mb-3 pb-3 border-b border-blue-100">
                                         <div className="flex justify-between items-center mb-1">
-                                          <span className="text-xs font-semibold text-gray-900">4. Product Value ⭐ NEW</span>
+                                          <span className="text-xs font-semibold text-gray-900">4. Product Value</span>
                                           <span className="text-sm font-bold text-blue-700">{(rec.detailed_calculation.product_value.score * 100).toFixed(1)}%</span>
                                         </div>
                                         <div className="text-xs text-gray-700 mb-1">
-                                          📌 {rec.detailed_calculation.product_value.explanation}
+                                          {rec.detailed_calculation.product_value.explanation}
                                         </div>
                                         <details className="mt-1">
                                           <summary className="text-xs text-blue-600 cursor-pointer hover:text-blue-800 font-medium">
@@ -1444,7 +1617,7 @@ export default function BankingAgentB() {
                                           <span className="text-sm font-bold text-blue-700">{(rec.detailed_calculation.product_pairing.score * 100).toFixed(1)}%</span>
                                         </div>
                                         <div className="text-xs text-gray-700 mb-1">
-                                          📌 {rec.detailed_calculation.product_pairing.explanation}
+                                          {rec.detailed_calculation.product_pairing.explanation}
                                         </div>
                                         <details className="mt-1">
                                           <summary className="text-xs text-blue-600 cursor-pointer hover:text-blue-800 font-medium">
@@ -1468,7 +1641,7 @@ export default function BankingAgentB() {
                                           <span className="text-sm font-bold text-blue-700">{(rec.detailed_calculation.channel_fit.score * 100).toFixed(1)}%</span>
                                         </div>
                                         <div className="text-xs text-gray-700 mb-1">
-                                          📌 {rec.detailed_calculation.channel_fit.explanation}
+                                          {rec.detailed_calculation.channel_fit.explanation}
                                         </div>
                                         <details className="mt-1">
                                           <summary className="text-xs text-blue-600 cursor-pointer hover:text-blue-800 font-medium">
@@ -1487,7 +1660,7 @@ export default function BankingAgentB() {
 
                                   {/* TIER 3: Behavioral & Contextual (10%) */}
                                   <div className="mb-4 p-3 bg-gradient-to-r from-green-50 to-emerald-50 rounded-lg border border-green-200">
-                                    <p className="text-xs font-bold text-green-900 mb-3">🎯 TIER 3: Behavioral & Contextual (10%)</p>
+                                    <p className="text-xs font-bold text-green-900 mb-3">TIER 3: Behavioral & Contextual (10%)</p>
                                     
                                     {['complexity_match', 'intent_score', 'segment_affinity', 'transaction_pattern'].map((factorKey) => {
                                       const factor = rec.detailed_calculation[factorKey];
@@ -1518,7 +1691,7 @@ export default function BankingAgentB() {
                                             <span className="text-xs font-semibold text-gray-900">{factorInfo[factorKey].name}</span>
                                             <span className="text-xs font-bold text-green-700">{(factor.score * 100).toFixed(1)}%</span>
                                           </div>
-                                          <div className="text-xs text-gray-700 mb-1">📌 {factor.explanation}</div>
+                                          <div className="text-xs text-gray-700 mb-1">{factor.explanation}</div>
                                           <details className="mt-1">
                                             <summary className="text-xs text-blue-600 cursor-pointer hover:text-blue-800 font-medium">
                                               Why {(factor.weight * 100).toFixed(0)}%?
@@ -1537,7 +1710,7 @@ export default function BankingAgentB() {
 
                                   {/* TIER 4: Quality Signals (7%) */}
                                   <div className="mb-3 p-3 bg-gradient-to-r from-orange-50 to-amber-50 rounded-lg border border-orange-200">
-                                    <p className="text-xs font-bold text-orange-900 mb-3">⭐ TIER 4: Quality Signals (7%)</p>
+                                    <p className="text-xs font-bold text-orange-900 mb-3">TIER 4: Quality Signals (7%)</p>
                                     
                                     {['product_rating', 'popularity'].map((factorKey) => {
                                       const factor = rec.detailed_calculation[factorKey];
@@ -1560,7 +1733,7 @@ export default function BankingAgentB() {
                                             <span className="text-xs font-semibold text-gray-900">{factorInfo[factorKey].name}</span>
                                             <span className="text-xs font-bold text-orange-700">{(factor.score * 100).toFixed(1)}%</span>
                                           </div>
-                                          <div className="text-xs text-gray-700 mb-1">📌 {factor.explanation}</div>
+                                          <div className="text-xs text-gray-700 mb-1">{factor.explanation}</div>
                                           <details className="mt-1">
                                             <summary className="text-xs text-blue-600 cursor-pointer hover:text-blue-800 font-medium">
                                               Why {(factor.weight * 100).toFixed(0)}%?
@@ -1586,7 +1759,7 @@ export default function BankingAgentB() {
                                       Total Score = {(rec.score * 100).toFixed(1)}%
                                     </p>
                                     <p className="text-xs text-gray-600">
-                                      💡 All weights sum to 100%. Each percentage is based on banking research, regulatory requirements, and customer behavior studies.
+                                      All weights sum to 100%. Each percentage is based on banking research, regulatory requirements, and customer behavior studies.
                                     </p>
                                   </div>
                                 </div>
@@ -1594,7 +1767,7 @@ export default function BankingAgentB() {
                                 /* HYBRID ML MODEL EXPLANATION */
                                 <div>
                                   <p className="text-xs font-semibold text-purple-900 mb-3">
-                                    🎯 Banking Hybrid Scoring (50% ML + 50% Rules)
+                                    Banking Hybrid Scoring (50% ML + 50% Rules)
                                   </p>
                                   
                                   {/* Final Score */}
@@ -1609,7 +1782,7 @@ export default function BankingAgentB() {
                                   <div className="space-y-2 mb-3">
                                     <div className="flex items-center justify-between p-2 bg-purple-100 rounded">
                                       <div className="flex items-center gap-2">
-                                        <span className="text-xs font-bold text-purple-900">🤖 ML Prediction</span>
+                                        <span className="text-xs font-bold text-purple-900">ML Prediction</span>
                                         <span className="text-xs text-purple-700">(50% weight)</span>
                                       </div>
                                       <div className="flex items-center gap-2">
@@ -1640,7 +1813,7 @@ export default function BankingAgentB() {
                                     {rec.scoring_breakdown?.twelve_factor_breakdown && (
                                       <details className="mt-2 bg-blue-50 p-2 rounded">
                                         <summary className="text-xs font-semibold text-blue-800 cursor-pointer hover:text-blue-900">
-                                          📊 View 12-Factor Banking Rules Breakdown (50% component)
+                                          View 12-Factor Banking Rules Breakdown (50% component)
                                         </summary>
                                         <div className="mt-2 space-y-1 pl-2 border-l-2 border-blue-300">
                                           {Object.entries(rec.scoring_breakdown.twelve_factor_breakdown).filter(([key]) => 
@@ -1717,7 +1890,7 @@ export default function BankingAgentB() {
                                       <span className="font-semibold">Banking 12-Factor Formula:</span> Weighted sum of 12 banking-specific factors
                                     </p>
                                     <p className="text-xs text-gray-600 mt-1">
-                                      💡 Higher scores indicate products that match customer profile, needs, and financial capacity
+                                      Higher scores indicate products that match customer profile, needs, and financial capacity
                                     </p>
                                   </div>
                                 </div>
@@ -1757,7 +1930,7 @@ export default function BankingAgentB() {
                 {/* Recommendation text fallback: shown only if no rank_explanation (unified card above handles both) */}
                 {(rec.recommendation_text || rec.reason) && !rec.rank_explanation && (
                   <div className="mt-4 p-4 bg-green-50 border border-green-200 rounded-lg">
-                    <p className="text-xs font-semibold text-green-800 mb-2">💡 Why This Product?</p>
+                    <p className="text-xs font-semibold text-green-800 mb-2">Why This Product?</p>
                     <div className="text-sm text-gray-800 leading-relaxed">
                       {rec.reason || rec.recommendation_text}
                     </div>

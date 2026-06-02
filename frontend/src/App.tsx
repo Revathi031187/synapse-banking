@@ -1,11 +1,7 @@
 import { BrowserRouter as Router, Routes, Route, Navigate } from 'react-router-dom';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import UnifiedLayout from './components/UnifiedLayout';
-
-// Banking pages (NEW - Primary Demo)
-import BankingDashboard from './pages/banking/BankingDashboard';
 import BankingDataLoader from './pages/banking/BankingDataLoader';
-import BankingAgentA from './pages/banking/BankingAgentA';
 import BankingAgentB from './pages/banking/BankingAgentB';
 import BankingMacroDashboard from './pages/banking/BankingMacroDashboard';
 import BankingAgentC from './pages/banking/BankingAgentC';
@@ -46,10 +42,10 @@ function App() {
           
           {/* Banking Routes (NEW - Primary Demo) */}
           <Route path="/banking" element={<UnifiedLayout industry="banking" />}>
-            <Route index element={<BankingDashboard />} />
+            <Route index element={<Navigate to="data-loader" replace />} />
             <Route path="data-loader" element={<BankingDataLoader />} />
             <Route path="macro-dashboard" element={<BankingMacroDashboard />} />
-            <Route path="agent-a" element={<BankingAgentA />} />
+            <Route path="agent-a" element={<Navigate to="/banking/data-loader" replace />} />
             <Route path="agent-b" element={<BankingAgentB />} />
             <Route path="agent-c" element={<BankingAgentC />} />
             <Route path="agent-d" element={<BankingAgentD />} />

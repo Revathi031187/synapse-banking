@@ -134,15 +134,13 @@ export default function BankingAskGenie() {
   const s = statusQuery.data;
 
   return (
-    <div className="max-w-4xl mx-auto px-4 py-8">
-      <div className="flex items-center gap-3 mb-2">
-        <MessageSquare className="w-8 h-8 text-blue-700" />
-        <h1 className="text-2xl font-bold text-gray-900">Ask Genie</h1>
+    <div className="space-y-6 animate-fadeIn">
+      <div>
+        <h1 className="text-xl font-semibold text-gray-900">Ask Genie</h1>
+        <p className="text-gray-500 text-sm mt-1">
+          Natural-language questions against your Unity Catalog data via a Databricks Genie space. Persona context is injected from the latest Agent A run.
+        </p>
       </div>
-      <p className="text-gray-600 mb-6">
-        Natural-language questions against your Unity Catalog data via a Databricks Genie space. Persona context is
-        injected from the latest Agent A run.
-      </p>
 
       {/* Status */}
       <div className="bg-white rounded-xl border border-gray-200 shadow-sm p-5 mb-6">

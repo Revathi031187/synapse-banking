@@ -140,11 +140,11 @@ export default function BankingAgentA() {
   };
 
   return (
-    <div className="space-y-8">
+    <div className="space-y-6 animate-fadeIn">
       {/* Header */}
       <div>
-        <h1 className="text-4xl font-bold text-gray-900 mb-2">👥 Customer Segmentation</h1>
-        <p className="text-gray-600 text-lg">AI-powered persona identification for retail banking customers</p>
+        <h1 className="text-xl font-semibold text-gray-900 mb-1">Customer Segmentation</h1>
+        <p className="text-gray-500 text-sm">AI-powered persona identification for retail banking customers</p>
       </div>
 
       {/* Parameters Card */}
@@ -153,7 +153,7 @@ export default function BankingAgentA() {
           <div className="w-12 h-12 bg-blue-700 rounded-xl flex items-center justify-center">
             <BarChart3 className="w-6 h-6 text-white" />
           </div>
-          <h2 className="text-2xl font-bold text-gray-900">🎯 Segmentation Parameters</h2>
+          <h2 className="text-base font-semibold text-gray-900">Segmentation Parameters</h2>
         </div>
         
         <div className="grid md:grid-cols-2 gap-6 mb-6">
@@ -267,7 +267,7 @@ export default function BankingAgentA() {
               <div className="bg-white rounded-xl shadow-sm border border-blue-200 p-6">
                 <h3 className="text-xl font-bold text-gray-900 mb-4 flex items-center gap-2">
                   <BarChart3 className="w-5 h-5 text-blue-700" />
-                  📊 Customer Distribution
+                  Customer Distribution
                 </h3>
                 <ResponsiveContainer width="100%" height={300}>
                   <ScatterChart>
@@ -303,7 +303,7 @@ export default function BankingAgentA() {
               <div className="bg-white rounded-xl shadow-sm border border-blue-200 p-6">
                 <h3 className="text-xl font-bold text-gray-900 mb-4 flex items-center gap-2">
                   <Users className="w-5 h-5 text-blue-700" />
-                  👥 Persona Sizes
+                  Persona Sizes
                 </h3>
                 <ResponsiveContainer width="100%" height={300}>
                   <BarChart data={vizData.persona_sizes}>
@@ -324,7 +324,7 @@ export default function BankingAgentA() {
 
           {/* Personas Grid */}
           <div>
-            <h2 className="text-2xl font-bold text-gray-900 mb-6">Customer Personas</h2>
+            <h2 className="text-lg font-semibold text-gray-900 mb-4">Customer Personas</h2>
             <div className="grid md:grid-cols-3 gap-6">
               {Object.entries(personas).map(([personaId, persona]: [string, any], idx) => (
                 <div key={personaId} className="bg-white rounded-xl shadow-sm border border-blue-200 hover:shadow-lg transition-all p-6">
@@ -401,7 +401,7 @@ export default function BankingAgentA() {
               <div className="w-12 h-12 bg-blue-700 rounded-xl flex items-center justify-center">
                 <Sparkles className="w-6 h-6 text-white" />
               </div>
-              <h3 className="text-xl font-bold text-gray-900">💡 Key Insights</h3>
+              <h3 className="text-base font-semibold text-gray-900">Key Insights</h3>
             </div>
             <div className="grid md:grid-cols-2 gap-4">
               <div className="bg-white rounded-lg p-4">

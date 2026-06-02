@@ -202,12 +202,11 @@ export default function BankingAgentD() {
   const canLoad = !!customerId;
 
   return (
-    <div className="min-h-screen bg-gradient-to-b from-slate-50 to-emerald-50/40 pb-16">
-      <div className="max-w-4xl mx-auto px-4 md:px-6 pt-6 space-y-6">
+    <div className="space-y-6 animate-fadeIn">
         {/* Flow breadcrumb — banking */}
         <nav className="flex flex-wrap items-center gap-1 text-xs md:text-sm text-slate-500">
-          <Link to="/banking" className="hover:text-emerald-700">
-            Dashboard
+          <Link to="/banking/data-loader" className="hover:text-emerald-700">
+            Data Loader
           </Link>
           <span>/</span>
           <Link to="/banking/agent-a" className="hover:text-emerald-700">
@@ -234,7 +233,7 @@ export default function BankingAgentD() {
             <Bot className="w-8 h-8" />
           </div>
           <div>
-            <h1 className="text-2xl md:text-3xl font-bold text-slate-900">Agent D: Banking orchestration</h1>
+            <h1 className="text-xl font-semibold text-slate-900">Agent D: Supervisor</h1>
             <p className="text-slate-600 mt-2 text-sm md:text-base leading-relaxed max-w-3xl">
               <strong>Supervisor view</strong> merges digital signals with Agent B and Agent C, builds a live product
               stack, updates the impression ledger, and issues pin instructions for Agent B.
@@ -579,7 +578,6 @@ export default function BankingAgentD() {
             </section>
           </motion.div>
         )}
-      </div>
     </div>
   );
 }
