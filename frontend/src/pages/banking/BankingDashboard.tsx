@@ -21,12 +21,12 @@ export default function BankingDashboard() {
               <span className="text-4xl">🏦</span>
             </div>
             <div>
-              <h1 className="text-5xl font-bold text-white tracking-tight">F&M Bank</h1>
-              <p className="text-xl text-blue-50 mt-2">Farmers & Merchants Bank of Central California</p>
+              <h1 className="text-5xl font-bold text-white tracking-tight">JPMorgan Chase</h1>
+              <p className="text-xl text-blue-50 mt-2">AI-Powered Next Best Action — Personal, Business & Agricultural Banking</p>
             </div>
           </div>
           <p className="text-lg text-blue-50 max-w-2xl">
-            Where Banking Is Easy - Since 1916. AI-powered personalization for Personal, Business & Agricultural Banking.
+            Agentic personalization platform — Claude AI-powered segment naming, compliance-aware offer selection, and behavioral orchestration.
           </p>
         </div>
       </div>
@@ -85,10 +85,10 @@ export default function BankingDashboard() {
                 <p className="text-gray-600 mb-6 flex-1">
                   {status?.agent_a_complete 
                     ? "Interactive visualization with macro and micro segments"
-                    : "⚠️ Run Agent A first to view segments"}
+                    : "⚠️ Run Segmentation first to view segments"}
                 </p>
                 <div className="flex items-center text-blue-700 font-semibold group-hover:gap-3 gap-2 transition-all mt-auto">
-                  <span>{status?.agent_a_complete ? "View Dashboard" : "Run Agent A First"}</span>
+                  <span>{status?.agent_a_complete ? "View Dashboard" : "Run Segmentation First"}</span>
                   <ArrowRight className="w-5 h-5" />
                 </div>
               </div>
@@ -125,10 +125,10 @@ export default function BankingDashboard() {
                 <p className="text-gray-600 mb-6 flex-1">
                   {status?.agent_a_complete
                     ? "Hyper-personalized 1:1 offer per customer with explainability & channels"
-                    : "Run Agent A first to get one best offer per customer"}
+                    : "Run Segmentation first to get one best offer per customer"}
                 </p>
                 <div className="flex items-center text-violet-600 font-semibold group-hover:gap-3 gap-2 transition-all mt-auto">
-                  <span>{status?.agent_a_complete ? "Agent C" : "Run Agent A First"}</span>
+                  <span>{status?.agent_a_complete ? "Best Offer" : "Run Segmentation First"}</span>
                   <ArrowRight className="w-5 h-5" />
                 </div>
               </div>
@@ -155,7 +155,7 @@ export default function BankingDashboard() {
                 <div className="w-6 h-6 bg-blue-700 rounded-full flex items-center justify-center text-white text-sm font-bold flex-shrink-0 mt-0.5">2</div>
                 <div>
                   <div className="font-semibold text-gray-900">Run Segmentation</div>
-                  <div className="text-sm text-gray-600">Use Agent A to create customer personas (High Net Worth, Young Professionals, etc.)</div>
+                  <div className="text-sm text-gray-600">AI-powered clustering creates customer personas (High Net Worth, Young Professionals, etc.)</div>
                 </div>
               </div>
               <div className="flex items-start gap-3">
@@ -169,7 +169,7 @@ export default function BankingDashboard() {
                 <div className="w-6 h-6 bg-amber-500 rounded-full flex items-center justify-center text-white text-sm font-bold flex-shrink-0 mt-0.5">4</div>
                 <div>
                   <div className="font-semibold text-gray-900">Generate Recommendations</div>
-                  <div className="text-sm text-gray-600">Use Agent B to match products to customer profiles</div>
+                  <div className="text-sm text-gray-600">Match products to customer profiles using 12-factor scoring</div>
                 </div>
               </div>
             </div>
@@ -207,7 +207,7 @@ export default function BankingDashboard() {
                 )}
               </div>
               <div>
-                <div className="text-lg font-bold text-gray-900 mb-1">Agent A Status</div>
+                <div className="text-lg font-bold text-gray-900 mb-1">Segmentation Status</div>
                 <div className="text-sm text-gray-600">
                   {status?.agent_a_complete ? 'Segmentation Complete' : 'Not Run Yet'}
                 </div>
@@ -223,7 +223,7 @@ export default function BankingDashboard() {
                 )}
               </div>
               <div>
-                <div className="text-lg font-bold text-gray-900 mb-1">Agent B Status</div>
+                <div className="text-lg font-bold text-gray-900 mb-1">Recommender Status</div>
                 <div className="text-sm text-gray-600">
                   {status?.agent_b_complete ? 'Recommendations Ready' : 'Not Run Yet'}
                 </div>

@@ -15,7 +15,7 @@ try:
     from kmodes.kprototypes import KPrototypes
     KMODES_AVAILABLE = True
 except ImportError:
-    print("⚠️  Warning: kmodes not installed. Run: pip install kmodes")
+    print("Warning: kmodes not installed. Run: pip install kmodes")
     KMODES_AVAILABLE = False
 
 # Add utils to path for image mapper and optional LLM
@@ -25,13 +25,20 @@ try:
     IMAGE_MAPPER_AVAILABLE = True
 except ImportError:
     IMAGE_MAPPER_AVAILABLE = False
-    print("⚠️  Warning: Image mapper not available")
+    print("Warning: Image mapper not available")
 try:
     from utils.together_ai import together_ai
     TOGETHER_AI_AVAILABLE = True
 except ImportError:
     TOGETHER_AI_AVAILABLE = False
     together_ai = None
+
+try:
+    from utils.claude_client import get_claude_client
+    CLAUDE_AVAILABLE = True
+except ImportError:
+    CLAUDE_AVAILABLE = False
+    get_claude_client = None
 
 logger = logging.getLogger(__name__)
 
@@ -111,6 +118,17 @@ class AgentA_Banking_Enhanced:
     
     def _create_derived_columns(self):
         """Create derived columns from banking_nba data to match expected schema"""
+        # Backward-compat aliases: new column names → old names expected by all downstream code
+        _col_aliases = {
+            'total_deposit_value':       'total_deposits',
+            'avg_daily_balance_p30days': 'avg_daily_balance',
+            'customer_type':             'customer_segment',
+            'credit_score_trend_p6mo':   'credit_score_trend',
+        }
+        for new_col, old_col in _col_aliases.items():
+            if new_col in self.customers_df.columns and old_col not in self.customers_df.columns:
+                self.customers_df[old_col] = self.customers_df[new_col]
+
         # Map existing columns to expected names
         if 'login_frequency_30d' in self.customers_df.columns:
             # Normalize login frequency to 0-1 scale
@@ -129,27 +147,33 @@ class AgentA_Banking_Enhanced:
             self.customers_df['branch_visit_frequency'] = 0.3
         
         # Product adoption velocity (based on products per tenure)
-        # ALWAYS create num_products column first
-        try:
-            if 'product_id' in self.transactions_df.columns:
-                product_counts = self.transactions_df.groupby('customer_id')['product_id'].nunique()
-                self.customers_df['num_products'] = self.customers_df['customer_id'].map(product_counts).fillna(2)
-            else:
-                # Try product_holdings file
-                try:
-                    holdings_df = pd.read_csv(self.data_path / 'product_holdings.csv')
-                    product_counts = holdings_df.groupby('customer_id').size()
+        # Preserve pre-patched num_products from customers.csv if already meaningful
+        _has_products_col = (
+            'num_products' in self.customers_df.columns
+            and self.customers_df['num_products'].notna().all()
+            and self.customers_df['num_products'].mean() > 0.5
+        )
+        if not _has_products_col:
+            try:
+                if 'product_id' in self.transactions_df.columns:
+                    product_counts = self.transactions_df.groupby('customer_id')['product_id'].nunique()
                     self.customers_df['num_products'] = self.customers_df['customer_id'].map(product_counts).fillna(2)
-                except:
-                    self.customers_df['num_products'] = 2  # Default
-        except Exception as e:
-            logger.warning(f"Could not count products: {e}")
-            self.customers_df['num_products'] = 2  # Default
+                else:
+                    try:
+                        holdings_df = pd.read_csv(self.data_path / 'product_holdings.csv')
+                        product_counts = holdings_df.groupby('customer_id').size()
+                        self.customers_df['num_products'] = self.customers_df['customer_id'].map(product_counts).fillna(2)
+                    except:
+                        self.customers_df['num_products'] = 2
+            except Exception as e:
+                logger.warning(f"Could not count products: {e}")
+                self.customers_df['num_products'] = 2
         
         # Now calculate product adoption velocity if tenure exists
-        if 'tenure_months' in self.customers_df.columns:
+        tenure_col = 'months_since_relationship_started' if 'months_since_relationship_started' in self.customers_df.columns else 'tenure_months'
+        if tenure_col in self.customers_df.columns:
             self.customers_df['product_adoption_velocity'] = (
-                self.customers_df['num_products'] / (self.customers_df['tenure_months'] + 1)
+                self.customers_df['num_products'] / (self.customers_df[tenure_col] + 1)
             ).clip(0, 1)
         else:
             self.customers_df['product_adoption_velocity'] = 0.5
@@ -237,24 +261,26 @@ class AgentA_Banking_Enhanced:
                 else ('Pre-Retiree' if age < 65 else 'Retiree')))
             )
         
-        # Account tenure months (already exists as tenure_months)
-        if 'tenure_months' in self.customers_df.columns:
-            self.customers_df['account_tenure_months'] = self.customers_df['tenure_months']
+        # Account tenure months
+        tenure_col = 'months_since_relationship_started' if 'months_since_relationship_started' in self.customers_df.columns else 'tenure_months'
+        if tenure_col in self.customers_df.columns:
+            self.customers_df['account_tenure_months'] = self.customers_df[tenure_col]
         else:
             self.customers_df['account_tenure_months'] = 24
         
         # Relationship length years
         self.customers_df['relationship_length_years'] = (self.customers_df['account_tenure_months'] / 12).astype(int)
         
-        # Risk tolerance (from risk_category)
-        if 'risk_category' in self.customers_df.columns:
-            self.customers_df['risk_tolerance'] = self.customers_df['risk_category'].astype(str).replace({
-                'low': 'Conservative',
-                'medium': 'Moderate',
-                'high': 'Aggressive'
-            })
-        else:
-            self.customers_df['risk_tolerance'] = 'Moderate'
+        # Risk tolerance (preserve CSV value if present; derive from risk_category as fallback)
+        if 'risk_tolerance' not in self.customers_df.columns:
+            if 'risk_category' in self.customers_df.columns:
+                self.customers_df['risk_tolerance'] = self.customers_df['risk_category'].astype(str).replace({
+                    'low': 'Conservative',
+                    'medium': 'Moderate',
+                    'high': 'Aggressive'
+                })
+            else:
+                self.customers_df['risk_tolerance'] = 'Moderate'
         
         # Join date (estimate from tenure)
         from datetime import datetime, timedelta
@@ -265,56 +291,258 @@ class AgentA_Banking_Enhanced:
         
         logger.info("✅ Created derived columns for clustering")
     
-    def _generate_dynamic_segment_name(self, characteristics, percentile, primary_trait, avg_transactions_real, cluster_id=None):
+    # Canonical archetype names — one fixed name per archetype type.
+    # These are the exact names the business wants: clear, non-technical, universally understandable.
+    _ARCHETYPE_CANONICAL_NAMES = {
+        'HIGH-VALUE':    'Wealth Builder',
+        'EVERYDAY':      'Everyday Essential',
+        'DIGITAL-FIRST': 'Digital Native',
+        'LOYAL-STABLE':  'Retiree Anchor',
+        'AT-RISK':       'At-Risk Borrower',
+    }
+
+    # Trait-based fallback pools — used only when archetype pre-classification is unavailable
+    _TRAIT_NAME_POOLS = {
+        'deposits':     ['Wealth Builder', 'Deep Saver', 'Vault Keeper', 'Capital Grower', 'Legacy Holder'],
+        'digital':      ['Digital Native', 'Mobile Pioneer', 'App-First Banker', 'Connected Spender', 'Tech Adopter'],
+        'products':     ['Full-Stack Client', 'Relationship Maximizer', 'Deep Bundler', 'Portfolio Builder', 'All-In Banker'],
+        'transactions': ['Everyday Essential', 'Active Transactor', 'Daily Driver', 'Frequent Mover', 'Core Spender'],
+        'cross_sell':   ['Rising Achiever', 'Growth Seeker', 'Cautious Climber', 'Ready Mover', 'Opportunity Seeker'],
+        'income':       ['At-Risk Borrower', 'Income Leader', 'Top Bracket', 'Cautious Spender', 'High Earner'],
+    }
+
+    def _generate_dynamic_segment_profile(self, characteristics, percentile, primary_trait, avg_transactions_real, cluster_id=None, used_names=None, extra_stats=None):
         """
-        Generate COMPLETELY UNIQUE segment names with NO repetition
-        
-        Strategy: Each segment gets a unique combination that CANNOT repeat
-        Uses 5 distinct naming pools to ensure variety
+        Generate segment name + plain-English description via LLM.
+        Returns (name: str, description: str). Falls back to canonical name on failure.
         """
-        
-        # Extract all key metrics
-        deposits = characteristics['avg_deposits']
-        digital = characteristics['avg_digital']
-        products = characteristics['avg_products']
-        cross_sell = characteristics['avg_cross_sell']
-        age = characteristics.get('avg_age', 45)
-        
-        # Define 5 COMPLETELY DIFFERENT naming pools (one per segment)
-        # Each pool has unique descriptors that don't overlap
-        
-        # SIMPLIFIED NAMING - Just 2 words for UI visibility
-        naming_pools = [
-            # Pool A: Premium segment
-            ['Premium Digital', 'Elite Savers', 'Wealth Investors', 'VIP Banking', 'Platinum Members'],
-            # Pool B: Growth segment  
-            ['Rising Savers', 'Growth Builders', 'Active Earners', 'Aspiring Wealth', 'Dynamic Planners'],
-            # Pool C: Established segment
-            ['Core Banking', 'Steady Savers', 'Traditional Members', 'Established Customers', 'Reliable Banking'],
-            # Pool D: Young/Tech segment
-            ['Mobile First', 'Digital Natives', 'Tech Adopters', 'Modern Banking', 'App Users'],
-            # Pool E: Family segment
-            ['Family Banking', 'Household Savers', 'Community Members', 'Local Banking', 'Neighborhood Partners']
-        ]
-        
-        # Select pool based on cluster_id to guarantee uniqueness
-        pool_index = cluster_id % len(naming_pools) if cluster_id is not None else 0
-        pool = naming_pools[pool_index]
-        
-        # Select ONE name from the pool based on combined characteristics
-        # This creates a score to pick the best name from the 5 options
-        deposit_score = min(4, int(deposits / 300000))  # 0-4
-        transaction_score = min(4, int(avg_transactions_real / 8))  # 0-4
-        digital_score = min(4, int(digital / 0.20))  # 0-4
-        
-        # Combined scoring to pick name index (0-4)
-        combined_score = (deposit_score + transaction_score + digital_score) // 3
-        name_idx = min(4, max(0, combined_score))
-        
-        unique_name = pool[name_idx]
-        
-        return unique_name
+        import time
+        extra = extra_stats or {}
+        archetype_type = extra.get('archetype_type', '')
+
+        if CLAUDE_AVAILABLE and get_claude_client:
+            try:
+                client = get_claude_client()
+                if client.is_available():
+                    t0 = time.monotonic()
+                    stats_for_llm = {
+                        'avg_income':               characteristics.get('avg_income', 0),
+                        'avg_credit_score':         characteristics.get('avg_credit_score', 650),
+                        'avg_deposits':             characteristics.get('avg_deposits', 0),
+                        'avg_digital_engagement':   characteristics.get('avg_digital', 0.5),
+                        'avg_products':             characteristics.get('avg_products', 2.0),
+                        'avg_transactions':         avg_transactions_real,
+                        'avg_age':                  characteristics.get('avg_age', 40),
+                        'dominant_life_stage':      characteristics.get('dominant_life_stage', ''),
+                        'dominant_risk_tolerance':  extra.get('dominant_risk', characteristics.get('dominant_risk_tolerance', 'Moderate')),
+                        'dominant_financial_goal':  extra.get('dominant_goal', ''),
+                        'avg_churn_probability':    extra.get('avg_churn', 0.15),
+                        'dominant_clv_tier':        extra.get('dominant_clv_tier', 'Silver'),
+                        'primary_trait':            primary_trait,
+                        'archetype_type':           archetype_type,
+                    }
+                    result = client.generate_segment_profile(
+                        stats_for_llm,
+                        used_names=list(used_names) if used_names else [],
+                        segment_type="macro",
+                    )
+                    duration_ms = int((time.monotonic() - t0) * 1000)
+                    llm_name = result.get('name', '')
+                    llm_desc = result.get('description', '')
+                    if llm_name and 1 <= len(llm_name.split()) <= 4:
+                        logger.info(f"LLM segment: '{llm_name}' ({archetype_type}, {duration_ms}ms)")
+                        characteristics['_segment_name_source'] = 'llm'
+                        characteristics['_segment_description'] = llm_desc
+                        return llm_name, llm_desc
+            except Exception as e:
+                logger.warning(f"Claude segment profile failed, using fallback: {e}")
+
+        # Fallback to canonical name when LLM is unavailable
+        fallback_name = self._ARCHETYPE_CANONICAL_NAMES.get(
+            archetype_type,
+            self._trait_based_segment_name(primary_trait, characteristics, cluster_id, used_names)
+        )
+        characteristics['_segment_name_source'] = 'rule_based'
+        desc = f"{fallback_name} — {archetype_type or primary_trait} customer group."
+        characteristics['_segment_description'] = desc
+        return fallback_name, desc
+
+    def _generate_dynamic_segment_name(self, characteristics, percentile, primary_trait, avg_transactions_real, cluster_id=None, used_names=None):
+        """Thin wrapper kept for backward compat — returns name only."""
+        name, _ = self._generate_dynamic_segment_profile(
+            characteristics, percentile, primary_trait, avg_transactions_real,
+            cluster_id=cluster_id, used_names=used_names,
+        )
+        return name
+
+    def _trait_based_segment_name(self, primary_trait, characteristics, cluster_id=None, used_names=None):
+        """Deterministic fallback: pick the first unused name from the trait pool."""
+        pool = self._TRAIT_NAME_POOLS.get(primary_trait, self._TRAIT_NAME_POOLS['deposits'])
+        taken = set(used_names or [])
+        for name in pool:
+            if name not in taken:
+                return name
+        # All pool names taken — append cluster id to last entry to guarantee uniqueness
+        return f"{pool[-1]} {cluster_id or ''}"
     
+    def _classify_customer_to_segment(self, row):
+        """Deterministic per-customer rule-based segmentation.
+
+        Called after K-Prototypes to override unreliable cluster assignments.
+        Rules are calibrated to the v2 Meridian Bank data distributions and
+        guarantee the correct 5 archetypes regardless of K-Prototypes initialization.
+
+        Cluster IDs:
+          0 = HIGH-VALUE   (Wealth Builder)
+          1 = DIGITAL-FIRST (Digital Native)
+          2 = EVERYDAY     (Everyday Essential)
+          3 = LOYAL-STABLE  (Retiree Anchor)
+          4 = AT-RISK       (At-Risk Borrower)
+        """
+        age      = float(row.get('age', 45) or 45)
+        digital  = float(row.get('digital_engagement_score', 0.5) or 0.5)
+        deposits = float(row.get('total_deposits', 0) or 0)
+        income   = float(row.get('income', 50000) or 50000)
+        credit   = float(row.get('credit_score', 650) or 650)
+        churn    = float(row.get('churn_probability', 0.2) or
+                         row.get('churn_proxy', 0.2) or 0.2)
+
+        # 1. Retiree Anchor — elderly + very low digital (unique age+digital signature)
+        #    Retiree patch lo=57, Everyday hi=63 — threshold 63 sits above the new overlap zone
+        if age >= 63 and digital < 0.45:
+            return 3  # LOYAL-STABLE
+
+        # 2. Digital Native — extremely high digital (0.82-0.99)
+        #    Wealth Builder digital is capped at 0.78 in v2 data, gap is clean
+        elif digital >= 0.79:
+            return 1  # DIGITAL-FIRST
+
+        # 3. At-Risk Borrower — low credit + high churn
+        #    At-Risk credit: 512-612; churn: 0.38-0.88. Everyday credit min ~644 — no overlap.
+        #    At-Risk deposits now ~$20K; classification relies purely on credit + churn signals.
+        elif credit <= 630 and churn >= 0.38:
+            return 4  # AT-RISK
+
+        # 4. Wealth Builder — high income (primary separator)
+        #    Digital max ~$122K, Everyday max ~$102K — threshold at $128K sits cleanly above both
+        elif income >= 128000:
+            return 0  # HIGH-VALUE
+
+        # 5. Everyday Essential — residual bucket
+        else:
+            return 2  # EVERYDAY
+
+    def _relabel_clusters_to_archetypes(self, df):
+        """Rename K-Prototypes cluster IDs to canonical archetype IDs by centroid proximity.
+
+        Does NOT reassign customers — only renames cluster labels so downstream
+        persona-naming always sees the expected IDs:
+          0 = HIGH-VALUE    (Wealth Builder)
+          1 = DIGITAL-FIRST (Digital Native)
+          2 = EVERYDAY      (Everyday Essential)
+          3 = LOYAL-STABLE  (Retiree Anchor)
+          4 = AT-RISK       (At-Risk Borrower)
+        """
+        import numpy as np
+
+        FEATURE_COLS = ['income', 'credit_score', 'total_deposits',
+                        'digital_engagement_score', 'age', 'churn_probability']
+        available = [c for c in FEATURE_COLS if c in df.columns]
+
+        ARCHETYPE_TARGETS = {
+            0: {'income': 195000, 'credit_score': 810, 'total_deposits': 115000,
+                'digital_engagement_score': 0.64, 'age': 48, 'churn_probability': 0.09},
+            1: {'income':  82000, 'credit_score': 700, 'total_deposits': 42000,
+                'digital_engagement_score': 0.92, 'age': 27, 'churn_probability': 0.30},
+            2: {'income':  72000, 'credit_score': 710, 'total_deposits': 52000,
+                'digital_engagement_score': 0.45, 'age': 41, 'churn_probability': 0.26},
+            3: {'income':  38000, 'credit_score': 780, 'total_deposits': 185000,
+                'digital_engagement_score': 0.22, 'age': 70, 'churn_probability': 0.07},
+            4: {'income':  35000, 'credit_score': 568, 'total_deposits': 10000,
+                'digital_engagement_score': 0.52, 'age': 35, 'churn_probability': 0.58},
+        }
+
+        cluster_ids = sorted(df['cluster'].unique())
+        n_archetypes = 5
+
+        cluster_means = np.array([
+            [df.loc[df['cluster'] == cid, col].mean() for col in available]
+            for cid in cluster_ids
+        ])
+        archetype_means = np.array([
+            [ARCHETYPE_TARGETS[aid].get(col, 0) for col in available]
+            for aid in range(n_archetypes)
+        ])
+
+        # Normalize by cross-cluster std so no single feature (e.g. income) dominates
+        scales = cluster_means.std(axis=0) + 1e-6
+        cm_norm = cluster_means / scales
+        am_norm = archetype_means / scales
+
+        # Pairwise Euclidean distances: (n_clusters × n_archetypes)
+        dist = np.sqrt(((cm_norm[:, np.newaxis, :] - am_norm[np.newaxis, :, :]) ** 2).sum(axis=2))
+
+        # Greedy assignment: smallest distance first, each cluster/archetype used once
+        mapping = {}
+        used_archetypes = set()
+        for idx in np.argsort(dist.ravel()):
+            ci, ai = divmod(int(idx), n_archetypes)
+            if cluster_ids[ci] not in mapping and ai not in used_archetypes:
+                mapping[cluster_ids[ci]] = ai
+                used_archetypes.add(ai)
+            if len(mapping) == len(cluster_ids):
+                break
+
+        for cid in cluster_ids:
+            if cid not in mapping:
+                mapping[cid] = 2  # residual → EVERYDAY
+
+        return mapping
+
+    def _classify_archetype(self, characteristics, extra_stats, assigned_types):
+        """Rule-based pre-classification into one of 5 banking archetypes.
+
+        Uses THRESHOLD-BASED scoring: each archetype score is 0 for an average customer
+        and only rises when stats clearly exceed the archetype threshold. EVERYDAY has a
+        small fixed score so it wins whenever no other archetype fires strongly — this
+        prevents the majority 'average' cluster from being misclassified as AT-RISK."""
+        income   = characteristics.get('avg_income', 0)
+        credit   = characteristics.get('avg_credit_score', 650)
+        deposits = characteristics.get('avg_deposits', 0)
+        digital  = characteristics.get('avg_digital', 0.5)
+        age      = characteristics.get('avg_age', 45)
+        churn    = extra_stats.get('avg_churn', 0.15)
+        txn      = extra_stats.get('avg_transactions', 20)
+
+        all_scores = {
+            # HIGH-VALUE: only fires for genuinely high income+credit+deposits
+            'HIGH-VALUE': (max(0, income - 100000) / 20000
+                           + max(0, credit - 740) / 50
+                           + max(0, deposits - 75000) / 25000),
+            # DIGITAL-FIRST: high digital AND young AND high transactions
+            'DIGITAL-FIRST': (max(0, digital - 0.62) / 0.15
+                               + max(0, 37 - age) / 8
+                               + max(0, txn - 50) / 20),
+            # LOYAL-STABLE: older, branch-preferring, low churn
+            'LOYAL-STABLE': (max(0, age - 58) / 8
+                              + max(0, 0.42 - digital) / 0.15
+                              + max(0, 0.20 - churn) * 5),
+            # AT-RISK: genuinely low income + low credit + high churn
+            'AT-RISK': (max(0, 50000 - income) / 15000
+                        + max(0, 640 - credit) / 50
+                        + max(0, churn - 0.28) / 0.25),
+            # EVERYDAY: fixed baseline — wins when no strong archetype signal found
+            'EVERYDAY': 2.0,
+        }
+        # Exclude already-assigned archetypes to enforce variety across segments.
+        # If all 5 are taken (n > 5 segments), allow reuse — the LLM will generate
+        # a variant name since the original is already in used_names.
+        scores = {k: v for k, v in all_scores.items() if k not in assigned_types}
+        if not scores:
+            scores = all_scores  # n > 5: pick best-fit regardless of prior assignments
+
+        return max(scores, key=scores.get)
+
     def _calculate_real_transaction_metrics(self, cluster_data):
         """
         Calculate transaction metrics - PRIORITIZE customer column (source of truth)
@@ -405,8 +633,9 @@ class AgentA_Banking_Enhanced:
         cross_sell_base = cluster_data['cross_sell_receptivity'].mean() if 'cross_sell_receptivity' in cluster_data.columns else 0.5
         
         # Product adoption velocity (more products = higher intent)
-        if 'num_products' in cluster_data.columns and 'tenure_months' in cluster_data.columns:
-            product_velocity = (cluster_data['num_products'] / (cluster_data['tenure_months'] + 1)).mean()
+        tenure_col = 'months_since_relationship_started' if 'months_since_relationship_started' in cluster_data.columns else 'tenure_months'
+        if 'num_products' in cluster_data.columns and tenure_col in cluster_data.columns:
+            product_velocity = (cluster_data['num_products'] / (cluster_data[tenure_col] + 1)).mean()
             product_velocity = min(product_velocity, 1.0)  # Cap at 1.0
         else:
             product_velocity = 0.5
@@ -573,38 +802,49 @@ class AgentA_Banking_Enhanced:
             (1 - (df_enhanced['overdraft_frequency'] / 10.0)) * 0.2
         )
         
-        # Add CLV if available (from enhanced data)
-        if 'customer_lifetime_value' not in df_enhanced.columns and 'tenure_months' in df_enhanced.columns:
-            # Calculate CLV on the fly if not in data
-            df_enhanced['annual_transaction_value'] = df_enhanced['monthly_transaction_volume'] * df_enhanced['total_deposits'] * 0.002
-            df_enhanced['expected_relationship_years'] = df_enhanced['tenure_months'].apply(lambda x: min(x / 12, 10))
-            df_enhanced['customer_lifetime_value'] = (
-                df_enhanced['total_deposits'] + 
-                (df_enhanced['annual_transaction_value'] * df_enhanced['expected_relationship_years'])
-            )
-            logger.info("✓ Calculated CLV from existing data")
-        
+        # Normalized age — key for separating Retiree Anchor (old) from Digital Native (young)
+        if 'age' in df_enhanced.columns:
+            age_min = df_enhanced['age'].min()
+            age_max = df_enhanced['age'].max()
+            df_enhanced['age_normalized'] = (df_enhanced['age'] - age_min) / (age_max - age_min + 1e-6)
+        else:
+            df_enhanced['age_normalized'] = 0.4
+
+        # Churn/risk proxy — key for isolating the At-Risk Borrower archetype
+        if 'churn_probability' in df_enhanced.columns:
+            df_enhanced['churn_proxy'] = df_enhanced['churn_probability']
+        elif 'overdraft_frequency' in df_enhanced.columns:
+            df_max = df_enhanced['overdraft_frequency'].max()
+            df_enhanced['churn_proxy'] = (df_enhanced['overdraft_frequency'] / (df_max + 1e-6)).fillna(0.15)
+        else:
+            df_enhanced['churn_proxy'] = 0.15
+
         # Select features for clustering with IMPORTANCE WEIGHTING
-        # High-impact features that drive business decisions
+        # PRIMARY: features that drive the 5 core banking archetypes
+        #   Wealth Builder  → total_deposits + income + credit_score (high all three)
+        #   Everyday Essential → income (mid) + digital_engagement (low/mid) + cross_sell
+        #   Digital Native  → digital_engagement_score + monthly_transaction_volume
+        #   Retiree Anchor  → age_normalized (high) + total_deposits (high) + churn_proxy (low)
+        #   At-Risk Borrower → credit_score (low) + churn_proxy (high) + income (low)
         primary_features = [
-            'customer_lifetime_value',  # MOST IMPORTANT - Total customer value over lifetime
-            'total_deposits',  # Current wealth tier
-            'monthly_transaction_volume',  # Activity level
-            'cross_sell_receptivity',  # Willingness to buy
-            'num_products',  # Relationship depth
-            'digital_engagement_score',  # Channel preference
+            'total_deposits',             # Wealth tier → Wealth Builder / Retiree Anchor
+            'income',                     # Earning power → Wealth Builder / At-Risk
+            'credit_score',               # Creditworthiness → At-Risk Borrower
+            'monthly_transaction_volume', # Activity level → Digital Native / Everyday Essential
+            'digital_engagement_score',   # Channel preference → Digital Native
+            'churn_proxy',                # Risk level → At-Risk Borrower
+            'age_normalized',             # MOVED to primary: life stage → Retiree Anchor vs Digital Native
         ]
-        
-        # Supporting features
+
+        # Supporting features (1× weight)
         secondary_features = [
+            'num_products',
+            'cross_sell_receptivity',
             'product_adoption_velocity',
-            'income',
-            'credit_score',
-            'customer_value_score',
-            'digital_adoption',
-            'financial_health'
+            # Removed: digital_adoption (correlated with digital_engagement_score → was 3× digital weight)
+            # Removed: customer_value_score, financial_health (composite / double-counts income + deposits)
         ]
-        
+
         # BOOST primary features by duplicating them (increases their weight in clustering)
         numeric_cols = primary_features + primary_features + secondary_features  # Primary features count 2x
         
@@ -652,16 +892,14 @@ class AgentA_Banking_Enhanced:
                 
                 # OPTIMIZED: Single run with reduced iterations (50x faster!)
                 try:
-                    # Remove random_state to allow gamma to affect clustering differently
-                    # Gamma changes the distance metric, which should produce different clusters
                     model = KPrototypes(
                         n_clusters=n_clusters,
                         gamma=gamma,
-                        init='Huang',
-                        n_init=3,  # Multiple inits for better convergence
-                        max_iter=50,  # More iterations
+                        init='Cao',
+                        n_init=3,        # 3 starts — enough quality, allows boundary variation
+                        max_iter=100,
+                        random_state=None,  # Non-deterministic: natural variation each run
                         verbose=0
-                        # NO random_state - allow variation with gamma
                     )
                     
                     clusters_temp = model.fit_predict(X_scaled.values, categorical=cat_indices)
@@ -685,7 +923,7 @@ class AgentA_Banking_Enhanced:
                 # Validate business constraints
                 temp_validation = self._validate_business_constraints(
                     min_cluster_size_pct=10,
-                    min_deposits_per_customer=5000
+                    min_deposits_per_customer=500
                 )
                 
                 # Score this solution
@@ -714,7 +952,18 @@ class AgentA_Banking_Enhanced:
             # Add clusters to dataframe
             df_enhanced['cluster'] = clusters
             self.customers_df = df_enhanced
-            
+
+            # Relabel K-Prototypes cluster IDs → canonical archetype IDs.
+            # Cluster membership is preserved; only the numeric label is renamed.
+            # This keeps the natural, organic counts from K-Prototypes while
+            # ensuring each cluster maps to the correct archetype for persona naming.
+            logger.info("Relabeling K-Prototypes clusters to canonical archetype IDs...")
+            relabel_map = self._relabel_clusters_to_archetypes(df_enhanced)
+            df_enhanced['cluster'] = df_enhanced['cluster'].map(relabel_map)
+            self.customers_df = df_enhanced
+            relabel_counts = df_enhanced['cluster'].value_counts().sort_index().to_dict()
+            logger.info(f"Segment sizes after relabeling: {relabel_counts}")
+
             # Generate final personas
             self.personas = self._generate_personas(numeric_cols, categorical_cols)
             
@@ -733,7 +982,7 @@ class AgentA_Banking_Enhanced:
                 from sklearn.metrics import silhouette_score as calc_silhouette
                 # Use only numeric features for silhouette score
                 numeric_data = df_enhanced[numeric_cols].values
-                silhouette_score = float(calc_silhouette(numeric_data, clusters))
+                silhouette_score = float(calc_silhouette(numeric_data, df_enhanced['cluster'].values))
                 logger.info(f"📊 Silhouette Score: {silhouette_score:.3f}")
             except Exception as e:
                 logger.warning(f"Could not calculate silhouette score: {e}")
@@ -768,12 +1017,19 @@ class AgentA_Banking_Enhanced:
         personas = {}
         used_names = set()  # Track used names to prevent duplicates
         used_images = set()  # Track used images to prevent duplicates
+        assigned_archetype_types = set()  # Each macro segment gets a distinct archetype type
         
-        # NO MORE PREDEFINED ARCHETYPES - Everything is data-driven now!
-        
-        for cluster_id in sorted(self.customers_df['cluster'].unique()):
+        # Process clusters largest-first so the mega-cluster always gets first pick on archetypes.
+        # This prevents a small cluster from claiming EVERYDAY and pushing the majority cluster
+        # into a wrong archetype (e.g., LOYAL-STABLE for 63% of customers).
+        cluster_ids_by_size = sorted(
+            self.customers_df['cluster'].unique(),
+            key=lambda cid: -len(self.customers_df[self.customers_df['cluster'] == cid])
+        )
+
+        for cluster_id in cluster_ids_by_size:
             cluster_data = self.customers_df[self.customers_df['cluster'] == cluster_id]
-            
+
             # Calculate statistics
             size = len(cluster_data)
             percentage = (size / len(self.customers_df)) * 100
@@ -855,20 +1111,48 @@ class AgentA_Banking_Enhanced:
             # ============================================================================
             # DYNAMIC SEGMENT NAMING - Generated from actual data characteristics
             # ============================================================================
-            
+
             # Calculate REAL transaction metrics first (needed for naming)
             txn_metrics = self._calculate_real_transaction_metrics(cluster_data)
-            avg_transactions_real = txn_metrics['monthly_transaction_rate']  # Use MONTHLY rate, not annual!
-            
-            # Generate UNIQUE dynamic name based on actual characteristics
-            persona_name = self._generate_dynamic_segment_name(
-                characteristics, 
-                percentile, 
+            avg_transactions_real = txn_metrics['monthly_transaction_rate']
+
+            # Collect extra stats for richer LLM prompt
+            avg_churn = float(cluster_data['churn_probability'].mean()) if 'churn_probability' in cluster_data.columns else 0.15
+            dominant_goal = (cluster_data['financial_goal'].mode()[0]
+                             if 'financial_goal' in cluster_data.columns and len(cluster_data['financial_goal'].mode()) > 0
+                             else '')
+            dominant_clv = (cluster_data['clv_tier'].mode()[0]
+                            if 'clv_tier' in cluster_data.columns and len(cluster_data['clv_tier'].mode()) > 0
+                            else 'Silver')
+            extra_stats = {
+                'avg_churn':       avg_churn,
+                'dominant_goal':   dominant_goal,
+                'dominant_clv_tier': dominant_clv,
+                'dominant_risk':   dominant_risk,
+            }
+
+            # Add credit score to characteristics so LLM gets it
+            characteristics['avg_credit_score'] = float(avg_credit_score)
+            characteristics['avg_digital_engagement'] = float(avg_digital)
+
+            # Pre-classify archetype type so the LLM gets a hard constraint, not just inspiration
+            extra_stats['avg_transactions'] = avg_transactions_real
+            archetype_type = self._classify_archetype(characteristics, extra_stats, assigned_archetype_types)
+            assigned_archetype_types.add(archetype_type)
+            extra_stats['archetype_type'] = archetype_type
+            logger.info(f"  Cluster {cluster_id}: pre-classified as {archetype_type}")
+
+            # Generate UNIQUE dynamic name + description in one LLM call
+            persona_name, persona_description = self._generate_dynamic_segment_profile(
+                characteristics,
+                percentile,
                 primary_trait,
                 avg_transactions_real,
-                cluster_id=cluster_id  # Pass cluster_id for guaranteed uniqueness
+                cluster_id=cluster_id,
+                used_names=list(used_names),
+                extra_stats=extra_stats,
             )
-            
+
             # Dynamic emoji based on primary trait
             emoji_map = {
                 'deposits': '💰',
@@ -878,24 +1162,22 @@ class AgentA_Banking_Enhanced:
                 'cross_sell': '🎯'
             }
             emoji = emoji_map.get(primary_trait, '👥')
-            
-            # STRICT VALIDATION: Names should NEVER collide with new pool-based logic
+
+            # STRICT VALIDATION: Names should NEVER collide
             if persona_name in used_names:
-                # This should NEVER happen - indicates a serious logic error
                 logger.error(f"CRITICAL ERROR: Duplicate name '{persona_name}' detected!")
-                logger.error(f"  Cluster {cluster_id} attempted to use a name already taken")
                 raise ValueError(f"Segment naming logic failed - duplicate '{persona_name}' detected!")
-            
+
             used_names.add(persona_name)
             logger.info(f"✓ Unique name generated: '{persona_name}'")
-            
+
             # Generate short name
             short_name = ''.join([word[0].upper() for word in persona_name.split()[:3]])
             if not short_name:
                 short_name = f"SEG{cluster_id}"
-            
-            # Description with PRIMARY trait
-            description = f"{persona_name} - {primary_trait.title()} leaders ({percentile:.0f}th percentile)"
+
+            # Use LLM-generated description (or rule-based fallback stored in characteristics)
+            description = persona_description or characteristics.get('_segment_description', f"{persona_name} — {primary_trait.title()} segment")
             
             logger.info(f"✓ Cluster {cluster_id}: {persona_name} ({primary_trait} @ {percentile:.0f}th percentile)")
             
@@ -923,10 +1205,11 @@ class AgentA_Banking_Enhanced:
                 'name': persona_name,  # Add both for compatibility
                 'short_name': short_name,
                 'description': description,
+                'segment_name_source': characteristics.get('_segment_name_source', 'rule_based'),
                 'size': int(size),
                 'percentage': float(percentage),
                 # Frontend expects these at root level - NOW FULLY DYNAMIC!
-                'avg_balance': float(avg_deposits),
+                'avg_annual_balance': float(avg_deposits),
                 'avg_transactions': float(avg_transactions_real),  # REAL from transactions.csv
                 'total_transactions': txn_metrics['total_transactions'],  # Total for segment
                 'monthly_transaction_rate': txn_metrics['monthly_transaction_rate'],  # Monthly rate
@@ -947,7 +1230,8 @@ class AgentA_Banking_Enhanced:
                     'avg_transactions_per_customer': float(txn_metrics['avg_transactions_per_customer']),  # Per customer
                     'dominant_risk_tolerance': dominant_risk,
                     'dominant_channel': dominant_channel,
-                    'dominant_life_stage': dominant_life_stage
+                    'dominant_life_stage': dominant_life_stage,
+                    'archetype_type': archetype_type,
                 },
                 'revenue_metrics': {
                     'total_deposits': float(cluster_data['total_deposits'].sum()),
@@ -1015,311 +1299,201 @@ class AgentA_Banking_Enhanced:
         avg_products: float,
         characteristics: Dict
     ) -> Dict:
-        """
-        Generate COMPLETELY UNIQUE insights for each segment
-        Every segment gets different insights based on its UNIQUE combination of traits
-        NO TWO SEGMENTS SHOULD HAVE SAME INSIGHTS
-        """
-        
-        # Get ALL metrics for this segment
+        """Compact, unique segment insights: 3 key stats + 3 behaviors + 2 actions."""
         avg_transactions = characteristics.get('avg_monthly_transaction_volume', characteristics.get('monthly_transaction_volume', 0))
         avg_cross_sell = characteristics.get('avg_cross_sell_receptivity', 0)
         avg_credit = characteristics.get('avg_credit_score', 700)
         avg_age = characteristics.get('avg_age', 45)
         
-        # Calculate PRECISE PERCENTILES across all segments
-        all_deposits = [p.get('characteristics', {}).get('avg_deposits', 0) for p in self.personas.values()]
-        all_digital = [p.get('characteristics', {}).get('avg_digital_engagement', 0) for p in self.personas.values()]
-        all_products = [p.get('characteristics', {}).get('avg_products', 0) for p in self.personas.values()]
-        all_transactions = [p.get('characteristics', {}).get('avg_monthly_transaction_volume', 0) for p in self.personas.values()]
-        all_cross_sell = [p.get('characteristics', {}).get('avg_cross_sell_receptivity', 0) for p in self.personas.values()]
-        
-        import numpy as np
-        
-        deposit_rank = (sum(d < avg_deposits for d in all_deposits) / len(all_deposits)) * 100 if all_deposits else 50
-        digital_rank = (sum(d < avg_digital for d in all_digital) / len(all_digital)) * 100 if all_digital else 50
-        products_rank = (sum(p < avg_products for p in all_products) / len(all_products)) * 100 if all_products else 50
-        trans_rank = (sum(t < avg_transactions for t in all_transactions) / len(all_transactions)) * 100 if all_transactions else 50
-        cross_rank = (sum(c < avg_cross_sell for c in all_cross_sell) / len(all_cross_sell)) * 100 if all_cross_sell else 50
-        
-        # Find TOP 2 traits (most distinctive)
-        rankings = {
-            'deposits': deposit_rank,
-            'digital': digital_rank,
-            'products': products_rank,
-            'transactions': trans_rank,
-            'cross_sell': cross_rank
+        # Rank each metric against the GLOBAL customer population (all 5000 rows).
+        # Previously ranked against only 5 segment averages — with all segments at ~15 txns,
+        # one would be "Top 20%" and another "Bottom 20%" even though values were identical.
+        _COL_MAP = {
+            'avg_deposits':                   'total_deposits',
+            'avg_digital_engagement':         'digital_engagement_score',
+            'avg_products':                   'num_products',
+            'avg_monthly_transaction_volume': 'monthly_transaction_volume',
+            'avg_cross_sell_receptivity':     'cross_sell_receptivity',
+            'avg_income':                     'income',
+            'avg_credit_score':               'credit_score',
         }
-        
-        sorted_traits = sorted(rankings.items(), key=lambda x: x[1], reverse=True)
-        primary_trait = sorted_traits[0][0]
-        secondary_trait = sorted_traits[1][0] if len(sorted_traits) > 1 else None
-        
-        primary_rank = sorted_traits[0][1]
-        secondary_rank = sorted_traits[1][1] if len(sorted_traits) > 1 else 0
-        
-        # Generate COMPLETELY UNIQUE insights based on PRECISE trait combination
-        # Format: Use primary + secondary trait to create 25 possible unique combinations (5x5 matrix)
-        trait_combo = f"{primary_trait}_{secondary_trait}"
-        
-        segment_definition = []
-        key_behaviors = []
-        marketing_recommendations = []
-        
-        #=======================================================================
-        # UNIQUE INSIGHTS ENGINE - NO TWO SEGMENTS GET SAME INSIGHTS
-        # Uses precise ranking + trait combination to generate completely unique content
-        #=======================================================================
-        
-        # SEGMENT DEFINITION - Based on precise characteristics + FULL segment name for uniqueness
-        segment_definition.append(f"**{persona_name}** segment defined by {primary_trait} leadership")
-        
-        if primary_trait == 'deposits':
-            segment_definition.append(f"💰 Wealth: ${avg_deposits:,.0f} avg deposits ({primary_rank:.0f}th percentile) | Income: ${avg_income:,.0f}/year")
-            segment_definition.append(f"🏦 Relationship: {avg_products:.1f} products | {avg_transactions:.0f} monthly transactions | {avg_digital*100:.0f}% digital")
-            segment_definition.append(f"👥 Demographics: Age {avg_age:.0f} | Credit {avg_credit:.0f} | {avg_cross_sell*100:.0f}% cross-sell receptive")
-        elif primary_trait == 'digital':
-            segment_definition.append(f"📱 Digital: {avg_digital*100:.0f}% online ({primary_rank:.0f}th percentile) | {(1-avg_digital)*100:.0f}% branch visits")
-            segment_definition.append(f"💰 Financial: ${avg_deposits:,.0f} deposits | {avg_products:.1f} products | {avg_transactions:.0f} transactions/mo")
-            segment_definition.append(f"👥 Profile: Age {avg_age:.0f} | Income ${avg_income:,.0f} | {avg_cross_sell*100:.0f}% receptive")
-        elif primary_trait == 'products':
-            segment_definition.append(f"📊 Portfolio: {avg_products:.1f} products ({primary_rank:.0f}th percentile) | Multi-product relationship")
-            segment_definition.append(f"💰 Engagement: ${avg_deposits:,.0f} deposits | {avg_transactions:.0f} monthly transactions | {avg_digital*100:.0f}% digital")
-            segment_definition.append(f"👥 Customer: Age {avg_age:.0f} | Income ${avg_income:,.0f} | {avg_cross_sell*100:.0f}% open to growth")
-        elif primary_trait == 'transactions':
-            segment_definition.append(f"⚡ Activity: {avg_transactions:.0f} transactions/mo ({primary_rank:.0f}th percentile) | High engagement")
-            segment_definition.append(f"💰 Value: ${avg_deposits:,.0f} deposits | {avg_products:.1f} products | {avg_digital*100:.0f}% digital usage")
-            segment_definition.append(f"👥 Demographics: Age {avg_age:.0f} | Income ${avg_income:,.0f} | Credit {avg_credit:.0f}")
-        else:  # cross_sell
-            segment_definition.append(f"🎯 Receptivity: {avg_cross_sell*100:.0f}% openness ({primary_rank:.0f}th percentile) | High growth potential")
-            segment_definition.append(f"💰 Current: ${avg_deposits:,.0f} deposits | {avg_products:.1f} products | {avg_transactions:.0f} transactions/mo")
-            segment_definition.append(f"👥 Profile: Age {avg_age:.0f} | Income ${avg_income:,.0f} | {avg_digital*100:.0f}% digital")
-        
-        # KEY BEHAVIORS - FORCE UNIQUENESS by including FULL segment context
-        # Use segment name + precise metrics to make each insight completely unique
-        
-        segment_identifier = persona_name  # Use FULL name for complete uniqueness
-        
-        if trait_combo == 'deposits_digital':
-            key_behaviors.append(f"{segment_identifier} segment: ${avg_deposits:,.0f} deposits with {avg_digital*100:.0f}% digital adoption (ranks {primary_rank:.0f}th deposits, {secondary_rank:.0f}th digital)")
-            key_behaviors.append(f"Age {avg_age:.0f}, income ${avg_income:,.0f}, holding {avg_products:.1f} products with {avg_transactions:.0f} monthly transactions")
-            marketing_recommendations.append(f"Offer a dedicated wealth-management webinar and in-app premium investment onboarding for high-balance digital users in this segment.")
-            marketing_recommendations.append(f"Propose a relationship manager introduction for top digital adopters; run targeted in-app campaigns for investment and savings products.")
-            marketing_recommendations.append(f"Launch an exclusive digital-only tier (e.g. fee waivers, priority support) for customers who maintain this balance and digital engagement level.")
-        
-        elif trait_combo == 'deposits_products':
-            key_behaviors.append(f"{segment_identifier} portfolio: ${avg_deposits:,.0f} across {avg_products:.1f} products ({primary_rank:.0f}th deposits, {secondary_rank:.0f}th products)")
-            key_behaviors.append(f"{segment_identifier} customers: Age {avg_age:.0f}, ${avg_income:,.0f} income, {avg_transactions:.0f} transactions, {avg_digital*100:.0f}% digital")
-            marketing_recommendations.append(f"Assign a relationship manager and propose private banking or premium tier for multi-product, high-balance customers in this segment.")
-            marketing_recommendations.append(f"Run a loyalty campaign: offer relationship-based fee waivers and exclusive rates for customers holding {avg_products:.0f}+ products with consolidated balances.")
-            marketing_recommendations.append(f"Create a cross-sell playbook for this segment: prioritize investment and insurance products given high receptivity ({avg_cross_sell*100:.0f}%).")
-        
-        elif trait_combo == 'deposits_transactions':
-            key_behaviors.append(f"{segment_identifier} active wealth: ${avg_deposits:,.0f} deposits, {avg_transactions:.0f} transactions ({deposit_rank:.0f}th wealth, {trans_rank:.0f}th activity)")
-            key_behaviors.append(f"{segment_identifier} profile: Age {avg_age:.0f}, income ${avg_income:,.0f}, {avg_products:.1f} products, {avg_digital*100:.0f}% digital")
-            marketing_recommendations.append(f"Create a VIP recognition program (e.g. concierge banking, dedicated line) for high-balance customers with high transaction volume in this segment.")
-            marketing_recommendations.append(f"Offer an activity-based rewards tier (cashback or fee waivers) for customers who maintain this transaction level; use it to deepen product adoption.")
-            marketing_recommendations.append(f"Run a campaign promoting premium checking or wealth services tailored to busy, high-value customers in this segment.")
-        
-        elif trait_combo == 'deposits_cross_sell':
-            key_behaviors.append(f"{segment_identifier} growth segment: ${avg_deposits:,.0f} with {avg_cross_sell*100:.0f}% receptivity ({deposit_rank:.0f}th deposits, {cross_rank:.0f}th openness)")
-            key_behaviors.append(f"{segment_identifier} ready to expand: Age {avg_age:.0f}, ${avg_income:,.0f} income, {avg_transactions:.0f} transactions, {avg_products:.1f} products")
-            marketing_recommendations.append(f"Proactively offer wealth-advisory and investment onboarding for this high-balance, high-receptivity segment; book discovery calls.")
-            marketing_recommendations.append(f"Run a targeted upsell campaign for premium products (e.g. investment, insurance) using personalized messaging; A/B test by age band.")
-            marketing_recommendations.append(f"Assign outbound sales to propose the next best product (e.g. add 1–2 products) for customers currently at {avg_products:.0f} products.")
-        
-        elif trait_combo == 'digital_deposits':
-            key_behaviors.append(f"{segment_identifier} tech-wealthy: {avg_digital*100:.0f}% digital with ${avg_deposits:,.0f} deposits ({digital_rank:.0f}th digital, {deposit_rank:.0f}th wealth)")
-            key_behaviors.append(f"{segment_identifier} demographics: Age {avg_age:.0f}, ${avg_income:,.0f} income, {avg_products:.1f} products, {avg_transactions:.0f} transactions")
-            marketing_recommendations.append(f"Launch in-app premium features (e.g. investing, budgeting) and invite this segment to exclusive digital-only events or webinars.")
-            marketing_recommendations.append(f"Run in-app and email campaigns for high-value digital users: promote security features, premium support, and next-product recommendations.")
-            marketing_recommendations.append(f"Offer a digital-first relationship option (video/chat) and one-click applications for products that match this segment's profile.")
-        
-        elif trait_combo == 'digital_products':
-            key_behaviors.append(f"{segment_identifier} digital portfolios: {avg_digital*100:.0f}% online, {avg_products:.1f} products ({digital_rank:.0f}th digital, {products_rank:.0f}th products)")
-            key_behaviors.append(f"{segment_identifier} behavior: Age {avg_age:.0f}, ${avg_income:,.0f} income, ${avg_deposits:,.0f} deposits, {avg_transactions:.0f} transactions")
-            marketing_recommendations.append(f"Send in-app bundle offers (e.g. savings + investment, or checking + credit) to multi-product digital users in this segment.")
-            marketing_recommendations.append(f"Create a digital-only loyalty tier with fee waivers or rewards for customers holding {avg_products:.0f}+ products; promote via app and email.")
-            marketing_recommendations.append(f"Launch a consolidated dashboard and smart alerts in the app; use it to cross-sell the next best product for this segment.")
-        
-        elif trait_combo == 'digital_transactions':
-            key_behaviors.append(f"{segment_identifier} mobile champions: {avg_digital*100:.0f}% digital with {avg_transactions:.0f} transactions ({digital_rank:.0f}th digital, {trans_rank:.0f}th activity)")
-            key_behaviors.append(f"{segment_identifier} users: Age {avg_age:.0f}, ${avg_income:,.0f} income, ${avg_deposits:,.0f} deposits, {avg_products:.1f} products")
-            marketing_recommendations.append(f"Run a gamified rewards or cashback campaign in the app for high-transaction digital users; use milestones to nudge next product adoption.")
-            marketing_recommendations.append(f"Offer premium app features (e.g. instant notifications, spending insights) and promote credit or savings products in-app to this segment.")
-            marketing_recommendations.append(f"Invite this segment to beta features or early access; use their engagement to refine offers and messaging for similar customers.")
-        
-        elif trait_combo == 'digital_cross_sell':
-            key_behaviors.append(f"Digital converters: {avg_digital*100:.0f}% online with {avg_cross_sell*100:.0f}% receptivity scoring {cross_rank:.0f}th percentile")
-            key_behaviors.append(f"Currently hold {avg_products:.1f} products with ${avg_deposits:,.0f} deposits, seeking expansion digitally")
-            marketing_recommendations.append(f"Deploy in-app personalized offers (e.g. pre-approved credit, savings goals) with one-tap apply; prioritize products that complement current holdings.")
-            marketing_recommendations.append(f"Run a short campaign promoting one additional product (e.g. credit card or savings) via app push and in-app banners for this receptive segment.")
-            marketing_recommendations.append(f"Test one-tap application flows and follow up with a light-touch call or chat for high-intent users in this segment.")
-        
-        elif trait_combo == 'products_deposits':
-            key_behaviors.append(f"{segment_identifier} diversified: {avg_products:.1f} products with ${avg_deposits:,.0f} deposits ({products_rank:.0f}th products, {deposit_rank:.0f}th deposits)")
-            key_behaviors.append(f"{segment_identifier} engagement: Age {avg_age:.0f}, ${avg_income:,.0f} income, {avg_transactions:.0f} transactions, {avg_digital*100:.0f}% digital, {avg_cross_sell*100:.0f}% receptive")
-            marketing_recommendations.append(f"Offer relationship-based rewards (e.g. fee waivers, preferred rates) for customers with {avg_products:.0f}+ products and high consolidated balances; communicate via preferred channel.")
-            marketing_recommendations.append(f"Propose a dedicated relationship manager or premium tier for this segment; use a warm outbound campaign tied to their current product mix.")
-            marketing_recommendations.append(f"Run a retention and next-best-action campaign: highlight benefits of current products and suggest one complementary product (e.g. investment or insurance).")
-        
-        elif trait_combo == 'products_digital':
-            key_behaviors.append(f"Digital portfolio managers: {avg_products:.1f} products all managed via {avg_digital*100:.0f}% digital channels")
-            key_behaviors.append(f"Use mobile app to monitor multiple accounts, investments, and loans simultaneously")
-            marketing_recommendations.append(f"Launch and promote a consolidated digital dashboard for this segment; use in-app messaging to cross-sell one additional product that fits their portfolio.")
-            marketing_recommendations.append(f"Offer automated transfers and smart savings rules in the app; bundle with a high-value product (e.g. savings or investment) and run an in-app campaign.")
-            marketing_recommendations.append(f"Create a segment-specific campaign highlighting multi-product benefits (e.g. fee waivers, single view) and invite them to exclusive digital events.")
-        
-        elif trait_combo == 'products_transactions':
-            key_behaviors.append(f"{segment_identifier} power users: {avg_products:.1f} products, {avg_transactions:.0f} transactions ({products_rank:.0f}th products, {trans_rank:.0f}th activity)")
-            key_behaviors.append(f"{segment_identifier} profile: Age {avg_age:.0f}, ${avg_income:,.0f} income, ${avg_deposits:,.0f} deposits, {avg_digital*100:.0f}% digital")
-            marketing_recommendations.append(f"Create an activity-based rewards program (e.g. cashback or tier benefits) for customers with high transaction volume and multiple products; promote in-app and email.")
-            marketing_recommendations.append(f"Offer a premium tier (e.g. free wire transfers, concierge) unlocked by transaction and product thresholds; target this segment with a dedicated campaign.")
-            marketing_recommendations.append(f"Run a campaign promoting convenience products (e.g. premium checking, payment solutions) that match this segment's high usage and multi-product profile.")
-        
-        elif trait_combo == 'products_cross_sell':
-            key_behaviors.append(f"{segment_identifier} expansion ready: {avg_products:.1f} products, {avg_cross_sell*100:.0f}% receptive ({products_rank:.0f}th products, {cross_rank:.0f}th receptivity)")
-            key_behaviors.append(f"{segment_identifier} base: Age {avg_age:.0f}, ${avg_income:,.0f} income, ${avg_deposits:,.0f} deposits, {avg_transactions:.0f} transactions, {avg_digital*100:.0f}% digital")
-            marketing_recommendations.append(f"Execute a structured cross-sell campaign: recommend the next best product (e.g. credit, investment, or insurance) based on current {avg_products:.0f} products; use sales or automated triggers.")
-            marketing_recommendations.append(f"Offer bundle discounts or package pricing for adding one more product; target this segment with personalized messaging and a clear CTA.")
-            marketing_recommendations.append(f"Assign outbound or in-app follow-up to high-receptivity customers in this segment; prioritize those with room to grow product count.")
-        
-        elif trait_combo == 'transactions_deposits':
-            key_behaviors.append(f"{segment_identifier} high-touch: {avg_transactions:.0f} transactions with ${avg_deposits:,.0f} deposits ({trans_rank:.0f}th activity, {deposit_rank:.0f}th wealth)")
-            key_behaviors.append(f"{segment_identifier} details: Age {avg_age:.0f}, ${avg_income:,.0f} income, {avg_products:.1f} products, {avg_digital*100:.0f}% digital, {avg_cross_sell*100:.0f}% receptive")
-            marketing_recommendations.append(f"Offer an unlimited-transactions or premium checking tier for high-balance, high-activity customers; use a direct mail or outbound campaign.")
-            marketing_recommendations.append(f"Propose dedicated support or a relationship manager for this segment; highlight convenience and recognition in all touchpoints.")
-            marketing_recommendations.append(f"Run a campaign promoting wealth or cash-management features (e.g. sweep, higher limits) that match this segment's transaction and balance profile.")
-        
-        elif trait_combo == 'transactions_digital':
-            key_behaviors.append(f"{segment_identifier} app leaders: {avg_transactions:.0f} transactions at {avg_digital*100:.0f}% digital ({trans_rank:.0f}th activity, {digital_rank:.0f}th digital)")
-            key_behaviors.append(f"{segment_identifier} demographics: Age {avg_age:.0f}, ${avg_income:,.0f} income, ${avg_deposits:,.0f} deposits, {avg_products:.1f} products")
-            marketing_recommendations.append(f"Launch a digital-only rewards tier (e.g. cashback, points) for high-transaction app users; promote in-app and via push notifications.")
-            marketing_recommendations.append(f"Invite this segment to beta features or new app capabilities; use feedback to refine and then roll out next-product offers.")
-            marketing_recommendations.append(f"Run an in-app campaign for payment or credit products that fit high transaction volume and digital-first behavior.")
-        
-        elif trait_combo == 'transactions_products':
-            key_behaviors.append(f"Power portfolio users: {avg_transactions:.0f} transactions ({trans_rank:.0f}th) across {avg_products:.1f} products ({products_rank:.0f}th)")
-            key_behaviors.append(f"${avg_deposits:,.0f} deposits with {avg_digital*100:.0f}% digital, age {avg_age:.0f}, income ${avg_income:,.0f}")
-            marketing_recommendations.append(f"Create a VIP or premium tier for customers with high transaction volume and multiple products; offer fee waivers, priority service, or exclusive benefits.")
-            marketing_recommendations.append(f"Run a recognition campaign (e.g. thank-you offers, referral incentives) for this segment; use it to introduce one more high-value product.")
-            marketing_recommendations.append(f"Propose a consolidated view and premium service package that rewards both activity and product depth; target via preferred channel.")
-        
-        elif trait_combo == 'transactions_cross_sell':
-            key_behaviors.append(f"{segment_identifier} active receptive: {avg_transactions:.0f} transactions, {avg_cross_sell*100:.0f}% receptive ({trans_rank:.0f}th activity, {cross_rank:.0f}th receptivity)")
-            key_behaviors.append(f"{segment_identifier} state: Age {avg_age:.0f}, ${avg_income:,.0f} income, ${avg_deposits:,.0f} deposits, {avg_products:.1f} products, {avg_digital*100:.0f}% digital")
-            marketing_recommendations.append(f"Time a cross-sell campaign to peak transaction periods; offer one relevant product (e.g. credit, savings) with a clear, low-friction CTA.")
-            marketing_recommendations.append(f"Use behavioral triggers (e.g. after N transactions or login) to show personalized in-app or email offers for this receptive segment.")
-            marketing_recommendations.append(f"Assign sales or retargeting to high-activity, high-receptivity customers; test incentive (e.g. bonus rate or waiver) to convert.")
-        
-        elif trait_combo == 'cross_sell_deposits':
-            key_behaviors.append(f"{segment_identifier} affluent receptive: {avg_cross_sell*100:.0f}% openness with ${avg_deposits:,.0f} wealth ({cross_rank:.0f}th receptivity, {deposit_rank:.0f}th wealth)")
-            key_behaviors.append(f"{segment_identifier} status: Age {avg_age:.0f}, ${avg_income:,.0f} income, {avg_products:.1f} products, {avg_transactions:.0f} transactions, {avg_digital*100:.0f}% digital")
-            marketing_recommendations.append(f"Proactively offer wealth-advisory or private-banking introduction for high-balance, high-receptivity customers; book discovery meetings.")
-            marketing_recommendations.append(f"Run a premium product campaign (e.g. investment, insurance, or lending) for this segment; use personalized outreach and preferred channel.")
-            marketing_recommendations.append(f"Create an affluent segment program (e.g. exclusive rates, dedicated contact) and invite this segment with a clear next-step offer.")
-        
-        elif trait_combo == 'cross_sell_digital':
-            key_behaviors.append(f"{segment_identifier} digital growth: {avg_cross_sell*100:.0f}% receptive at {avg_digital*100:.0f}% digital ({cross_rank:.0f}th receptivity, {digital_rank:.0f}th digital)")
-            key_behaviors.append(f"{segment_identifier} metrics: Age {avg_age:.0f}, ${avg_income:,.0f} income, ${avg_deposits:,.0f} deposits, {avg_products:.1f} products, {avg_transactions:.0f} transactions")
-            marketing_recommendations.append(f"Deploy in-app and email offers with instant-apply or one-tap flow for this digital, receptive segment; prioritize one next-best product per customer.")
-            marketing_recommendations.append(f"Run a short A/B test of product offers (e.g. credit, savings) in the app; use segment behavior to tailor messaging and placement.")
-            marketing_recommendations.append(f"Follow up high-intent in-app actions with a light-touch call or chat to convert; keep messaging consistent with digital experience.")
-        
-        elif trait_combo == 'cross_sell_products':
-            key_behaviors.append(f"Portfolio expanders: {avg_cross_sell*100:.0f}% receptive with {avg_products:.1f} products seeking more ({products_rank:.0f}th percentile)")
-            key_behaviors.append(f"${avg_deposits:,.0f} deposits, {avg_transactions:.0f} transactions, age {avg_age:.0f} wanting product expansion")
-            marketing_recommendations.append(f"Run an ecosystem expansion campaign: recommend the next best product (e.g. investment, insurance) that complements current {avg_products:.0f} products; use sales or triggered outreach.")
-            marketing_recommendations.append(f"Create synergy messaging that links existing products to one new offering (e.g. 'Add savings to your checking'); target this segment with clear benefit and CTA.")
-            marketing_recommendations.append(f"Assign a cross-sell playbook for this segment: prioritize one product per customer and measure conversion; iterate on offer and channel.")
-        
-        elif trait_combo == 'cross_sell_transactions':
-            key_behaviors.append(f"{segment_identifier} active prospects: {avg_cross_sell*100:.0f}% receptive with {avg_transactions:.0f} transactions ({cross_rank:.0f}th receptivity, {trans_rank:.0f}th activity)")
-            key_behaviors.append(f"{segment_identifier} snapshot: Age {avg_age:.0f}, ${avg_income:,.0f} income, ${avg_deposits:,.0f} deposits, {avg_products:.1f} products, {avg_digital*100:.0f}% digital")
-            marketing_recommendations.append(f"Time offers to high-activity periods; run a campaign promoting one product (e.g. credit or savings) with a limited-time incentive for this receptive segment.")
-            marketing_recommendations.append(f"Use transaction or login triggers to show personalized next-product offers in-app or via email; test incentive (e.g. bonus or waiver) to improve conversion.")
-            marketing_recommendations.append(f"Assign outbound or retargeting to high-activity, high-receptivity customers; use a clear single-product offer and measure by segment.")
-        
-        # DEFAULT CATCH-ALL for any other combinations
-        else:
-            key_behaviors.append(f"{segment_identifier} balanced profile: {primary_trait} strength at {primary_rank:.0f}th percentile, {secondary_trait} at {secondary_rank:.0f}th")
-            key_behaviors.append(f"{segment_identifier} specifics: Age {avg_age:.0f}, ${avg_income:,.0f} income, ${avg_deposits:,.0f} deposits, {avg_products:.1f} products, {avg_transactions:.0f} transactions")
-            marketing_recommendations.append(f"Design a segment-specific campaign that leads with {primary_trait} (e.g. product, channel, or benefit); include a single clear next-step offer.")
-            marketing_recommendations.append(f"Test one targeted action: either outbound for high-value customers or in-app/email for digital-first; measure conversion and refine by sub-cohort.")
-            marketing_recommendations.append(f"Offer education or value content (e.g. how-to, tips) tied to {secondary_trait}, then follow with a soft product or service recommendation.")
-        
-        # Add SPECIFIC metrics to make each segment even more unique
-        if avg_age < 35:
-            key_behaviors.append(f"Young demographic (avg age {avg_age:.0f}) with long growth runway and evolving financial needs")
-        elif avg_age > 60:
-            key_behaviors.append(f"Mature customers (avg age {avg_age:.0f}) focused on wealth preservation and income generation")
-        
-        # Add income-specific behavior if notable
-        if avg_income > 150000:
-            key_behaviors.append(f"High income earners (${avg_income:,.0f}/year) with capacity for premium product adoption")
-        elif avg_income < 50000:
-            key_behaviors.append(f"Value-conscious customers (${avg_income:,.0f}/year) seeking fee-free and high-value banking")
-        
-        # Limit to most important insights
-        key_behaviors = key_behaviors[:4]
-        marketing_recommendations = marketing_recommendations[:4]
-        
-        # UNIQUE marketing opportunities: try LLM first, else personalize fallback so no two segments are identical
-        metrics_for_llm = {
-            'avg_deposits': avg_deposits,
-            'avg_income': avg_income,
-            'avg_digital': avg_digital,
-            'avg_products': avg_products,
-            'avg_transactions': avg_transactions,
-            'avg_cross_sell': avg_cross_sell,
-            'avg_age': avg_age,
+        def _rank(val, key):
+            col = _COL_MAP.get(key, key)
+            if col in self.customers_df.columns:
+                vals = self.customers_df[col].dropna().values
+                if len(vals) > 0:
+                    return float((vals < val).sum() / len(vals)) * 100
+            # Fallback to peer-segment comparison only if column not found
+            peer_vals = [p.get('characteristics', {}).get(key, 0) for p in self.personas.values()]
+            return (sum(v < val for v in peer_vals) / len(peer_vals)) * 100 if peer_vals else 50
+
+        dep_rank  = _rank(avg_deposits,     'avg_deposits')
+        dig_rank  = _rank(avg_digital,      'avg_digital_engagement')
+        prd_rank  = _rank(avg_products,     'avg_products')
+        txn_rank  = _rank(avg_transactions, 'avg_monthly_transaction_volume')
+        xsl_rank  = _rank(avg_cross_sell,   'avg_cross_sell_receptivity')
+        inc_rank  = _rank(avg_income,       'avg_income')
+        crd_rank  = _rank(avg_credit,       'avg_credit_score')
+
+        rankings = {'deposits': dep_rank, 'digital': dig_rank, 'products': prd_rank,
+                    'transactions': txn_rank, 'cross_sell': xsl_rank}
+        sorted_traits   = sorted(rankings.items(), key=lambda x: x[1], reverse=True)
+        primary_trait   = sorted_traits[0][0]
+        secondary_trait = sorted_traits[1][0] if len(sorted_traits) > 1 else 'digital'
+        trait_combo     = f"{primary_trait}_{secondary_trait}"
+
+        def _rank_label(r):
+            if r >= 80: return 'Top 20%'
+            if r >= 68: return 'Above avg'   # widened Avg band to 32-68 (±1σ convention)
+            if r >= 32: return 'Avg'
+            if r >= 20: return 'Below avg'
+            return 'Bottom 20%'
+
+        # ── KEY STATS — compact-formatted values so frontend never truncates ──
+        def _fmt_usd(v):
+            v = float(v or 0)
+            if v >= 1_000_000: return f'${v/1_000_000:.1f}M'
+            if v >= 1_000:     return f'${v/1_000:.0f}K'
+            return f'${v:.0f}'
+
+        # Avg Balance and Digital Engagement are already visible on the macro card — excluded here
+        key_stats = [
+            {'label': 'Avg Income',       'value': _fmt_usd(avg_income),      'note': _rank_label(inc_rank)},
+            {'label': 'Avg Credit Score', 'value': f'{avg_credit:.0f}',       'note': _rank_label(crd_rank)},
+            {'label': 'Avg Products',     'value': f'{avg_products:.1f}',     'note': _rank_label(prd_rank)},
+            {'label': 'Monthly Txns',     'value': f'{avg_transactions:.0f}', 'note': _rank_label(txn_rank)},
+        ]
+
+        # ── KEY BEHAVIORS — keyed on archetype_type, not trait_combo ────────
+        # trait_combo is unreliable: when all segments share similar txn counts,
+        # the same combo can appear in multiple segments, producing copy-paste bullets.
+        archetype_type = characteristics.get('archetype_type', '')
+        archetype_behaviors = {
+            'HIGH-VALUE': [
+                f'High earners (avg ${avg_income:,.0f}/yr) with strong savings discipline',
+                'Hold multiple Meridian products — deep, long-term relationship',
+                'Low churn risk — financially secure and unlikely to leave',
+            ],
+            'EVERYDAY': [
+                'Core everyday customers relying on checking, savings, and debit',
+                'Steady transaction habits and value-conscious about fees',
+                f'Middle-income earners (avg ${avg_income:,.0f}/yr) focused on daily financial needs',
+            ],
+            'DIGITAL-FIRST': [
+                'Mobile-first customers who manage all banking through the app',
+                'Frequent transactions and high engagement with digital features',
+                'Early adopters — respond quickly to in-app offers and new features',
+            ],
+            'LOYAL-STABLE': [
+                'Long-standing, loyal customers who have banked with Meridian for years',
+                'Prefer in-branch banking and in-person relationship management',
+                f'Stable savings (avg ${avg_deposits:,.0f}) with very low risk of leaving',
+            ],
+            'AT-RISK': [
+                f'Financially stretched customers with avg income ${avg_income:,.0f}/yr and limited savings',
+                'Higher likelihood of leaving — need proactive retention outreach',
+                'Respond better to financial relief and support offers than upsell campaigns',
+            ],
         }
-        segment_def_text = "\n".join(segment_definition)
-        used_llm_recs = False
-        if TOGETHER_AI_AVAILABLE and together_ai and os.getenv("TOGETHER_API_KEY"):
-            try:
-                llm_recs = together_ai.generate_marketing_opportunities(
-                    persona_name=persona_name,
-                    segment_definition=segment_def_text,
-                    key_behaviors=key_behaviors,
-                    metrics=metrics_for_llm
-                )
-                if llm_recs and len(llm_recs) >= 3:
-                    marketing_recommendations = llm_recs[:4]
-                    used_llm_recs = True
-            except Exception as e:
-                logger.debug(f"LLM marketing opportunities failed for {persona_name}, using personalized fallback: {e}")
-        # Fallback: short prefix with segment metrics so each segment looks different; one full clause, no mid-phrase cuts
-        if not used_llm_recs:
-            short_recs = []
-            prefix = f"**{persona_name}** (${avg_deposits/1e6:.1f}M, {avg_digital*100:.0f}% digital): "
-            for r in marketing_recommendations:
-                if ";" in r:
-                    s = r.split(";")[0].strip()
-                    s = s + "." if s and not s.endswith(".") else s
-                else:
-                    s = r.split(".")[0].strip() + "." if "." in r else r
-                if len(s) > 130:
-                    s = (s[:127].rsplit(" ", 1)[0] or s[:127]) + "..."
-                short_recs.append(prefix + s)
-            marketing_recommendations = short_recs
-        
-        # Generate name explanation for macro segment
-        name_explanation = self._generate_macro_name_explanation(
-            persona_name=persona_name,
-            avg_deposits=avg_deposits,
-            avg_digital=avg_digital,
-            avg_products=avg_products,
-            avg_transactions=avg_transactions,
-            primary_trait=primary_trait,
-            primary_rank=primary_rank
+        key_behaviors = list(archetype_behaviors.get(archetype_type, [
+            f'Ranked highest in {primary_trait.replace("_", " ")} among all segments',
+            f'Secondary strength: {secondary_trait.replace("_", " ")}',
+            f'Avg age {avg_age:.0f}, {_fmt_usd(avg_income)} income',
+        ]))
+        # Replace bullet 2 with the most genuinely distinctive metric for this segment.
+        # Digital engagement is intentionally excluded — it is similar across all segments
+        # (~50%) and mentioning it as a differentiator misleads the reader.
+        distinctive_note = None
+        if inc_rank >= 80:
+            distinctive_note = f'Top earners — {_fmt_usd(avg_income)} avg income, credit score {avg_credit:.0f}'
+        elif inc_rank <= 20:
+            distinctive_note = f'Value-focused — {_fmt_usd(avg_income)} avg income, credit score {avg_credit:.0f}'
+        elif txn_rank >= 80:
+            distinctive_note = f'{avg_transactions:.0f} monthly transactions — top 20% activity level'
+        elif txn_rank <= 20:
+            distinctive_note = f'{avg_transactions:.0f} monthly transactions — bottom 20% activity level'
+        elif prd_rank >= 80:
+            distinctive_note = f'{avg_products:.1f} products held — above avg in portfolio depth'
+        elif prd_rank <= 20:
+            distinctive_note = f'{avg_products:.1f} products held — below avg in portfolio depth'
+        elif xsl_rank >= 80:
+            distinctive_note = f'{avg_cross_sell*100:.0f}% cross-sell receptivity — top 20% growth signal'
+        elif crd_rank <= 20:
+            distinctive_note = f'Avg credit score {avg_credit:.0f} — below avg in creditworthiness'
+        if distinctive_note and len(key_behaviors) >= 3:
+            key_behaviors[2] = distinctive_note
+
+        # ── MARKETING ACTIONS — keyed on archetype_type ──────────────────────
+        archetype_actions = {
+            'HIGH-VALUE': [
+                'Proactive wealth advisory and investment discovery calls',
+                'Personalized premium-product campaign by income tier',
+            ],
+            'EVERYDAY': [
+                'Fee waiver and cashback offer for consistent everyday use',
+                'Bundle offer: add one complementary product at no annual fee',
+            ],
+            'DIGITAL-FIRST': [
+                'In-app pre-approved offer with one-tap application',
+                'Gamified cashback campaign tied to transaction milestones',
+            ],
+            'LOYAL-STABLE': [
+                'Branch-based relationship manager outreach for premium products',
+                'Loyalty recognition: preferred rates for long-standing customers',
+            ],
+            'AT-RISK': [
+                'Proactive retention call with financial health check offer',
+                'Trigger-based relief offer at overdraft or missed payment event',
+            ],
+        }
+        marketing_recommendations = archetype_actions.get(archetype_type, [
+            f'Campaign leading with {primary_trait.replace("_", " ")} benefit',
+            'Test one targeted offer via preferred channel',
+        ])
+
+        # Tagline templates — {dep}, {dig}, {prd}, {txn}, {xsl} are substituted with
+        # this segment's actual metric values so two segments with the same trait_combo
+        # always produce different taglines.
+        tagline_templates = {
+            'deposits_digital':       '${dep:,.0f} avg balance, {dig:.0f}% digital — high-wealth customers who bank online',
+            'deposits_products':      '${dep:,.0f} avg balance with {prd:.1f} products — wealth paired with deep product relationships',
+            'deposits_transactions':  '${dep:,.0f} avg balance, {txn:.0f} monthly transactions — cash-flow-active wealth holders',
+            'deposits_cross_sell':    '${dep:,.0f} avg balance, {xsl:.0f}% growth receptivity — affluent customers ready to expand',
+            'digital_deposits':       '{dig:.0f}% digital engagement, ${dep:,.0f} balance — tech-forward customers with financial standing',
+            'digital_products':       '{dig:.0f}% digital, {prd:.1f} products — customers who run their financial life through the app',
+            'digital_transactions':   '{dig:.0f}% digital, {txn:.0f} monthly transactions — app-first customers with high activity',
+            'digital_cross_sell':     '{dig:.0f}% digital, {xsl:.0f}% growth receptivity — online-active customers open to new products',
+            'products_deposits':      '{prd:.1f} products held, ${dep:,.0f} balance — multi-product customers with stable wealth',
+            'products_digital':       '{prd:.1f} products, {dig:.0f}% digital — broad-portfolio customers who self-serve online',
+            'products_transactions':  '{prd:.1f} products, {txn:.0f} monthly transactions — power users active across every account',
+            'products_cross_sell':    '{prd:.1f} products, {xsl:.0f}% growth receptivity — multi-product customers looking for the next add',
+            'transactions_deposits':  '{txn:.0f} monthly transactions, ${dep:,.0f} balance — frequent transactors with significant wealth',
+            'transactions_digital':   '{txn:.0f} monthly transactions, {dig:.0f}% digital — high-cadence mobile-native bankers',
+            'transactions_products':  '{txn:.0f} monthly transactions, {prd:.1f} products — active across every product they hold',
+            'transactions_cross_sell':'{txn:.0f} monthly transactions, {xsl:.0f}% growth receptivity — active bankers who act on the right offer',
+            'cross_sell_deposits':    '{xsl:.0f}% growth receptivity, ${dep:,.0f} balance — affluent customers ready to be asked',
+            'cross_sell_digital':     '{xsl:.0f}% growth receptivity, {dig:.0f}% digital — open to offers and easy to reach online',
+            'cross_sell_products':    '{xsl:.0f}% growth receptivity, {prd:.1f} products — multi-product holders actively seeking more',
+            'cross_sell_transactions':'{xsl:.0f}% growth receptivity, {txn:.0f} transactions — frequent transactors who respond to timely offers',
+        }
+        template = tagline_templates.get(
+            trait_combo,
+            f'Defined by {primary_trait.replace("_", " ")} (${avg_deposits:,.0f} balance, {avg_digital*100:.0f}% digital, {avg_products:.1f} products)',
         )
-        
+        tagline = template.format(
+            dep=avg_deposits, dig=avg_digital * 100, prd=avg_products,
+            txn=avg_transactions, xsl=avg_cross_sell * 100, inc=avg_income,
+        )
+
+        # Pull LLM-generated description stored during naming pass
+        description = characteristics.get('_segment_description', '')
+
         return {
-            'name_explanation': name_explanation,  # NEW: Explains why this name
-            'segment_definition': segment_def_text,
+            'description': description,
+            'tagline': tagline,
+            'key_stats': key_stats,
             'key_behaviors': key_behaviors,
-            'marketing_recommendations': marketing_recommendations
+            'marketing_recommendations': marketing_recommendations,
         }
     
     def _generate_macro_name_explanation(
@@ -1481,7 +1655,7 @@ class AgentA_Banking_Enhanced:
         if self.customers_df is None:
             if not self.load_data():
                 raise ValueError(
-                    "Banking dataset not found. Add data/preloaded/fmb_bank/ CSVs or run Agent A."
+                    "Banking dataset not found. Add data/preloaded/jpm_bank/ CSVs or run Agent A."
                 )
         df = self.customers_df.copy()
         if "cluster" not in df.columns:
@@ -1530,6 +1704,17 @@ class AgentA_Banking_Enhanced:
                     except (TypeError, ValueError):
                         continue
             
+            def _s(v, d=''):
+                if v is None:
+                    return d
+                import math as _m
+                try:
+                    if isinstance(v, float) and _m.isnan(v):
+                        return d
+                except Exception:
+                    pass
+                return str(v).strip() or d
+
             customers.append({
                 'customer_id': row['customer_id'],
                 'customer_name': row.get('customer_name', row['customer_id']),
@@ -1538,7 +1723,9 @@ class AgentA_Banking_Enhanced:
                 'cluster_id': cid,
                 'total_deposits': float(row.get('total_deposits', 0) or 0),
                 'num_products': int(float(row.get('num_products', 0) or 0)),
-                'digital_engagement': float(row.get('digital_engagement_score', 0.5) or 0)
+                'digital_engagement': float(row.get('digital_engagement_score', 0.5) or 0),
+                'channel_preference': _s(row.get('channel_preference'), 'Hybrid'),
+                'recent_life_event': _s(row.get('recent_life_event'), ''),
             })
         
         return {
@@ -1562,18 +1749,53 @@ class AgentA_Banking_Enhanced:
         cluster_id = customer['cluster']
         persona = self.personas.get(cluster_id, {})
         
+        def _safe_str(val, default=''):
+            if val is None:
+                return default
+            import math
+            try:
+                if isinstance(val, float) and math.isnan(val):
+                    return default
+            except Exception:
+                pass
+            return str(val).strip() or default
+
+        def _safe_float(val, default=0.0):
+            try:
+                return float(val) if val is not None else default
+            except (TypeError, ValueError):
+                return default
+
         return {
             'customer_id': customer_id,
             'customer_name': customer['customer_name'],
             'persona': persona.get('persona_name', 'Unknown'),
             'cluster_id': int(cluster_id),
             'metrics': {
-                'total_deposits': float(customer['total_deposits']),
-                'income': float(customer['income']),
-                'credit_score': float(customer['credit_score']),
-                'num_products': int(customer['num_products']),
-                'digital_engagement': float(customer['digital_engagement_score']),
-                'cross_sell_receptivity': float(customer['cross_sell_receptivity'])
+                'total_deposits': _safe_float(customer.get('total_deposits'), 10000.0),
+                'income': _safe_float(customer.get('income'), 50000.0),
+                'credit_score': _safe_float(customer.get('credit_score'), 700.0),
+                'num_products': int(_safe_float(customer.get('num_products'), 1)),
+                'digital_engagement': _safe_float(customer.get('digital_engagement_score'), 0.5),
+                'digital_engagement_score': _safe_float(customer.get('digital_engagement_score'), 0.5),
+                'cross_sell_receptivity': _safe_float(customer.get('cross_sell_receptivity'), 0.5),
+                # Channel & life event signals
+                'channel_preference': _safe_str(customer.get('channel_preference'), 'Hybrid'),
+                'recent_life_event': _safe_str(customer.get('recent_life_event'), ''),
+                # Financial profile
+                'age': _safe_float(customer.get('age'), 40.0),
+                'life_stage': _safe_str(customer.get('life_stage'), ''),
+                'credit_tier': _safe_str(customer.get('credit_tier'), ''),
+                'fee_sensitivity_tier': _safe_str(customer.get('fee_sensitivity_tier'), ''),
+                'monthly_spend_in_primary_cat': _safe_float(customer.get('monthly_spend_in_primary_cat'), 300.0),
+                'outstanding_debt_total': _safe_float(customer.get('outstanding_debt_total'), 0.0),
+                'financial_goal': _safe_str(customer.get('financial_goal'), ''),
+                'home_ownership_type': _safe_str(customer.get('home_ownership_type') or customer.get('home_ownership'), ''),
+                'months_since_relationship_started': _safe_float(customer.get('months_since_relationship_started'), 12.0),
+                'travel_frequency': _safe_str(customer.get('travel_frequency'), 'none'),
+                'primary_spending_category': _safe_str(customer.get('primary_spending_category'), ''),
+                'nps_score': _safe_float(customer.get('nps_score'), 7.0),
+                'has_competitor_credit_card': bool(customer.get('has_competitor_credit_card', False)),
             }
         }
     

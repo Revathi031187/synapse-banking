@@ -128,7 +128,9 @@ def upload_preloaded_fmb_to_uc(project_root: Path) -> Dict[str, Any]:
     catalog, schema = resolve_unity_catalog()
     volume_name = (os.getenv("DATABRICKS_UC_VOLUME_NAME") or "fmb_preloaded").strip()
 
+    jpm_dir = project_root / "data" / "preloaded" / "jpm_bank"
     fmb_dir = project_root / "data" / "preloaded" / "fmb_bank"
+    fmb_dir = jpm_dir if jpm_dir.is_dir() else fmb_dir
     if not fmb_dir.is_dir():
         return {
             "success": False,

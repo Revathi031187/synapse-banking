@@ -41,7 +41,7 @@ interface MacroPersona {
   size: number;
   percentage: number;
   total_revenue: number;
-  avg_balance: number;
+  avg_annual_balance: number;
   avg_transactions: number; // Monthly banking events count (not dollar value)
   avg_intent_score: number;
   confidence_avg: number;
@@ -56,10 +56,13 @@ interface MacroPersona {
     [key: string]: unknown;
   };
   segment_explanation?: {
-    name_explanation?: string;
-    segment_definition?: string;
+    description?: string;
+    tagline?: string;
+    key_stats?: Array<{ label: string; value: string; note?: string }>;
     key_behaviors: string[];
     marketing_recommendations: string[];
+    name_explanation?: string;
+    segment_definition?: string;
     why_in_segment?: string;
   };
 }
@@ -69,7 +72,7 @@ interface MicroSegment {
   name: string;
   size: number;
   percentage: number;
-  avg_balance: number;
+  avg_annual_balance: number;
   avg_spend: number;
   ltv_tier: string;
   characteristics?: {
@@ -80,10 +83,13 @@ interface MicroSegment {
   description?: string;
   top_customers?: Array<{customer_id: string; customer_name: string; total_balance?: number; total_deposits?: number}>;
   segment_explanation?: {
-    name_explanation?: string;
-    segment_definition?: string;
+    description?: string;
+    tagline?: string;
+    key_stats?: Array<{ label: string; value: string; note?: string }>;
     key_behaviors: string[];
     marketing_recommendations: string[];
+    name_explanation?: string;
+    segment_definition?: string;
     why_in_segment?: string;
   };
 }
@@ -190,7 +196,7 @@ export default function BankingMacroDashboard() {
     const personas = macroData?.personas;
     if (!personas) return [];
     const list = Object.values(personas) as MacroPersona[];
-    return list.sort((a, b) => (b.avg_balance || 0) - (a.avg_balance || 0));
+    return list.sort((a, b) => (b.avg_annual_balance || 0) - (a.avg_annual_balance || 0));
   }, [macroData]);
 
   if (macroLoading) {
@@ -301,6 +307,21 @@ export default function BankingMacroDashboard() {
   );
 }
 
+/** Semantic badge color based on percentile note text */
+function getNoteBadgeStyle(note?: string): { color: string; background: string } {
+  if (!note) return { color: '#6B7280', background: '#F3F4F6' };
+  const n = note.toLowerCase();
+  if (n.includes('top 20') || n.includes('highest') || n.includes('excellent'))
+    return { color: '#15803D', background: '#DCFCE7' };
+  if (n.includes('above avg') || n.includes('above average'))
+    return { color: '#1D4ED8', background: '#DBEAFE' };
+  if (n.includes('bottom 20') || n.includes('lowest') || n.includes('poor'))
+    return { color: '#DC2626', background: '#FEE2E2' };
+  if (n.includes('below avg') || n.includes('below average') || n.includes('low'))
+    return { color: '#B45309', background: '#FEF3C7' };
+  return { color: '#6B7280', background: '#F3F4F6' };
+}
+
 // Macro Persona Card Component - Professional Design with Images
 function MacroPersonaCard({ persona, isExpanded, onToggle }: any) {
   const [showExplanation, setShowExplanation] = React.useState(false);
@@ -341,11 +362,10 @@ function MacroPersonaCard({ persona, isExpanded, onToggle }: any) {
         style={{ borderTopColor: cardColor, height: '540px' }}
       >
         {/* Colored Header with Segment Name */}
-        <div 
+        <div
           className="px-4 py-4 text-white font-bold text-base flex items-center justify-center flex-shrink-0"
           style={{ backgroundColor: cardColor, height: '80px' }}
         >
-          <span className="mr-2 text-xl">{persona.emoji || '💼'}</span>
           <span className="text-center leading-tight line-clamp-2">
             {persona.persona_name || persona.name}
           </span>
@@ -375,9 +395,9 @@ function MacroPersonaCard({ persona, isExpanded, onToggle }: any) {
           </div>
 
           <div className="border-t border-gray-200 pt-2 mb-2">
-            <div className="text-xs text-gray-600 mb-1">Avg Balance</div>
+            <div className="text-xs text-gray-600 mb-1">Avg Annual Balance</div>
             <div className="text-xl font-bold" style={{ color: cardColor }}>
-              {formatCompactUsd(persona.avg_balance)}
+              {formatCompactUsd(persona.avg_annual_balance)}
             </div>
           </div>
 
@@ -435,70 +455,131 @@ function MacroPersonaCard({ persona, isExpanded, onToggle }: any) {
 
       {/* Segment Insights Panel */}
       {showExplanation && (
-        <div className="mt-2 rounded-lg border border-gray-200 overflow-hidden bg-white">
-          <div className="px-4 py-2.5 border-b border-gray-100 border-l-4" style={{ borderLeftColor: cardColor }}>
-            <span className="text-sm font-semibold text-gray-800">{persona.persona_name || persona.name}</span>
+        <div className="mt-2 rounded-xl overflow-hidden shadow-md border border-gray-200">
+          {/* Gradient header */}
+          <div
+            className="px-4 py-3 flex items-center gap-2"
+            style={{ background: `linear-gradient(135deg, ${cardColor} 0%, ${cardColor}CC 100%)` }}
+          >
+            <span className="text-sm font-bold text-white tracking-wide">{persona.persona_name || persona.name}</span>
+            <span className="ml-auto text-[10px] text-white/60 font-semibold uppercase tracking-widest">Segment Insights</span>
           </div>
 
-          <div className="p-4 space-y-4">
-            {persona.segment_explanation ? (() => {
-              const expl = persona.segment_explanation;
-              const behaviors = cleanList(expl.key_behaviors || []).map(cleanText);
-              const actions   = cleanList(expl.marketing_recommendations || []).map(cleanText);
-              const definition = cleanText(expl.segment_definition || expl.why_in_segment || '');
-              const nameReason = expl.name_explanation ? cleanText(expl.name_explanation) : null;
+          {persona.segment_explanation ? (() => {
+            const expl        = persona.segment_explanation;
+            const description = expl.description || '';
+            // Digital engagement already shown in the macro card — remove from insights to avoid duplication
+            const stats       = (expl.key_stats || []).filter(
+              (s: { label?: string }) => !/digital/i.test(s.label || '')
+            );
+            const behaviors   = (expl.key_behaviors || []).slice(0, 3);
+            const actions     = (expl.marketing_recommendations || []).slice(0, 2);
 
-              return (
-                <>
-                  {nameReason && (
-                    <p className="text-sm text-gray-500 italic leading-relaxed">{nameReason}</p>
-                  )}
+            return (
+              <div className="bg-white">
+                {/* Description — accent bar + tinted background */}
+                {description && (
+                  <div
+                    className="px-4 py-3 border-b border-gray-100"
+                    style={{ backgroundColor: `${cardColor}0D`, borderLeft: `3px solid ${cardColor}` }}
+                  >
+                    <p className="text-sm text-gray-800 leading-relaxed">{description}</p>
+                  </div>
+                )}
 
-                  {definition && (
-                    <div>
-                      <p className="text-xs font-semibold text-gray-400 uppercase tracking-wide mb-1.5">What defines this segment</p>
-                      <p className="text-sm text-gray-700 leading-relaxed">{definition}</p>
+                {/* Key stats — 2-line rows: label above, value + badge below. Fits any card width. */}
+                {stats.length > 0 && (
+                  <div className="border-b border-gray-100">
+                    {stats.map((s, i) => {
+                      const badge = getNoteBadgeStyle(s.note);
+                      return (
+                        <div
+                          key={i}
+                          className="px-4 py-2.5"
+                          style={{
+                            backgroundColor: i % 2 === 0 ? '#FAFAFA' : '#FFFFFF',
+                            borderBottom: i < stats.length - 1 ? '1px solid #F3F4F6' : 'none',
+                          }}
+                        >
+                          {/* Row 1: label */}
+                          <div className="text-[9px] uppercase tracking-widest text-gray-400 font-semibold mb-1 leading-tight">
+                            {s.label}
+                          </div>
+                          {/* Row 2: value left, badge right — no fixed widths */}
+                          <div className="flex items-center justify-between gap-1">
+                            <span className="text-sm font-extrabold text-gray-900 leading-tight">
+                              {s.value}
+                            </span>
+                            {s.note && (
+                              <span
+                                className="shrink-0 text-[9px] font-bold px-1.5 py-0.5 rounded-full whitespace-nowrap"
+                                style={{ color: badge.color, backgroundColor: badge.background }}
+                              >
+                                {s.note}
+                              </span>
+                            )}
+                          </div>
+                        </div>
+                      );
+                    })}
+                  </div>
+                )}
+
+                {/* Who they are */}
+                {behaviors.length > 0 && (
+                  <div className="px-4 pt-3.5 pb-2.5">
+                    <div className="flex items-center gap-1.5 mb-2.5">
+                      <span className="w-2.5 h-2.5 rounded-sm flex-shrink-0" style={{ backgroundColor: cardColor }} />
+                      <p className="text-[10px] font-bold uppercase tracking-widest" style={{ color: cardColor }}>
+                        Who they are
+                      </p>
                     </div>
-                  )}
+                    <ul className="space-y-1">
+                      {behaviors.map((b, i) => (
+                        <li
+                          key={i}
+                          className="flex gap-2 items-start px-2 py-1.5 rounded-md"
+                          style={{ backgroundColor: i % 2 === 0 ? `${cardColor}08` : 'transparent' }}
+                        >
+                          <span className="shrink-0 mt-1.5 w-1.5 h-1.5 rounded-full" style={{ backgroundColor: cardColor }} />
+                          <span className="text-xs text-gray-700 leading-snug">{b}</span>
+                        </li>
+                      ))}
+                    </ul>
+                  </div>
+                )}
 
-                  {behaviors.length > 0 && (
-                    <div>
-                      <p className="text-xs font-semibold text-gray-400 uppercase tracking-wide mb-2">Distinct behaviors</p>
-                      <ul className="space-y-1.5">
-                        {behaviors.map((b, i) => (
-                          <li key={i} className="flex gap-2 text-sm text-gray-700 leading-snug">
-                            <span className="shrink-0 text-gray-400 mt-0.5">•</span>
-                            <span>{b}</span>
-                          </li>
-                        ))}
-                      </ul>
+                {/* Best actions */}
+                {actions.length > 0 && (
+                  <div className="px-4 pt-2 pb-4 border-t border-gray-100">
+                    <div className="flex items-center gap-1.5 mb-2.5 mt-1">
+                      <span className="w-2.5 h-2.5 rounded-sm flex-shrink-0" style={{ backgroundColor: cardColor }} />
+                      <p className="text-[10px] font-bold uppercase tracking-widest" style={{ color: cardColor }}>
+                        Best actions
+                      </p>
                     </div>
-                  )}
-
-                  {actions.length > 0 && (
-                    <div>
-                      <p className="text-xs font-semibold text-gray-400 uppercase tracking-wide mb-2">Marketing actions</p>
-                      <ol className="space-y-2">
-                        {actions.map((action, i) => (
-                          <li key={i} className="flex gap-2 text-sm text-gray-700 leading-snug">
-                            <span className="shrink-0 font-semibold text-gray-400 w-5">{i + 1}.</span>
-                            <span>{action}</span>
-                          </li>
-                        ))}
-                      </ol>
-                    </div>
-                  )}
-                </>
-              );
-            })() : (
-              <div className="space-y-2 text-sm text-gray-600">
-                <p>{persona.description || 'No description available'}</p>
-                {persona.characteristics?.avg_digital_engagement != null && (
-                  <p><span className="font-medium">Digital adoption:</span> {(Number(persona.characteristics.avg_digital_engagement) * 100).toFixed(0)}%</p>
+                    <ul className="space-y-2">
+                      {actions.map((a, i) => (
+                        <li key={i} className="flex gap-2 items-start">
+                          <span
+                            className="shrink-0 w-5 h-5 flex items-center justify-center rounded-full text-white font-black leading-none mt-0.5 flex-shrink-0"
+                            style={{ backgroundColor: cardColor, fontSize: '10px' }}
+                          >
+                            →
+                          </span>
+                          <span className="text-xs text-gray-700 leading-snug">{a}</span>
+                        </li>
+                      ))}
+                    </ul>
+                  </div>
                 )}
               </div>
-            )}
-          </div>
+            );
+          })() : (
+            <div className="bg-white px-4 py-3">
+              <p className="text-xs text-gray-500">Run Segmentation to generate insights.</p>
+            </div>
+          )}
         </div>
       )}
     </div>
@@ -512,7 +593,7 @@ function MicroSegmentCard({ micro }: { micro: MicroSegment }) {
   return (
     <div className="bg-white rounded-lg shadow-md hover:shadow-xl transition-all duration-300 p-6 border border-blue-100 transform hover:scale-105">
       <div className="mb-4">
-        <h4 className="font-bold text-lg text-gray-900 mb-2">{micro.name}</h4>
+        <h4 className="font-bold text-lg text-gray-900 mb-1">{micro.name}</h4>
         <div className="flex items-center gap-2 text-sm text-gray-600">
           <Users className="w-4 h-4" />
           <span>{micro.size} customers ({micro.percentage.toFixed(1)}%)</span>
@@ -531,9 +612,9 @@ function MicroSegmentCard({ micro }: { micro: MicroSegment }) {
 
       <div className="space-y-2 mb-4">
         <div className="flex justify-between items-center">
-          <span className="text-sm text-gray-600">Avg Balance</span>
+          <span className="text-sm text-gray-600">Avg Annual Balance</span>
           <span className="font-bold text-blue-700">
-            {formatCompactUsd(micro.avg_spend || micro.avg_balance || 0)}
+            {formatCompactUsd(micro.avg_spend || micro.avg_annual_balance || 0)}
           </span>
         </div>
         <div className="flex justify-between items-center">
@@ -571,31 +652,37 @@ function MicroSegmentCard({ micro }: { micro: MicroSegment }) {
 
                 <div className="p-4 space-y-4">
                   {micro.segment_explanation ? (() => {
-                    const definition = cleanText(micro.segment_explanation.segment_definition || micro.segment_explanation.why_in_segment || '');
-                    const behaviors  = cleanList(micro.segment_explanation.key_behaviors || []).map(cleanText);
-                    const actions    = cleanList(micro.segment_explanation.marketing_recommendations || []).map(cleanText);
-                    const nameReason = micro.segment_explanation.name_explanation ? cleanText(micro.segment_explanation.name_explanation) : null;
+                    const microDesc = micro.segment_explanation.description || micro.segment_explanation.name_explanation || '';
+                    const behaviors = (micro.segment_explanation.key_behaviors || []).slice(0, 3).map(cleanText);
+                    const actions   = (micro.segment_explanation.marketing_recommendations || []).slice(0, 2).map(cleanText);
+                    const stats     = micro.segment_explanation.key_stats || [];
 
                     return (
                       <>
-                        {nameReason && (
-                          <p className="text-sm text-gray-500 italic leading-relaxed">{nameReason}</p>
+                        {/* Description paragraph */}
+                        {microDesc && (
+                          <p className="text-sm text-gray-700 leading-relaxed border-b border-gray-100 pb-3">{microDesc}</p>
                         )}
 
-                        {definition && (
-                          <div>
-                            <p className="text-xs font-semibold text-gray-400 uppercase tracking-wide mb-1.5">What defines this segment</p>
-                            <p className="text-sm text-gray-700 leading-relaxed">{definition}</p>
+                        {stats.length > 0 && (
+                          <div className="grid grid-cols-3 gap-1.5 mb-2">
+                            {stats.map((s: { label: string; value: string; note?: string }, i: number) => (
+                              <div key={i} className="bg-gray-50 rounded-md px-2 py-1.5 text-center">
+                                <div className="text-[10px] text-gray-400 leading-tight">{s.label}</div>
+                                <div className="text-sm font-bold text-gray-900">{s.value}</div>
+                                {s.note && <div className="text-[10px] text-blue-500 font-medium">{s.note}</div>}
+                              </div>
+                            ))}
                           </div>
                         )}
 
                         {behaviors.length > 0 && (
-                          <div>
-                            <p className="text-xs font-semibold text-gray-400 uppercase tracking-wide mb-2">Distinct behaviors</p>
-                            <ul className="space-y-1.5">
+                          <div className="mb-2">
+                            <p className="text-[10px] font-semibold text-gray-400 uppercase tracking-wider mb-1">Who they are</p>
+                            <ul className="space-y-0.5">
                               {behaviors.map((b, i) => (
-                                <li key={i} className="flex gap-2 text-sm text-gray-700 leading-snug">
-                                  <span className="shrink-0 text-gray-400 mt-0.5">•</span>
+                                <li key={i} className="flex gap-2 text-xs text-gray-700 items-start">
+                                  <span className="shrink-0 mt-1.5 w-1 h-1 rounded-full bg-gray-300" />
                                   <span>{b}</span>
                                 </li>
                               ))}
@@ -605,15 +692,15 @@ function MicroSegmentCard({ micro }: { micro: MicroSegment }) {
 
                         {actions.length > 0 && (
                           <div>
-                            <p className="text-xs font-semibold text-gray-400 uppercase tracking-wide mb-2">Marketing actions</p>
-                            <ol className="space-y-2">
-                              {actions.map((action, i) => (
-                                <li key={i} className="flex gap-2 text-sm text-gray-700 leading-snug">
-                                  <span className="shrink-0 font-semibold text-gray-400 w-5">{i + 1}.</span>
-                                  <span>{action}</span>
+                            <p className="text-[10px] font-semibold text-gray-400 uppercase tracking-wider mb-1">Actions</p>
+                            <ul className="space-y-0.5">
+                              {actions.map((a, i) => (
+                                <li key={i} className="flex gap-1.5 text-xs text-gray-700 items-start">
+                                  <span className="shrink-0 font-bold text-blue-400 mt-0.5">→</span>
+                                  <span>{a}</span>
                                 </li>
                               ))}
-                            </ol>
+                            </ul>
                           </div>
                         )}
                       </>

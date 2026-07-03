@@ -404,12 +404,135 @@ def _get_spark_session() -> Any:
         return None
 
 
+def _df_to_values_sql(df: Any, batch_size: int = 500) -> List[str]:
+    """Return a list of VALUES(...),(...) SQL strings, one per batch."""
+    import math
+    rows = df.values.tolist()
+    cols = list(df.columns)
+
+    def _esc(v: Any) -> str:
+        if v is None or (isinstance(v, float) and math.isnan(v)):
+            return "NULL"
+        if isinstance(v, bool):
+            return "TRUE" if v else "FALSE"
+        if isinstance(v, (int, float)):
+            return str(v)
+        return "'" + str(v).replace("'", "''") + "'"
+
+    batches = []
+    for i in range(0, len(rows), batch_size):
+        chunk = rows[i : i + batch_size]
+        rows_sql = ",\n  ".join(
+            "(" + ", ".join(_esc(c) for c in row) + ")" for row in chunk
+        )
+        batches.append((cols, rows_sql))
+    return batches
+
+
+def _sync_via_sql_warehouse(
+    assignments_df: Any,
+    definitions_df: Any,
+    catalog: str,
+    schema: str,
+    full_assign: str,
+    full_def: str,
+) -> Dict[str, Any]:
+    """Write persona tables via the Databricks SQL warehouse REST API — works outside Databricks runtime."""
+    import httpx, time as _time
+
+    host = (os.getenv("DATABRICKS_HOST") or "").strip().rstrip("/")
+    token = (os.getenv("DATABRICKS_TOKEN") or "").strip()
+    warehouse_id = (os.getenv("DATABRICKS_SQL_WAREHOUSE_ID") or "").strip()
+
+    if not host or not token or not warehouse_id:
+        missing = [k for k, v in [("DATABRICKS_HOST", host), ("DATABRICKS_TOKEN", token), ("DATABRICKS_SQL_WAREHOUSE_ID", warehouse_id)] if not v]
+        return {
+            "success": False,
+            "skipped": False,
+            "error": f"Cannot sync: missing env vars {missing}. Set them in .env to sync from outside Databricks.",
+            "catalog": catalog,
+            "schema": schema,
+            "assignments_rows": len(assignments_df),
+            "definitions_rows": len(definitions_df),
+        }
+
+    headers = {"Authorization": f"Bearer {token}", "Content-Type": "application/json"}
+
+    def _exec(statement: str) -> None:
+        body = {"warehouse_id": warehouse_id, "statement": statement, "wait_timeout": "50s", "on_wait_timeout": "CONTINUE"}
+        with httpx.Client(timeout=120.0) as client:
+            r = client.post(f"{host}/api/2.0/sql/statements", headers=headers, json=body)
+            if r.status_code >= 400:
+                raise RuntimeError(f"SQL API {r.status_code}: {r.text[:1000]}")
+            data = r.json()
+            sid = data.get("statement_id")
+            state = (data.get("status") or {}).get("state")
+            for _ in range(120):
+                if state in ("SUCCEEDED", "FAILED", "CANCELED"):
+                    break
+                _time.sleep(1)
+                r2 = client.get(f"{host}/api/2.0/sql/statements/{sid}", headers=headers)
+                r2.raise_for_status()
+                data = r2.json()
+                state = (data.get("status") or {}).get("state")
+            if state != "SUCCEEDED":
+                err = (data.get("status") or {}).get("error") or data
+                raise RuntimeError(f"SQL failed ({state}): {err}")
+
+    try:
+        # ── persona_assignments ──────────────────────────────────────────
+        assign_cols = ", ".join(f"`{c}`" for c in assignments_df.columns)
+        _exec(
+            f"CREATE OR REPLACE TABLE `{catalog}`.`{schema}`.`persona_assignments` "
+            f"({', '.join(f'`{c}` STRING' for c in assignments_df.columns)}) USING DELTA"
+        )
+        for cols, rows_sql in _df_to_values_sql(assignments_df):
+            _exec(f"INSERT INTO `{catalog}`.`{schema}`.`persona_assignments` ({assign_cols}) VALUES\n  {rows_sql}")
+
+        # ── persona_definitions ─────────────────────────────────────────
+        def_cols = ", ".join(f"`{c}`" for c in definitions_df.columns)
+        col_defs = ", ".join(
+            f"`{c}` {'DOUBLE' if definitions_df[c].dtype.kind in ('f', 'i') else 'STRING'}"
+            for c in definitions_df.columns
+        )
+        _exec(
+            f"CREATE OR REPLACE TABLE `{catalog}`.`{schema}`.`persona_definitions` "
+            f"({col_defs}) USING DELTA"
+        )
+        for cols, rows_sql in _df_to_values_sql(definitions_df):
+            _exec(f"INSERT INTO `{catalog}`.`{schema}`.`persona_definitions` ({def_cols}) VALUES\n  {rows_sql}")
+
+        logger.info("Synced persona tables via SQL warehouse: %s, %s", full_assign, full_def)
+        return {
+            "success": True,
+            "skipped": False,
+            "message": f"Wrote {full_assign} ({len(assignments_df)} rows) and {full_def} ({len(definitions_df)} rows) via SQL warehouse",
+            "persona_assignments_table": full_assign,
+            "persona_definitions_table": full_def,
+            "assignments_rows": len(assignments_df),
+            "definitions_rows": len(definitions_df),
+            "method": "sql_warehouse",
+        }
+    except Exception as exc:
+        logger.exception("SQL warehouse persona sync failed")
+        return {
+            "success": False,
+            "skipped": False,
+            "error": str(exc),
+            "catalog": catalog,
+            "schema": schema,
+            "assignments_rows": len(assignments_df),
+            "definitions_rows": len(definitions_df),
+        }
+
+
 def sync_personas_to_catalog_tables(
     personas: Dict[str, Any],
     customers: List[Dict[str, Any]],
 ) -> Dict[str, Any]:
     """
-    Overwrite Delta tables persona_assignments and persona_definitions when running on Databricks with Spark.
+    Overwrite Delta tables persona_assignments and persona_definitions.
+    Uses Spark when running on Databricks; falls back to SQL warehouse REST API otherwise.
     """
     catalog, schema = resolve_unity_catalog()
 
@@ -454,50 +577,33 @@ def sync_personas_to_catalog_tables(
             "definitions_rows": len(definitions_df),
         }
 
-    if not is_databricks_runtime():
-        return {
-            "success": False,
-            "skipped": True,
-            "message": "Not running on Databricks (no DATABRICKS_RUNTIME_VERSION); persona sync skipped. "
-            "Run this endpoint from a Databricks notebook/job with Spark, or export CSV locally.",
-            "catalog": catalog,
-            "schema": schema,
-            "assignments_rows": len(assignments_df),
-            "definitions_rows": len(definitions_df),
-        }
-
-    spark = _get_spark_session()
-    if spark is None:
-        return {
-            "success": False,
-            "skipped": True,
-            "message": "PySpark/Spark session unavailable; cannot write Delta tables. On Databricks, ensure the app or cluster provides Spark.",
-            "catalog": catalog,
-            "schema": schema,
-            "assignments_rows": len(assignments_df),
-            "definitions_rows": len(definitions_df),
-        }
-
     full_assign = f"{catalog}.{schema}.persona_assignments"
     full_def = f"{catalog}.{schema}.persona_definitions"
 
-    spark.createDataFrame(assignments_df).write.format("delta").mode("overwrite").option(
-        "overwriteSchema", "true"
-    ).saveAsTable(full_assign)
-    spark.createDataFrame(definitions_df).write.format("delta").mode("overwrite").option(
-        "overwriteSchema", "true"
-    ).saveAsTable(full_def)
+    # ── Try Spark first (Databricks runtime / job) ──────────────────────────
+    if is_databricks_runtime():
+        spark = _get_spark_session()
+        if spark is not None:
+            spark.createDataFrame(assignments_df).write.format("delta").mode("overwrite").option(
+                "overwriteSchema", "true"
+            ).saveAsTable(full_assign)
+            spark.createDataFrame(definitions_df).write.format("delta").mode("overwrite").option(
+                "overwriteSchema", "true"
+            ).saveAsTable(full_def)
+            logger.info("Synced persona tables via Spark: %s, %s", full_assign, full_def)
+            return {
+                "success": True,
+                "skipped": False,
+                "message": f"Wrote {full_assign} ({len(assignments_df)} rows) and {full_def} ({len(definitions_df)} rows) via Spark",
+                "persona_assignments_table": full_assign,
+                "persona_definitions_table": full_def,
+                "assignments_rows": len(assignments_df),
+                "definitions_rows": len(definitions_df),
+                "method": "spark",
+            }
 
-    logger.info("Synced persona tables: %s, %s", full_assign, full_def)
-    return {
-        "success": True,
-        "skipped": False,
-        "message": f"Wrote {full_assign} and {full_def}",
-        "persona_assignments_table": full_assign,
-        "persona_definitions_table": full_def,
-        "assignments_rows": len(assignments_df),
-        "definitions_rows": len(definitions_df),
-    }
+    # ── Fallback: SQL warehouse REST API (works locally / Databricks Apps) ──
+    return _sync_via_sql_warehouse(assignments_df, definitions_df, catalog, schema, full_assign, full_def)
 
 
 def build_genie_persona_context(
@@ -531,6 +637,39 @@ def build_genie_persona_context(
     )
 
 
+def _extract_table_from_statement_response(stmt: Any) -> Dict[str, Any] | None:
+    """Extract columns + rows from a StatementResponse object or dict."""
+    if stmt is None:
+        return None
+    try:
+        if isinstance(stmt, dict):
+            manifest = stmt.get("manifest") or {}
+            schema = manifest.get("schema") or {}
+            cols_raw = schema.get("columns") or []
+            columns = [c.get("name") or c.get("type_name", f"col_{i}") for i, c in enumerate(cols_raw)]
+            result = stmt.get("result") or {}
+            rows = result.get("data_array") or []
+        else:
+            manifest = getattr(stmt, "manifest", None)
+            schema = getattr(manifest, "schema", None) if manifest else None
+            cols_raw = getattr(schema, "columns", None) or [] if schema else []
+            columns = [getattr(c, "name", None) or f"col_{i}" for i, c in enumerate(cols_raw)]
+            result = getattr(stmt, "result", None)
+            rows = getattr(result, "data_array", None) or [] if result else []
+        if not columns and not rows:
+            return None
+        # Normalize rows to list-of-lists of strings
+        norm_rows = []
+        for row in rows:
+            if isinstance(row, (list, tuple)):
+                norm_rows.append([str(v) if v is not None else "" for v in row])
+            else:
+                norm_rows.append([str(row)])
+        return {"columns": columns, "rows": norm_rows}
+    except Exception:
+        return None
+
+
 def _genie_message_to_payload(msg: Any) -> Dict[str, Any]:
     """Best-effort extraction of narrative, SQL, and table preview from GenieMessage or API dict."""
     if isinstance(msg, dict):
@@ -551,28 +690,43 @@ def _genie_message_to_payload(msg: Any) -> Dict[str, Any]:
         ad: Dict[str, Any] = {"type": str(atype)}
         text = getattr(att, "text", None)
         if text:
-            ad["text"] = text
-            narrative_parts.append(str(text))
+            # SDK wraps text in a TextAttachment(content=...) object — extract .content
+            text_str = getattr(text, "content", None) or str(text)
+            ad["text"] = text_str
+            narrative_parts.append(text_str)
         query = getattr(att, "query", None)
         if query is not None:
             sql_str = getattr(query, "query", None) or str(query)
             ad["sql"] = sql_str
             if out["sql"] is None:
                 out["sql"] = sql_str
+            # Extract tabular result from statement_response on the query object
+            stmt = getattr(query, "statement_response", None)
+            if stmt is not None:
+                table = _extract_table_from_statement_response(stmt)
+                if table:
+                    ad["table"] = table
+                    if out.get("table") is None:
+                        out["table"] = table
         title = getattr(att, "title", None)
         if title:
             ad["title"] = title
-        # Some SDK versions expose statement_response / query_result on attachment
+        # Also check statement_response directly on the attachment
         stmt = getattr(att, "statement_response", None)
-        if stmt is not None:
-            ad["statement_response"] = str(stmt)[:8000]
+        if stmt is not None and not ad.get("table"):
+            table = _extract_table_from_statement_response(stmt)
+            if table:
+                ad["table"] = table
+                if out.get("table") is None:
+                    out["table"] = table
         out["attachments"].append(ad)
     out["narrative"] = "\n\n".join(narrative_parts).strip()
     if not out["narrative"]:
         for attr in ("content", "text", "body"):
             v = getattr(msg, attr, None)
             if v:
-                out["narrative"] = str(v).strip()
+                # May be a TextAttachment object — extract .content if present
+                out["narrative"] = (getattr(v, "content", None) or str(v)).strip()
                 break
     return out
 
@@ -596,8 +750,10 @@ def _genie_message_dict_to_payload(d: Dict[str, Any]) -> Dict[str, Any]:
         ad: Dict[str, Any] = {"type": str(atype)}
         text = att.get("text")
         if text:
-            ad["text"] = text
-            narrative_parts.append(str(text))
+            # Raw API may return {"content": "...", "id": null} — extract content
+            text_str = text.get("content") if isinstance(text, dict) else (getattr(text, "content", None) or str(text))
+            ad["text"] = text_str
+            narrative_parts.append(text_str)
         query = att.get("query")
         if isinstance(query, dict):
             sql_str = query.get("query")
@@ -605,6 +761,13 @@ def _genie_message_dict_to_payload(d: Dict[str, Any]) -> Dict[str, Any]:
                 ad["sql"] = sql_str
                 if out["sql"] is None:
                     out["sql"] = sql_str
+            stmt = query.get("statement_response")
+            if stmt is not None:
+                table = _extract_table_from_statement_response(stmt)
+                if table:
+                    ad["table"] = table
+                    if out.get("table") is None:
+                        out["table"] = table
         elif query is not None:
             ad["sql"] = str(query)
             if out["sql"] is None:
@@ -663,6 +826,19 @@ def _genie_rest_get_message(w: Any, space_id: str, conversation_id: str, message
     return api.do(
         "GET",
         f"/api/2.0/genie/spaces/{space_id}/conversations/{conversation_id}/messages/{message_id}",
+        headers=headers,
+    )
+
+
+def _genie_rest_get_query_result(
+    w: Any, space_id: str, conversation_id: str, message_id: str
+) -> Dict[str, Any]:
+    """Fetch the tabular query result for a completed Genie message."""
+    api = _workspace_api_client(w)
+    headers = {"Accept": "application/json"}
+    return api.do(
+        "GET",
+        f"/api/2.0/genie/spaces/{space_id}/conversations/{conversation_id}/messages/{message_id}/query-result",
         headers=headers,
     )
 
@@ -943,6 +1119,28 @@ def ask_genie(question: str, context_prefix: str) -> Dict[str, Any]:
         raise
 
     payload = _genie_message_to_payload(msg)
+
+    # ── Fetch tabular query result (separate endpoint) ──────────────────────
+    # The message/attachment objects never embed row data directly; it lives at
+    # .../query-result and must be fetched after the message completes.
+    if payload.get("sql") and not payload.get("table"):
+        conv_id = payload.get("conversation_id") or (
+            getattr(msg, "conversation_id", None) if not isinstance(msg, dict) else msg.get("conversation_id")
+        )
+        msg_id = payload.get("message_id") or (
+            getattr(msg, "id", None) if not isinstance(msg, dict) else (msg.get("id") or msg.get("message_id"))
+        )
+        if conv_id and msg_id:
+            try:
+                qr = _genie_rest_get_query_result(w, space_id, conv_id, msg_id)
+                # Response shape: {"statement_response": {...}} or direct StatementResponse fields
+                stmt = qr.get("statement_response") or qr
+                table = _extract_table_from_statement_response(stmt)
+                if table and table.get("rows"):
+                    payload["table"] = table
+            except Exception as qr_exc:
+                logger.warning("Could not fetch Genie query-result: %s", qr_exc)
+
     payload["success"] = True
     payload["config"] = cfg
     return payload

@@ -1,0 +1,2399 @@
+[
+  {
+    "experiment_id": "EXP_DIGITAL_NATIVE_MRDP001",
+    "product_id": "MRD_P001",
+    "product_name": "Meridian Essential Checking",
+    "persona": "Digital Native",
+    "experiment_date": "2025-Q1",
+    "n_per_group": 400,
+    "total_n": 1200,
+    "holdout": {
+      "n_exposed": 400,
+      "n_converted": 56,
+      "conversion_rate": 0.14
+    },
+    "variants": [
+      {
+        "variant_id": "A",
+        "offer_id": "MRD_OFF_001",
+        "offer_name": "Summer $300 Checking Bonus",
+        "offer_type": "signup_bonus",
+        "channel": "in_app",
+        "n_exposed": 400,
+        "n_converted": 92,
+        "conversion_rate": 0.23,
+        "lift_abs": 0.09,
+        "lift_pct": 64.3,
+        "z_stat": 3.2779,
+        "p_value": 0.000523,
+        "is_significant": true
+      },
+      {
+        "variant_id": "B",
+        "offer_id": "MRD_OFF_002",
+        "offer_name": "Refer a Friend â€” Earn $75",
+        "offer_type": "referral_bonus",
+        "channel": "in_app",
+        "n_exposed": 400,
+        "n_converted": 70,
+        "conversion_rate": 0.175,
+        "lift_abs": 0.035,
+        "lift_pct": 25.0,
+        "z_stat": 1.3588,
+        "p_value": 0.087104,
+        "is_significant": false
+      }
+    ],
+    "winning_variant_id": "A",
+    "winning_offer_id": "MRD_OFF_001",
+    "winning_channel": "in_app",
+    "no_offer_recommended": false,
+    "channel_attribution": {
+      "in_app": 0.87,
+      "email": 0.043,
+      "direct_mail": 0.043,
+      "branch": 0.043
+    }
+  },
+  {
+    "experiment_id": "EXP_EVERYDAY_ESSENTIAL_MRDP001",
+    "product_id": "MRD_P001",
+    "product_name": "Meridian Essential Checking",
+    "persona": "Everyday Essential",
+    "experiment_date": "2025-Q1",
+    "n_per_group": 400,
+    "total_n": 1200,
+    "holdout": {
+      "n_exposed": 400,
+      "n_converted": 52,
+      "conversion_rate": 0.13
+    },
+    "variants": [
+      {
+        "variant_id": "A",
+        "offer_id": "MRD_OFF_001",
+        "offer_name": "Summer $300 Checking Bonus",
+        "offer_type": "signup_bonus",
+        "channel": "in_app",
+        "n_exposed": 400,
+        "n_converted": 84,
+        "conversion_rate": 0.21,
+        "lift_abs": 0.08,
+        "lift_pct": 61.5,
+        "z_stat": 3.0119,
+        "p_value": 0.001298,
+        "is_significant": true
+      },
+      {
+        "variant_id": "B",
+        "offer_id": "MRD_OFF_002",
+        "offer_name": "Refer a Friend â€” Earn $75",
+        "offer_type": "referral_bonus",
+        "channel": "email",
+        "n_exposed": 400,
+        "n_converted": 65,
+        "conversion_rate": 0.162,
+        "lift_abs": 0.032,
+        "lift_pct": 24.6,
+        "z_stat": 1.3007,
+        "p_value": 0.096677,
+        "is_significant": false
+      }
+    ],
+    "winning_variant_id": "A",
+    "winning_offer_id": "MRD_OFF_001",
+    "winning_channel": "in_app",
+    "no_offer_recommended": false,
+    "channel_attribution": {
+      "in_app": 0.87,
+      "email": 0.043,
+      "direct_mail": 0.043,
+      "branch": 0.043
+    }
+  },
+  {
+    "experiment_id": "EXP_AT_RISK_BORROWER_MRDP001",
+    "product_id": "MRD_P001",
+    "product_name": "Meridian Essential Checking",
+    "persona": "At-Risk Borrower",
+    "experiment_date": "2025-Q1",
+    "n_per_group": 400,
+    "total_n": 1200,
+    "holdout": {
+      "n_exposed": 400,
+      "n_converted": 44,
+      "conversion_rate": 0.11
+    },
+    "variants": [
+      {
+        "variant_id": "A",
+        "offer_id": "MRD_OFF_001",
+        "offer_name": "Summer $300 Checking Bonus",
+        "offer_type": "signup_bonus",
+        "channel": "in_app",
+        "n_exposed": 400,
+        "n_converted": 72,
+        "conversion_rate": 0.18,
+        "lift_abs": 0.07,
+        "lift_pct": 63.6,
+        "z_stat": 2.8116,
+        "p_value": 0.002465,
+        "is_significant": true
+      },
+      {
+        "variant_id": "B",
+        "offer_id": "MRD_OFF_002",
+        "offer_name": "Refer a Friend â€” Earn $75",
+        "offer_type": "referral_bonus",
+        "channel": "email",
+        "n_exposed": 400,
+        "n_converted": 56,
+        "conversion_rate": 0.14,
+        "lift_abs": 0.03,
+        "lift_pct": 27.3,
+        "z_stat": 1.2829,
+        "p_value": 0.099772,
+        "is_significant": false
+      }
+    ],
+    "winning_variant_id": "A",
+    "winning_offer_id": "MRD_OFF_001",
+    "winning_channel": "in_app",
+    "no_offer_recommended": false,
+    "channel_attribution": {
+      "in_app": 0.87,
+      "email": 0.043,
+      "direct_mail": 0.043,
+      "branch": 0.043
+    }
+  },
+  {
+    "experiment_id": "EXP_DIGITAL_NATIVE_MRDP002",
+    "product_id": "MRD_P002",
+    "product_name": "Meridian Plus Checking",
+    "persona": "Digital Native",
+    "experiment_date": "2025-Q1",
+    "n_per_group": 400,
+    "total_n": 1200,
+    "holdout": {
+      "n_exposed": 400,
+      "n_converted": 56,
+      "conversion_rate": 0.14
+    },
+    "variants": [
+      {
+        "variant_id": "A",
+        "offer_id": "MRD_OFF_003",
+        "offer_name": "Fee Waiver for Life on Plus Checking",
+        "offer_type": "fee_waiver",
+        "channel": "email",
+        "n_exposed": 400,
+        "n_converted": 80,
+        "conversion_rate": 0.2,
+        "lift_abs": 0.06,
+        "lift_pct": 42.9,
+        "z_stat": 2.2589,
+        "p_value": 0.011944,
+        "is_significant": true
+      },
+      {
+        "variant_id": "B",
+        "offer_id": "MRD_OFF_004",
+        "offer_name": "$200 Loyalty Upgrade Bonus",
+        "offer_type": "loyalty_reward",
+        "channel": "in_app",
+        "n_exposed": 400,
+        "n_converted": 90,
+        "conversion_rate": 0.225,
+        "lift_abs": 0.085,
+        "lift_pct": 60.7,
+        "z_stat": 3.1121,
+        "p_value": 0.000929,
+        "is_significant": true
+      }
+    ],
+    "winning_variant_id": "B",
+    "winning_offer_id": "MRD_OFF_004",
+    "winning_channel": "in_app",
+    "no_offer_recommended": false,
+    "channel_attribution": {
+      "in_app": 0.481,
+      "email": 0.428,
+      "direct_mail": 0.045,
+      "branch": 0.045
+    }
+  },
+  {
+    "experiment_id": "EXP_EVERYDAY_ESSENTIAL_MRDP002",
+    "product_id": "MRD_P002",
+    "product_name": "Meridian Plus Checking",
+    "persona": "Everyday Essential",
+    "experiment_date": "2025-Q1",
+    "n_per_group": 400,
+    "total_n": 1200,
+    "holdout": {
+      "n_exposed": 400,
+      "n_converted": 48,
+      "conversion_rate": 0.12
+    },
+    "variants": [
+      {
+        "variant_id": "A",
+        "offer_id": "MRD_OFF_003",
+        "offer_name": "Fee Waiver for Life on Plus Checking",
+        "offer_type": "fee_waiver",
+        "channel": "email",
+        "n_exposed": 400,
+        "n_converted": 70,
+        "conversion_rate": 0.175,
+        "lift_abs": 0.055,
+        "lift_pct": 45.8,
+        "z_stat": 2.1935,
+        "p_value": 0.014136,
+        "is_significant": true
+      },
+      {
+        "variant_id": "B",
+        "offer_id": "MRD_OFF_004",
+        "offer_name": "$200 Loyalty Upgrade Bonus",
+        "offer_type": "loyalty_reward",
+        "channel": "in_app",
+        "n_exposed": 400,
+        "n_converted": 76,
+        "conversion_rate": 0.19,
+        "lift_abs": 0.07,
+        "lift_pct": 58.3,
+        "z_stat": 2.7354,
+        "p_value": 0.003115,
+        "is_significant": true
+      }
+    ],
+    "winning_variant_id": "B",
+    "winning_offer_id": "MRD_OFF_004",
+    "winning_channel": "in_app",
+    "no_offer_recommended": false,
+    "channel_attribution": {
+      "in_app": 0.474,
+      "email": 0.435,
+      "direct_mail": 0.045,
+      "branch": 0.045
+    }
+  },
+  {
+    "experiment_id": "EXP_WEALTH_BUILDER_MRDP002",
+    "product_id": "MRD_P002",
+    "product_name": "Meridian Plus Checking",
+    "persona": "Wealth Builder",
+    "experiment_date": "2025-Q1",
+    "n_per_group": 400,
+    "total_n": 1200,
+    "holdout": {
+      "n_exposed": 400,
+      "n_converted": 56,
+      "conversion_rate": 0.14
+    },
+    "variants": [
+      {
+        "variant_id": "A",
+        "offer_id": "MRD_OFF_003",
+        "offer_name": "Fee Waiver for Life on Plus Checking",
+        "offer_type": "fee_waiver",
+        "channel": "email",
+        "n_exposed": 400,
+        "n_converted": 88,
+        "conversion_rate": 0.22,
+        "lift_abs": 0.08,
+        "lift_pct": 57.1,
+        "z_stat": 2.9448,
+        "p_value": 0.001616,
+        "is_significant": true
+      },
+      {
+        "variant_id": "B",
+        "offer_id": "MRD_OFF_004",
+        "offer_name": "$200 Loyalty Upgrade Bonus",
+        "offer_type": "loyalty_reward",
+        "channel": "in_app",
+        "n_exposed": 400,
+        "n_converted": 100,
+        "conversion_rate": 0.25,
+        "lift_abs": 0.11,
+        "lift_pct": 78.6,
+        "z_stat": 3.9264,
+        "p_value": 4.3e-05,
+        "is_significant": true
+      }
+    ],
+    "winning_variant_id": "B",
+    "winning_offer_id": "MRD_OFF_004",
+    "winning_channel": "in_app",
+    "no_offer_recommended": false,
+    "channel_attribution": {
+      "in_app": 0.484,
+      "email": 0.425,
+      "direct_mail": 0.045,
+      "branch": 0.045
+    }
+  },
+  {
+    "experiment_id": "EXP_WEALTH_BUILDER_MRDP003",
+    "product_id": "MRD_P003",
+    "product_name": "Meridian Prestige Checking",
+    "persona": "Wealth Builder",
+    "experiment_date": "2025-Q1",
+    "n_per_group": 400,
+    "total_n": 1200,
+    "holdout": {
+      "n_exposed": 400,
+      "n_converted": 32,
+      "conversion_rate": 0.08
+    },
+    "variants": [
+      {
+        "variant_id": "A",
+        "offer_id": "MRD_OFF_005",
+        "offer_name": "$500 Prestige Checking Bonus",
+        "offer_type": "signup_bonus",
+        "channel": "branch",
+        "n_exposed": 400,
+        "n_converted": 72,
+        "conversion_rate": 0.18,
+        "lift_abs": 0.1,
+        "lift_pct": 125.0,
+        "z_stat": 4.2052,
+        "p_value": 1.3e-05,
+        "is_significant": true
+      },
+      {
+        "variant_id": "B",
+        "offer_id": "MRD_OFF_006",
+        "offer_name": "Retention: Free Year of Prestige Checking",
+        "offer_type": "loyalty_reward",
+        "channel": "in_app",
+        "n_exposed": 400,
+        "n_converted": 54,
+        "conversion_rate": 0.135,
+        "lift_abs": 0.055,
+        "lift_pct": 68.8,
+        "z_stat": 2.5111,
+        "p_value": 0.006017,
+        "is_significant": true
+      }
+    ],
+    "winning_variant_id": "A",
+    "winning_offer_id": "MRD_OFF_005",
+    "winning_channel": "branch",
+    "no_offer_recommended": false,
+    "channel_attribution": {
+      "in_app": 0.39,
+      "email": 0.045,
+      "direct_mail": 0.045,
+      "branch": 0.519
+    }
+  },
+  {
+    "experiment_id": "EXP_DIGITAL_NATIVE_MRDP003",
+    "product_id": "MRD_P003",
+    "product_name": "Meridian Prestige Checking",
+    "persona": "Digital Native",
+    "experiment_date": "2025-Q1",
+    "n_per_group": 400,
+    "total_n": 1200,
+    "holdout": {
+      "n_exposed": 400,
+      "n_converted": 32,
+      "conversion_rate": 0.08
+    },
+    "variants": [
+      {
+        "variant_id": "A",
+        "offer_id": "MRD_OFF_005",
+        "offer_name": "$500 Prestige Checking Bonus",
+        "offer_type": "signup_bonus",
+        "channel": "branch",
+        "n_exposed": 400,
+        "n_converted": 36,
+        "conversion_rate": 0.09,
+        "lift_abs": 0.01,
+        "lift_pct": 12.5,
+        "z_stat": 0.5071,
+        "p_value": 0.306042,
+        "is_significant": false
+      },
+      {
+        "variant_id": "B",
+        "offer_id": "MRD_OFF_006",
+        "offer_name": "Retention: Free Year of Prestige Checking",
+        "offer_type": "loyalty_reward",
+        "channel": "in_app",
+        "n_exposed": 400,
+        "n_converted": 35,
+        "conversion_rate": 0.088,
+        "lift_abs": 0.008,
+        "lift_pct": 10.0,
+        "z_stat": 0.3829,
+        "p_value": 0.3509,
+        "is_significant": false
+      }
+    ],
+    "winning_variant_id": null,
+    "winning_offer_id": null,
+    "winning_channel": null,
+    "no_offer_recommended": true,
+    "channel_attribution": {
+      "in_app": 0.25,
+      "email": 0.25,
+      "direct_mail": 0.1,
+      "branch": 0.4
+    }
+  },
+  {
+    "experiment_id": "EXP_EVERYDAY_ESSENTIAL_MRDP004",
+    "product_id": "MRD_P004",
+    "product_name": "Meridian Basic Savings",
+    "persona": "Everyday Essential",
+    "experiment_date": "2025-Q1",
+    "n_per_group": 400,
+    "total_n": 1200,
+    "holdout": {
+      "n_exposed": 400,
+      "n_converted": 28,
+      "conversion_rate": 0.07
+    },
+    "variants": [
+      {
+        "variant_id": "A",
+        "offer_id": "MRD_OFF_036",
+        "offer_name": "3.25% APY Starter Savings Promo",
+        "offer_type": "intro_rate_boost",
+        "channel": "in_app",
+        "n_exposed": 400,
+        "n_converted": 52,
+        "conversion_rate": 0.13,
+        "lift_abs": 0.06,
+        "lift_pct": 85.7,
+        "z_stat": 2.8284,
+        "p_value": 0.002339,
+        "is_significant": true
+      },
+      {
+        "variant_id": "B",
+        "offer_id": "MRD_OFF_037",
+        "offer_name": "Loyalty Savings Rate Boost +0.15%",
+        "offer_type": "loyalty_reward",
+        "channel": "email",
+        "n_exposed": 400,
+        "n_converted": 40,
+        "conversion_rate": 0.1,
+        "lift_abs": 0.03,
+        "lift_pct": 42.9,
+        "z_stat": 1.5213,
+        "p_value": 0.064092,
+        "is_significant": false
+      }
+    ],
+    "winning_variant_id": "A",
+    "winning_offer_id": "MRD_OFF_036",
+    "winning_channel": "in_app",
+    "no_offer_recommended": false,
+    "channel_attribution": {
+      "in_app": 0.87,
+      "email": 0.043,
+      "direct_mail": 0.043,
+      "branch": 0.043
+    }
+  },
+  {
+    "experiment_id": "EXP_DIGITAL_NATIVE_MRDP004",
+    "product_id": "MRD_P004",
+    "product_name": "Meridian Basic Savings",
+    "persona": "Digital Native",
+    "experiment_date": "2025-Q1",
+    "n_per_group": 400,
+    "total_n": 1200,
+    "holdout": {
+      "n_exposed": 400,
+      "n_converted": 28,
+      "conversion_rate": 0.07
+    },
+    "variants": [
+      {
+        "variant_id": "A",
+        "offer_id": "MRD_OFF_036",
+        "offer_name": "3.25% APY Starter Savings Promo",
+        "offer_type": "intro_rate_boost",
+        "channel": "in_app",
+        "n_exposed": 400,
+        "n_converted": 48,
+        "conversion_rate": 0.12,
+        "lift_abs": 0.05,
+        "lift_pct": 71.4,
+        "z_stat": 2.4116,
+        "p_value": 0.007942,
+        "is_significant": true
+      },
+      {
+        "variant_id": "B",
+        "offer_id": "MRD_OFF_037",
+        "offer_name": "Loyalty Savings Rate Boost +0.15%",
+        "offer_type": "loyalty_reward",
+        "channel": "email",
+        "n_exposed": 400,
+        "n_converted": 38,
+        "conversion_rate": 0.095,
+        "lift_abs": 0.025,
+        "lift_pct": 35.7,
+        "z_stat": 1.2851,
+        "p_value": 0.099385,
+        "is_significant": false
+      }
+    ],
+    "winning_variant_id": "A",
+    "winning_offer_id": "MRD_OFF_036",
+    "winning_channel": "in_app",
+    "no_offer_recommended": false,
+    "channel_attribution": {
+      "in_app": 0.87,
+      "email": 0.043,
+      "direct_mail": 0.043,
+      "branch": 0.043
+    }
+  },
+  {
+    "experiment_id": "EXP_AT_RISK_BORROWER_MRDP004",
+    "product_id": "MRD_P004",
+    "product_name": "Meridian Basic Savings",
+    "persona": "At-Risk Borrower",
+    "experiment_date": "2025-Q1",
+    "n_per_group": 400,
+    "total_n": 1200,
+    "holdout": {
+      "n_exposed": 400,
+      "n_converted": 24,
+      "conversion_rate": 0.06
+    },
+    "variants": [
+      {
+        "variant_id": "A",
+        "offer_id": "MRD_OFF_036",
+        "offer_name": "3.25% APY Starter Savings Promo",
+        "offer_type": "intro_rate_boost",
+        "channel": "in_app",
+        "n_exposed": 400,
+        "n_converted": 26,
+        "conversion_rate": 0.065,
+        "lift_abs": 0.005,
+        "lift_pct": 8.3,
+        "z_stat": 0.2921,
+        "p_value": 0.385098,
+        "is_significant": false
+      },
+      {
+        "variant_id": "B",
+        "offer_id": "MRD_OFF_037",
+        "offer_name": "Loyalty Savings Rate Boost +0.15%",
+        "offer_type": "loyalty_reward",
+        "channel": "email",
+        "n_exposed": 400,
+        "n_converted": 27,
+        "conversion_rate": 0.068,
+        "lift_abs": 0.008,
+        "lift_pct": 13.3,
+        "z_stat": 0.4342,
+        "p_value": 0.33209,
+        "is_significant": false
+      }
+    ],
+    "winning_variant_id": null,
+    "winning_offer_id": null,
+    "winning_channel": null,
+    "no_offer_recommended": true,
+    "channel_attribution": {
+      "in_app": 0.25,
+      "email": 0.25,
+      "direct_mail": 0.1,
+      "branch": 0.4
+    }
+  },
+  {
+    "experiment_id": "EXP_WEALTH_BUILDER_MRDP005",
+    "product_id": "MRD_P005",
+    "product_name": "Meridian High-Yield Savings",
+    "persona": "Wealth Builder",
+    "experiment_date": "2025-Q1",
+    "n_per_group": 400,
+    "total_n": 1200,
+    "holdout": {
+      "n_exposed": 400,
+      "n_converted": 32,
+      "conversion_rate": 0.08
+    },
+    "variants": [
+      {
+        "variant_id": "A",
+        "offer_id": "MRD_OFF_007",
+        "offer_name": "5.00% APY Intro Rate â€” 6 Months",
+        "offer_type": "cd_rate_bump",
+        "channel": "email",
+        "n_exposed": 400,
+        "n_converted": 64,
+        "conversion_rate": 0.16,
+        "lift_abs": 0.08,
+        "lift_pct": 100.0,
+        "z_stat": 3.4816,
+        "p_value": 0.000249,
+        "is_significant": true
+      },
+      {
+        "variant_id": "B",
+        "offer_id": "MRD_OFF_008",
+        "offer_name": "Relationship Rate Boost +0.25%",
+        "offer_type": "cd_rate_bump",
+        "channel": "in_app",
+        "n_exposed": 400,
+        "n_converted": 48,
+        "conversion_rate": 0.12,
+        "lift_abs": 0.04,
+        "lift_pct": 50.0,
+        "z_stat": 1.8856,
+        "p_value": 0.029673,
+        "is_significant": true
+      }
+    ],
+    "winning_variant_id": "A",
+    "winning_offer_id": "MRD_OFF_007",
+    "winning_channel": "email",
+    "no_offer_recommended": false,
+    "channel_attribution": {
+      "in_app": 0.39,
+      "email": 0.519,
+      "direct_mail": 0.045,
+      "branch": 0.045
+    }
+  },
+  {
+    "experiment_id": "EXP_EVERYDAY_ESSENTIAL_MRDP005",
+    "product_id": "MRD_P005",
+    "product_name": "Meridian High-Yield Savings",
+    "persona": "Everyday Essential",
+    "experiment_date": "2025-Q1",
+    "n_per_group": 400,
+    "total_n": 1200,
+    "holdout": {
+      "n_exposed": 400,
+      "n_converted": 28,
+      "conversion_rate": 0.07
+    },
+    "variants": [
+      {
+        "variant_id": "A",
+        "offer_id": "MRD_OFF_007",
+        "offer_name": "5.00% APY Intro Rate â€” 6 Months",
+        "offer_type": "cd_rate_bump",
+        "channel": "email",
+        "n_exposed": 400,
+        "n_converted": 52,
+        "conversion_rate": 0.13,
+        "lift_abs": 0.06,
+        "lift_pct": 85.7,
+        "z_stat": 2.8284,
+        "p_value": 0.002339,
+        "is_significant": true
+      },
+      {
+        "variant_id": "B",
+        "offer_id": "MRD_OFF_008",
+        "offer_name": "Relationship Rate Boost +0.25%",
+        "offer_type": "cd_rate_bump",
+        "channel": "in_app",
+        "n_exposed": 400,
+        "n_converted": 40,
+        "conversion_rate": 0.1,
+        "lift_abs": 0.03,
+        "lift_pct": 42.9,
+        "z_stat": 1.5213,
+        "p_value": 0.064092,
+        "is_significant": false
+      }
+    ],
+    "winning_variant_id": "A",
+    "winning_offer_id": "MRD_OFF_007",
+    "winning_channel": "email",
+    "no_offer_recommended": false,
+    "channel_attribution": {
+      "in_app": 0.043,
+      "email": 0.87,
+      "direct_mail": 0.043,
+      "branch": 0.043
+    }
+  },
+  {
+    "experiment_id": "EXP_RETIREE_ANCHOR_MRDP005",
+    "product_id": "MRD_P005",
+    "product_name": "Meridian High-Yield Savings",
+    "persona": "Retiree Anchor",
+    "experiment_date": "2025-Q1",
+    "n_per_group": 400,
+    "total_n": 1200,
+    "holdout": {
+      "n_exposed": 400,
+      "n_converted": 36,
+      "conversion_rate": 0.09
+    },
+    "variants": [
+      {
+        "variant_id": "A",
+        "offer_id": "MRD_OFF_007",
+        "offer_name": "5.00% APY Intro Rate â€” 6 Months",
+        "offer_type": "cd_rate_bump",
+        "channel": "email",
+        "n_exposed": 400,
+        "n_converted": 68,
+        "conversion_rate": 0.17,
+        "lift_abs": 0.08,
+        "lift_pct": 88.9,
+        "z_stat": 3.3641,
+        "p_value": 0.000384,
+        "is_significant": true
+      },
+      {
+        "variant_id": "B",
+        "offer_id": "MRD_OFF_008",
+        "offer_name": "Relationship Rate Boost +0.25%",
+        "offer_type": "cd_rate_bump",
+        "channel": "in_app",
+        "n_exposed": 400,
+        "n_converted": 52,
+        "conversion_rate": 0.13,
+        "lift_abs": 0.04,
+        "lift_pct": 44.4,
+        "z_stat": 1.8079,
+        "p_value": 0.035308,
+        "is_significant": true
+      }
+    ],
+    "winning_variant_id": "A",
+    "winning_offer_id": "MRD_OFF_007",
+    "winning_channel": "email",
+    "no_offer_recommended": false,
+    "channel_attribution": {
+      "in_app": 0.394,
+      "email": 0.515,
+      "direct_mail": 0.045,
+      "branch": 0.045
+    }
+  },
+  {
+    "experiment_id": "EXP_RETIREE_ANCHOR_MRDP007",
+    "product_id": "MRD_P007",
+    "product_name": "Meridian 12-Month CD",
+    "persona": "Retiree Anchor",
+    "experiment_date": "2025-Q1",
+    "n_per_group": 400,
+    "total_n": 1200,
+    "holdout": {
+      "n_exposed": 400,
+      "n_converted": 36,
+      "conversion_rate": 0.09
+    },
+    "variants": [
+      {
+        "variant_id": "A",
+        "offer_id": "MRD_OFF_009",
+        "offer_name": "Relationship CD Rate Bump +0.15%",
+        "offer_type": "cd_rate_bump",
+        "channel": "email",
+        "n_exposed": 400,
+        "n_converted": 64,
+        "conversion_rate": 0.16,
+        "lift_abs": 0.07,
+        "lift_pct": 77.8,
+        "z_stat": 2.9933,
+        "p_value": 0.00138,
+        "is_significant": true
+      },
+      {
+        "variant_id": "B",
+        "offer_id": "MRD_OFF_010",
+        "offer_name": "CD Ladder Starter â€” Open 2, Rate Unlock",
+        "offer_type": "cd_rate_bump",
+        "channel": "branch",
+        "n_exposed": 400,
+        "n_converted": 58,
+        "conversion_rate": 0.145,
+        "lift_abs": 0.055,
+        "lift_pct": 61.1,
+        "z_stat": 2.4155,
+        "p_value": 0.007857,
+        "is_significant": true
+      }
+    ],
+    "winning_variant_id": "A",
+    "winning_offer_id": "MRD_OFF_009",
+    "winning_channel": "email",
+    "no_offer_recommended": false,
+    "channel_attribution": {
+      "in_app": 0.045,
+      "email": 0.477,
+      "direct_mail": 0.045,
+      "branch": 0.432
+    }
+  },
+  {
+    "experiment_id": "EXP_WEALTH_BUILDER_MRDP007",
+    "product_id": "MRD_P007",
+    "product_name": "Meridian 12-Month CD",
+    "persona": "Wealth Builder",
+    "experiment_date": "2025-Q1",
+    "n_per_group": 400,
+    "total_n": 1200,
+    "holdout": {
+      "n_exposed": 400,
+      "n_converted": 32,
+      "conversion_rate": 0.08
+    },
+    "variants": [
+      {
+        "variant_id": "A",
+        "offer_id": "MRD_OFF_009",
+        "offer_name": "Relationship CD Rate Bump +0.15%",
+        "offer_type": "cd_rate_bump",
+        "channel": "email",
+        "n_exposed": 400,
+        "n_converted": 60,
+        "conversion_rate": 0.15,
+        "lift_abs": 0.07,
+        "lift_pct": 87.5,
+        "z_stat": 3.1031,
+        "p_value": 0.000958,
+        "is_significant": true
+      },
+      {
+        "variant_id": "B",
+        "offer_id": "MRD_OFF_010",
+        "offer_name": "CD Ladder Starter â€” Open 2, Rate Unlock",
+        "offer_type": "cd_rate_bump",
+        "channel": "branch",
+        "n_exposed": 400,
+        "n_converted": 74,
+        "conversion_rate": 0.185,
+        "lift_abs": 0.105,
+        "lift_pct": 131.2,
+        "z_stat": 4.3799,
+        "p_value": 6e-06,
+        "is_significant": true
+      }
+    ],
+    "winning_variant_id": "B",
+    "winning_offer_id": "MRD_OFF_010",
+    "winning_channel": "branch",
+    "no_offer_recommended": false,
+    "channel_attribution": {
+      "in_app": 0.045,
+      "email": 0.407,
+      "direct_mail": 0.045,
+      "branch": 0.502
+    }
+  },
+  {
+    "experiment_id": "EXP_DIGITAL_NATIVE_MRDP009",
+    "product_id": "MRD_P009",
+    "product_name": "Meridian Cash Back Card",
+    "persona": "Digital Native",
+    "experiment_date": "2025-Q1",
+    "n_per_group": 400,
+    "total_n": 1600,
+    "holdout": {
+      "n_exposed": 400,
+      "n_converted": 40,
+      "conversion_rate": 0.1
+    },
+    "variants": [
+      {
+        "variant_id": "A",
+        "offer_id": "MRD_OFF_011",
+        "offer_name": "$200 Welcome Bonus",
+        "offer_type": "signup_bonus",
+        "channel": "in_app",
+        "n_exposed": 400,
+        "n_converted": 80,
+        "conversion_rate": 0.2,
+        "lift_abs": 0.1,
+        "lift_pct": 100.0,
+        "z_stat": 3.9606,
+        "p_value": 3.7e-05,
+        "is_significant": true
+      },
+      {
+        "variant_id": "B",
+        "offer_id": "MRD_OFF_012",
+        "offer_name": "0% Intro APR â€” 15 Months",
+        "offer_type": "intro_apr",
+        "channel": "email",
+        "n_exposed": 400,
+        "n_converted": 64,
+        "conversion_rate": 0.16,
+        "lift_abs": 0.06,
+        "lift_pct": 60.0,
+        "z_stat": 2.5231,
+        "p_value": 0.005816,
+        "is_significant": true
+      },
+      {
+        "variant_id": "C",
+        "offer_id": "MRD_OFF_013",
+        "offer_name": "3% Grocery Cashback Boost â€” 6 Months",
+        "offer_type": "cashback_boost",
+        "channel": "in_app",
+        "n_exposed": 400,
+        "n_converted": 60,
+        "conversion_rate": 0.15,
+        "lift_abs": 0.05,
+        "lift_pct": 50.0,
+        "z_stat": 2.1381,
+        "p_value": 0.016255,
+        "is_significant": true
+      }
+    ],
+    "winning_variant_id": "A",
+    "winning_offer_id": "MRD_OFF_011",
+    "winning_channel": "in_app",
+    "no_offer_recommended": false,
+    "channel_attribution": {
+      "in_app": 0.624,
+      "email": 0.285,
+      "direct_mail": 0.045,
+      "branch": 0.045
+    }
+  },
+  {
+    "experiment_id": "EXP_EVERYDAY_ESSENTIAL_MRDP009",
+    "product_id": "MRD_P009",
+    "product_name": "Meridian Cash Back Card",
+    "persona": "Everyday Essential",
+    "experiment_date": "2025-Q1",
+    "n_per_group": 400,
+    "total_n": 1600,
+    "holdout": {
+      "n_exposed": 400,
+      "n_converted": 36,
+      "conversion_rate": 0.09
+    },
+    "variants": [
+      {
+        "variant_id": "A",
+        "offer_id": "MRD_OFF_011",
+        "offer_name": "$200 Welcome Bonus",
+        "offer_type": "signup_bonus",
+        "channel": "in_app",
+        "n_exposed": 400,
+        "n_converted": 68,
+        "conversion_rate": 0.17,
+        "lift_abs": 0.08,
+        "lift_pct": 88.9,
+        "z_stat": 3.3641,
+        "p_value": 0.000384,
+        "is_significant": true
+      },
+      {
+        "variant_id": "B",
+        "offer_id": "MRD_OFF_012",
+        "offer_name": "0% Intro APR â€” 15 Months",
+        "offer_type": "intro_apr",
+        "channel": "email",
+        "n_exposed": 400,
+        "n_converted": 56,
+        "conversion_rate": 0.14,
+        "lift_abs": 0.05,
+        "lift_pct": 55.6,
+        "z_stat": 2.2165,
+        "p_value": 0.013329,
+        "is_significant": true
+      },
+      {
+        "variant_id": "C",
+        "offer_id": "MRD_OFF_013",
+        "offer_name": "3% Grocery Cashback Boost â€” 6 Months",
+        "offer_type": "cashback_boost",
+        "channel": "in_app",
+        "n_exposed": 400,
+        "n_converted": 52,
+        "conversion_rate": 0.13,
+        "lift_abs": 0.04,
+        "lift_pct": 44.4,
+        "z_stat": 1.8079,
+        "p_value": 0.035308,
+        "is_significant": true
+      }
+    ],
+    "winning_variant_id": "A",
+    "winning_offer_id": "MRD_OFF_011",
+    "winning_channel": "in_app",
+    "no_offer_recommended": false,
+    "channel_attribution": {
+      "in_app": 0.62,
+      "email": 0.289,
+      "direct_mail": 0.045,
+      "branch": 0.045
+    }
+  },
+  {
+    "experiment_id": "EXP_AT_RISK_BORROWER_MRDP009",
+    "product_id": "MRD_P009",
+    "product_name": "Meridian Cash Back Card",
+    "persona": "At-Risk Borrower",
+    "experiment_date": "2025-Q1",
+    "n_per_group": 400,
+    "total_n": 1600,
+    "holdout": {
+      "n_exposed": 400,
+      "n_converted": 28,
+      "conversion_rate": 0.07
+    },
+    "variants": [
+      {
+        "variant_id": "A",
+        "offer_id": "MRD_OFF_011",
+        "offer_name": "$200 Welcome Bonus",
+        "offer_type": "signup_bonus",
+        "channel": "in_app",
+        "n_exposed": 400,
+        "n_converted": 36,
+        "conversion_rate": 0.09,
+        "lift_abs": 0.02,
+        "lift_pct": 28.6,
+        "z_stat": 1.0426,
+        "p_value": 0.148573,
+        "is_significant": false
+      },
+      {
+        "variant_id": "B",
+        "offer_id": "MRD_OFF_012",
+        "offer_name": "0% Intro APR â€” 15 Months",
+        "offer_type": "intro_apr",
+        "channel": "email",
+        "n_exposed": 400,
+        "n_converted": 33,
+        "conversion_rate": 0.082,
+        "lift_abs": 0.012,
+        "lift_pct": 17.1,
+        "z_stat": 0.6661,
+        "p_value": 0.252679,
+        "is_significant": false
+      },
+      {
+        "variant_id": "C",
+        "offer_id": "MRD_OFF_013",
+        "offer_name": "3% Grocery Cashback Boost â€” 6 Months",
+        "offer_type": "cashback_boost",
+        "channel": "in_app",
+        "n_exposed": 400,
+        "n_converted": 34,
+        "conversion_rate": 0.085,
+        "lift_abs": 0.015,
+        "lift_pct": 21.4,
+        "z_stat": 0.7934,
+        "p_value": 0.213783,
+        "is_significant": false
+      }
+    ],
+    "winning_variant_id": null,
+    "winning_offer_id": null,
+    "winning_channel": null,
+    "no_offer_recommended": true,
+    "channel_attribution": {
+      "in_app": 0.25,
+      "email": 0.25,
+      "direct_mail": 0.1,
+      "branch": 0.4
+    }
+  },
+  {
+    "experiment_id": "EXP_DIGITAL_NATIVE_MRDP010",
+    "product_id": "MRD_P010",
+    "product_name": "Meridian Rewards Visa",
+    "persona": "Digital Native",
+    "experiment_date": "2025-Q1",
+    "n_per_group": 400,
+    "total_n": 1600,
+    "holdout": {
+      "n_exposed": 400,
+      "n_converted": 40,
+      "conversion_rate": 0.1
+    },
+    "variants": [
+      {
+        "variant_id": "A",
+        "offer_id": "MRD_OFF_014",
+        "offer_name": "60,000 Points Welcome Bonus",
+        "offer_type": "signup_bonus",
+        "channel": "in_app",
+        "n_exposed": 400,
+        "n_converted": 88,
+        "conversion_rate": 0.22,
+        "lift_abs": 0.12,
+        "lift_pct": 120.0,
+        "z_stat": 4.6291,
+        "p_value": 2e-06,
+        "is_significant": true
+      },
+      {
+        "variant_id": "B",
+        "offer_id": "MRD_OFF_015",
+        "offer_name": "5x Points on Dining â€” Limited Time",
+        "offer_type": "cashback_boost",
+        "channel": "in_app",
+        "n_exposed": 400,
+        "n_converted": 72,
+        "conversion_rate": 0.18,
+        "lift_abs": 0.08,
+        "lift_pct": 80.0,
+        "z_stat": 3.2606,
+        "p_value": 0.000556,
+        "is_significant": true
+      },
+      {
+        "variant_id": "C",
+        "offer_id": "MRD_OFF_016",
+        "offer_name": "Annual Fee Waived â€” Year 1",
+        "offer_type": "fee_waiver",
+        "channel": "email",
+        "n_exposed": 400,
+        "n_converted": 59,
+        "conversion_rate": 0.148,
+        "lift_abs": 0.048,
+        "lift_pct": 48.0,
+        "z_stat": 2.04,
+        "p_value": 0.020677,
+        "is_significant": true
+      }
+    ],
+    "winning_variant_id": "A",
+    "winning_offer_id": "MRD_OFF_014",
+    "winning_channel": "in_app",
+    "no_offer_recommended": false,
+    "channel_attribution": {
+      "in_app": 0.665,
+      "email": 0.245,
+      "direct_mail": 0.045,
+      "branch": 0.045
+    }
+  },
+  {
+    "experiment_id": "EXP_WEALTH_BUILDER_MRDP010",
+    "product_id": "MRD_P010",
+    "product_name": "Meridian Rewards Visa",
+    "persona": "Wealth Builder",
+    "experiment_date": "2025-Q1",
+    "n_per_group": 400,
+    "total_n": 1600,
+    "holdout": {
+      "n_exposed": 400,
+      "n_converted": 40,
+      "conversion_rate": 0.1
+    },
+    "variants": [
+      {
+        "variant_id": "A",
+        "offer_id": "MRD_OFF_014",
+        "offer_name": "60,000 Points Welcome Bonus",
+        "offer_type": "signup_bonus",
+        "channel": "in_app",
+        "n_exposed": 400,
+        "n_converted": 84,
+        "conversion_rate": 0.21,
+        "lift_abs": 0.11,
+        "lift_pct": 110.0,
+        "z_stat": 4.2985,
+        "p_value": 9e-06,
+        "is_significant": true
+      },
+      {
+        "variant_id": "B",
+        "offer_id": "MRD_OFF_015",
+        "offer_name": "5x Points on Dining â€” Limited Time",
+        "offer_type": "cashback_boost",
+        "channel": "in_app",
+        "n_exposed": 400,
+        "n_converted": 80,
+        "conversion_rate": 0.2,
+        "lift_abs": 0.1,
+        "lift_pct": 100.0,
+        "z_stat": 3.9606,
+        "p_value": 3.7e-05,
+        "is_significant": true
+      },
+      {
+        "variant_id": "C",
+        "offer_id": "MRD_OFF_016",
+        "offer_name": "Annual Fee Waived â€” Year 1",
+        "offer_type": "fee_waiver",
+        "channel": "email",
+        "n_exposed": 400,
+        "n_converted": 67,
+        "conversion_rate": 0.168,
+        "lift_abs": 0.068,
+        "lift_pct": 68.0,
+        "z_stat": 2.8045,
+        "p_value": 0.00252,
+        "is_significant": true
+      }
+    ],
+    "winning_variant_id": "A",
+    "winning_offer_id": "MRD_OFF_014",
+    "winning_channel": "in_app",
+    "no_offer_recommended": false,
+    "channel_attribution": {
+      "in_app": 0.645,
+      "email": 0.264,
+      "direct_mail": 0.045,
+      "branch": 0.045
+    }
+  },
+  {
+    "experiment_id": "EXP_EVERYDAY_ESSENTIAL_MRDP010",
+    "product_id": "MRD_P010",
+    "product_name": "Meridian Rewards Visa",
+    "persona": "Everyday Essential",
+    "experiment_date": "2025-Q1",
+    "n_per_group": 400,
+    "total_n": 1600,
+    "holdout": {
+      "n_exposed": 400,
+      "n_converted": 32,
+      "conversion_rate": 0.08
+    },
+    "variants": [
+      {
+        "variant_id": "A",
+        "offer_id": "MRD_OFF_014",
+        "offer_name": "60,000 Points Welcome Bonus",
+        "offer_type": "signup_bonus",
+        "channel": "in_app",
+        "n_exposed": 400,
+        "n_converted": 36,
+        "conversion_rate": 0.09,
+        "lift_abs": 0.01,
+        "lift_pct": 12.5,
+        "z_stat": 0.5071,
+        "p_value": 0.306042,
+        "is_significant": false
+      },
+      {
+        "variant_id": "B",
+        "offer_id": "MRD_OFF_015",
+        "offer_name": "5x Points on Dining â€” Limited Time",
+        "offer_type": "cashback_boost",
+        "channel": "in_app",
+        "n_exposed": 400,
+        "n_converted": 38,
+        "conversion_rate": 0.094,
+        "lift_abs": 0.014,
+        "lift_pct": 17.5,
+        "z_stat": 0.7507,
+        "p_value": 0.226406,
+        "is_significant": false
+      },
+      {
+        "variant_id": "C",
+        "offer_id": "MRD_OFF_016",
+        "offer_name": "Annual Fee Waived â€” Year 1",
+        "offer_type": "fee_waiver",
+        "channel": "email",
+        "n_exposed": 400,
+        "n_converted": 35,
+        "conversion_rate": 0.088,
+        "lift_abs": 0.008,
+        "lift_pct": 10.0,
+        "z_stat": 0.3829,
+        "p_value": 0.3509,
+        "is_significant": false
+      }
+    ],
+    "winning_variant_id": null,
+    "winning_offer_id": null,
+    "winning_channel": null,
+    "no_offer_recommended": true,
+    "channel_attribution": {
+      "in_app": 0.25,
+      "email": 0.25,
+      "direct_mail": 0.1,
+      "branch": 0.4
+    }
+  },
+  {
+    "experiment_id": "EXP_WEALTH_BUILDER_MRDP011",
+    "product_id": "MRD_P011",
+    "product_name": "Meridian Platinum Card",
+    "persona": "Wealth Builder",
+    "experiment_date": "2025-Q1",
+    "n_per_group": 400,
+    "total_n": 1200,
+    "holdout": {
+      "n_exposed": 400,
+      "n_converted": 24,
+      "conversion_rate": 0.06
+    },
+    "variants": [
+      {
+        "variant_id": "A",
+        "offer_id": "MRD_OFF_017",
+        "offer_name": "100,000 Points Platinum Launch Offer",
+        "offer_type": "signup_bonus",
+        "channel": "in_app",
+        "n_exposed": 400,
+        "n_converted": 64,
+        "conversion_rate": 0.16,
+        "lift_abs": 0.1,
+        "lift_pct": 166.7,
+        "z_stat": 4.5198,
+        "p_value": 3e-06,
+        "is_significant": true
+      },
+      {
+        "variant_id": "B",
+        "offer_id": "MRD_OFF_018",
+        "offer_name": "Companion Ticket Offer",
+        "offer_type": "cashback_boost",
+        "channel": "email",
+        "n_exposed": 400,
+        "n_converted": 44,
+        "conversion_rate": 0.11,
+        "lift_abs": 0.05,
+        "lift_pct": 83.3,
+        "z_stat": 2.5355,
+        "p_value": 0.005614,
+        "is_significant": true
+      }
+    ],
+    "winning_variant_id": "A",
+    "winning_offer_id": "MRD_OFF_017",
+    "winning_channel": "in_app",
+    "no_offer_recommended": false,
+    "channel_attribution": {
+      "in_app": 0.539,
+      "email": 0.37,
+      "direct_mail": 0.045,
+      "branch": 0.045
+    }
+  },
+  {
+    "experiment_id": "EXP_DIGITAL_NATIVE_MRDP013",
+    "product_id": "MRD_P013",
+    "product_name": "Meridian Auto Loan",
+    "persona": "Digital Native",
+    "experiment_date": "2025-Q1",
+    "n_per_group": 400,
+    "total_n": 1200,
+    "holdout": {
+      "n_exposed": 400,
+      "n_converted": 28,
+      "conversion_rate": 0.07
+    },
+    "variants": [
+      {
+        "variant_id": "A",
+        "offer_id": "MRD_OFF_019",
+        "offer_name": "0.25% Rate Discount with Auto-Pay",
+        "offer_type": "rate_discount",
+        "channel": "in_app",
+        "n_exposed": 400,
+        "n_converted": 52,
+        "conversion_rate": 0.13,
+        "lift_abs": 0.06,
+        "lift_pct": 85.7,
+        "z_stat": 2.8284,
+        "p_value": 0.002339,
+        "is_significant": true
+      },
+      {
+        "variant_id": "B",
+        "offer_id": "MRD_OFF_020",
+        "offer_name": "45-Day Rate Lock Guarantee",
+        "offer_type": "rate_discount",
+        "channel": "email",
+        "n_exposed": 400,
+        "n_converted": 47,
+        "conversion_rate": 0.118,
+        "lift_abs": 0.048,
+        "lift_pct": 68.6,
+        "z_stat": 2.3046,
+        "p_value": 0.010594,
+        "is_significant": true
+      }
+    ],
+    "winning_variant_id": "A",
+    "winning_offer_id": "MRD_OFF_019",
+    "winning_channel": "in_app",
+    "no_offer_recommended": false,
+    "channel_attribution": {
+      "in_app": 0.477,
+      "email": 0.432,
+      "direct_mail": 0.045,
+      "branch": 0.045
+    }
+  },
+  {
+    "experiment_id": "EXP_EVERYDAY_ESSENTIAL_MRDP013",
+    "product_id": "MRD_P013",
+    "product_name": "Meridian Auto Loan",
+    "persona": "Everyday Essential",
+    "experiment_date": "2025-Q1",
+    "n_per_group": 400,
+    "total_n": 1200,
+    "holdout": {
+      "n_exposed": 400,
+      "n_converted": 24,
+      "conversion_rate": 0.06
+    },
+    "variants": [
+      {
+        "variant_id": "A",
+        "offer_id": "MRD_OFF_019",
+        "offer_name": "0.25% Rate Discount with Auto-Pay",
+        "offer_type": "rate_discount",
+        "channel": "in_app",
+        "n_exposed": 400,
+        "n_converted": 44,
+        "conversion_rate": 0.11,
+        "lift_abs": 0.05,
+        "lift_pct": 83.3,
+        "z_stat": 2.5355,
+        "p_value": 0.005614,
+        "is_significant": true
+      },
+      {
+        "variant_id": "B",
+        "offer_id": "MRD_OFF_020",
+        "offer_name": "45-Day Rate Lock Guarantee",
+        "offer_type": "rate_discount",
+        "channel": "email",
+        "n_exposed": 400,
+        "n_converted": 40,
+        "conversion_rate": 0.1,
+        "lift_abs": 0.04,
+        "lift_pct": 66.7,
+        "z_stat": 2.0851,
+        "p_value": 0.018528,
+        "is_significant": true
+      }
+    ],
+    "winning_variant_id": "A",
+    "winning_offer_id": "MRD_OFF_019",
+    "winning_channel": "in_app",
+    "no_offer_recommended": false,
+    "channel_attribution": {
+      "in_app": 0.476,
+      "email": 0.433,
+      "direct_mail": 0.045,
+      "branch": 0.045
+    }
+  },
+  {
+    "experiment_id": "EXP_AT_RISK_BORROWER_MRDP013",
+    "product_id": "MRD_P013",
+    "product_name": "Meridian Auto Loan",
+    "persona": "At-Risk Borrower",
+    "experiment_date": "2025-Q1",
+    "n_per_group": 400,
+    "total_n": 1200,
+    "holdout": {
+      "n_exposed": 400,
+      "n_converted": 20,
+      "conversion_rate": 0.05
+    },
+    "variants": [
+      {
+        "variant_id": "A",
+        "offer_id": "MRD_OFF_019",
+        "offer_name": "0.25% Rate Discount with Auto-Pay",
+        "offer_type": "rate_discount",
+        "channel": "in_app",
+        "n_exposed": 400,
+        "n_converted": 22,
+        "conversion_rate": 0.055,
+        "lift_abs": 0.005,
+        "lift_pct": 10.0,
+        "z_stat": 0.317,
+        "p_value": 0.375606,
+        "is_significant": false
+      },
+      {
+        "variant_id": "B",
+        "offer_id": "MRD_OFF_020",
+        "offer_name": "45-Day Rate Lock Guarantee",
+        "offer_type": "rate_discount",
+        "channel": "email",
+        "n_exposed": 400,
+        "n_converted": 23,
+        "conversion_rate": 0.058,
+        "lift_abs": 0.008,
+        "lift_pct": 16.0,
+        "z_stat": 0.4703,
+        "p_value": 0.319067,
+        "is_significant": false
+      }
+    ],
+    "winning_variant_id": null,
+    "winning_offer_id": null,
+    "winning_channel": null,
+    "no_offer_recommended": true,
+    "channel_attribution": {
+      "in_app": 0.25,
+      "email": 0.25,
+      "direct_mail": 0.1,
+      "branch": 0.4
+    }
+  },
+  {
+    "experiment_id": "EXP_AT_RISK_BORROWER_MRDP014",
+    "product_id": "MRD_P014",
+    "product_name": "Meridian Personal Loan",
+    "persona": "At-Risk Borrower",
+    "experiment_date": "2025-Q1",
+    "n_per_group": 400,
+    "total_n": 1200,
+    "holdout": {
+      "n_exposed": 400,
+      "n_converted": 24,
+      "conversion_rate": 0.06
+    },
+    "variants": [
+      {
+        "variant_id": "A",
+        "offer_id": "MRD_OFF_021",
+        "offer_name": "Balance Transfer Personal Loan",
+        "offer_type": "balance_transfer_promo",
+        "channel": "email",
+        "n_exposed": 400,
+        "n_converted": 58,
+        "conversion_rate": 0.145,
+        "lift_abs": 0.085,
+        "lift_pct": 141.7,
+        "z_stat": 3.9633,
+        "p_value": 3.7e-05,
+        "is_significant": true
+      },
+      {
+        "variant_id": "B",
+        "offer_id": "MRD_OFF_022",
+        "offer_name": "Relationship Rate Discount 0.50%",
+        "offer_type": "rate_discount",
+        "channel": "in_app",
+        "n_exposed": 400,
+        "n_converted": 44,
+        "conversion_rate": 0.11,
+        "lift_abs": 0.05,
+        "lift_pct": 83.3,
+        "z_stat": 2.5355,
+        "p_value": 0.005614,
+        "is_significant": true
+      }
+    ],
+    "winning_variant_id": "A",
+    "winning_offer_id": "MRD_OFF_021",
+    "winning_channel": "email",
+    "no_offer_recommended": false,
+    "channel_attribution": {
+      "in_app": 0.392,
+      "email": 0.517,
+      "direct_mail": 0.045,
+      "branch": 0.045
+    }
+  },
+  {
+    "experiment_id": "EXP_EVERYDAY_ESSENTIAL_MRDP014",
+    "product_id": "MRD_P014",
+    "product_name": "Meridian Personal Loan",
+    "persona": "Everyday Essential",
+    "experiment_date": "2025-Q1",
+    "n_per_group": 400,
+    "total_n": 1200,
+    "holdout": {
+      "n_exposed": 400,
+      "n_converted": 24,
+      "conversion_rate": 0.06
+    },
+    "variants": [
+      {
+        "variant_id": "A",
+        "offer_id": "MRD_OFF_021",
+        "offer_name": "Balance Transfer Personal Loan",
+        "offer_type": "balance_transfer_promo",
+        "channel": "email",
+        "n_exposed": 400,
+        "n_converted": 48,
+        "conversion_rate": 0.12,
+        "lift_abs": 0.06,
+        "lift_pct": 100.0,
+        "z_stat": 2.965,
+        "p_value": 0.001513,
+        "is_significant": true
+      },
+      {
+        "variant_id": "B",
+        "offer_id": "MRD_OFF_022",
+        "offer_name": "Relationship Rate Discount 0.50%",
+        "offer_type": "rate_discount",
+        "channel": "in_app",
+        "n_exposed": 400,
+        "n_converted": 40,
+        "conversion_rate": 0.1,
+        "lift_abs": 0.04,
+        "lift_pct": 66.7,
+        "z_stat": 2.0851,
+        "p_value": 0.018528,
+        "is_significant": true
+      }
+    ],
+    "winning_variant_id": "A",
+    "winning_offer_id": "MRD_OFF_021",
+    "winning_channel": "email",
+    "no_offer_recommended": false,
+    "channel_attribution": {
+      "in_app": 0.414,
+      "email": 0.495,
+      "direct_mail": 0.045,
+      "branch": 0.045
+    }
+  },
+  {
+    "experiment_id": "EXP_RETIREE_ANCHOR_MRDP014",
+    "product_id": "MRD_P014",
+    "product_name": "Meridian Personal Loan",
+    "persona": "Retiree Anchor",
+    "experiment_date": "2025-Q1",
+    "n_per_group": 400,
+    "total_n": 1200,
+    "holdout": {
+      "n_exposed": 400,
+      "n_converted": 16,
+      "conversion_rate": 0.04
+    },
+    "variants": [
+      {
+        "variant_id": "A",
+        "offer_id": "MRD_OFF_021",
+        "offer_name": "Balance Transfer Personal Loan",
+        "offer_type": "balance_transfer_promo",
+        "channel": "email",
+        "n_exposed": 400,
+        "n_converted": 18,
+        "conversion_rate": 0.044,
+        "lift_abs": 0.004,
+        "lift_pct": 10.0,
+        "z_stat": 0.3505,
+        "p_value": 0.362972,
+        "is_significant": false
+      },
+      {
+        "variant_id": "B",
+        "offer_id": "MRD_OFF_022",
+        "offer_name": "Relationship Rate Discount 0.50%",
+        "offer_type": "rate_discount",
+        "channel": "in_app",
+        "n_exposed": 400,
+        "n_converted": 17,
+        "conversion_rate": 0.043,
+        "lift_abs": 0.003,
+        "lift_pct": 7.5,
+        "z_stat": 0.1778,
+        "p_value": 0.429447,
+        "is_significant": false
+      }
+    ],
+    "winning_variant_id": null,
+    "winning_offer_id": null,
+    "winning_channel": null,
+    "no_offer_recommended": true,
+    "channel_attribution": {
+      "in_app": 0.25,
+      "email": 0.25,
+      "direct_mail": 0.1,
+      "branch": 0.4
+    }
+  },
+  {
+    "experiment_id": "EXP_WEALTH_BUILDER_MRDP017",
+    "product_id": "MRD_P017",
+    "product_name": "Meridian 30yr Fixed Mortgage",
+    "persona": "Wealth Builder",
+    "experiment_date": "2025-Q1",
+    "n_per_group": 400,
+    "total_n": 1200,
+    "holdout": {
+      "n_exposed": 400,
+      "n_converted": 24,
+      "conversion_rate": 0.06
+    },
+    "variants": [
+      {
+        "variant_id": "A",
+        "offer_id": "MRD_OFF_025",
+        "offer_name": "60-Day Rate Lock",
+        "offer_type": "rate_discount",
+        "channel": "email",
+        "n_exposed": 400,
+        "n_converted": 52,
+        "conversion_rate": 0.13,
+        "lift_abs": 0.07,
+        "lift_pct": 116.7,
+        "z_stat": 3.3762,
+        "p_value": 0.000368,
+        "is_significant": true
+      },
+      {
+        "variant_id": "B",
+        "offer_id": "MRD_OFF_026",
+        "offer_name": "$1,000 Closing Cost Credit",
+        "offer_type": "fee_waiver",
+        "channel": "branch",
+        "n_exposed": 400,
+        "n_converted": 44,
+        "conversion_rate": 0.11,
+        "lift_abs": 0.05,
+        "lift_pct": 83.3,
+        "z_stat": 2.5355,
+        "p_value": 0.005614,
+        "is_significant": true
+      }
+    ],
+    "winning_variant_id": "A",
+    "winning_offer_id": "MRD_OFF_025",
+    "winning_channel": "email",
+    "no_offer_recommended": false,
+    "channel_attribution": {
+      "in_app": 0.045,
+      "email": 0.493,
+      "direct_mail": 0.045,
+      "branch": 0.416
+    }
+  },
+  {
+    "experiment_id": "EXP_DIGITAL_NATIVE_MRDP017",
+    "product_id": "MRD_P017",
+    "product_name": "Meridian 30yr Fixed Mortgage",
+    "persona": "Digital Native",
+    "experiment_date": "2025-Q1",
+    "n_per_group": 400,
+    "total_n": 1200,
+    "holdout": {
+      "n_exposed": 400,
+      "n_converted": 20,
+      "conversion_rate": 0.05
+    },
+    "variants": [
+      {
+        "variant_id": "A",
+        "offer_id": "MRD_OFF_025",
+        "offer_name": "60-Day Rate Lock",
+        "offer_type": "rate_discount",
+        "channel": "email",
+        "n_exposed": 400,
+        "n_converted": 44,
+        "conversion_rate": 0.11,
+        "lift_abs": 0.06,
+        "lift_pct": 120.0,
+        "z_stat": 3.1277,
+        "p_value": 0.000881,
+        "is_significant": true
+      },
+      {
+        "variant_id": "B",
+        "offer_id": "MRD_OFF_026",
+        "offer_name": "$1,000 Closing Cost Credit",
+        "offer_type": "fee_waiver",
+        "channel": "branch",
+        "n_exposed": 400,
+        "n_converted": 36,
+        "conversion_rate": 0.09,
+        "lift_abs": 0.04,
+        "lift_pct": 80.0,
+        "z_stat": 2.2171,
+        "p_value": 0.013308,
+        "is_significant": true
+      }
+    ],
+    "winning_variant_id": "A",
+    "winning_offer_id": "MRD_OFF_025",
+    "winning_channel": "email",
+    "no_offer_recommended": false,
+    "channel_attribution": {
+      "in_app": 0.045,
+      "email": 0.5,
+      "direct_mail": 0.045,
+      "branch": 0.409
+    }
+  },
+  {
+    "experiment_id": "EXP_EVERYDAY_ESSENTIAL_MRDP017",
+    "product_id": "MRD_P017",
+    "product_name": "Meridian 30yr Fixed Mortgage",
+    "persona": "Everyday Essential",
+    "experiment_date": "2025-Q1",
+    "n_per_group": 400,
+    "total_n": 1200,
+    "holdout": {
+      "n_exposed": 400,
+      "n_converted": 20,
+      "conversion_rate": 0.05
+    },
+    "variants": [
+      {
+        "variant_id": "A",
+        "offer_id": "MRD_OFF_025",
+        "offer_name": "60-Day Rate Lock",
+        "offer_type": "rate_discount",
+        "channel": "email",
+        "n_exposed": 400,
+        "n_converted": 40,
+        "conversion_rate": 0.1,
+        "lift_abs": 0.05,
+        "lift_pct": 100.0,
+        "z_stat": 2.6846,
+        "p_value": 0.003631,
+        "is_significant": true
+      },
+      {
+        "variant_id": "B",
+        "offer_id": "MRD_OFF_026",
+        "offer_name": "$1,000 Closing Cost Credit",
+        "offer_type": "fee_waiver",
+        "channel": "branch",
+        "n_exposed": 400,
+        "n_converted": 36,
+        "conversion_rate": 0.09,
+        "lift_abs": 0.04,
+        "lift_pct": 80.0,
+        "z_stat": 2.2171,
+        "p_value": 0.013308,
+        "is_significant": true
+      }
+    ],
+    "winning_variant_id": "A",
+    "winning_offer_id": "MRD_OFF_025",
+    "winning_channel": "email",
+    "no_offer_recommended": false,
+    "channel_attribution": {
+      "in_app": 0.045,
+      "email": 0.478,
+      "direct_mail": 0.045,
+      "branch": 0.431
+    }
+  },
+  {
+    "experiment_id": "EXP_RETIREE_ANCHOR_MRDP017",
+    "product_id": "MRD_P017",
+    "product_name": "Meridian 30yr Fixed Mortgage",
+    "persona": "Retiree Anchor",
+    "experiment_date": "2025-Q1",
+    "n_per_group": 400,
+    "total_n": 1200,
+    "holdout": {
+      "n_exposed": 400,
+      "n_converted": 20,
+      "conversion_rate": 0.05
+    },
+    "variants": [
+      {
+        "variant_id": "A",
+        "offer_id": "MRD_OFF_025",
+        "offer_name": "60-Day Rate Lock",
+        "offer_type": "rate_discount",
+        "channel": "email",
+        "n_exposed": 400,
+        "n_converted": 42,
+        "conversion_rate": 0.104,
+        "lift_abs": 0.054,
+        "lift_pct": 108.0,
+        "z_stat": 2.909,
+        "p_value": 0.001813,
+        "is_significant": true
+      },
+      {
+        "variant_id": "B",
+        "offer_id": "MRD_OFF_026",
+        "offer_name": "$1,000 Closing Cost Credit",
+        "offer_type": "fee_waiver",
+        "channel": "branch",
+        "n_exposed": 400,
+        "n_converted": 52,
+        "conversion_rate": 0.13,
+        "lift_abs": 0.08,
+        "lift_pct": 160.0,
+        "z_stat": 3.9533,
+        "p_value": 3.9e-05,
+        "is_significant": true
+      }
+    ],
+    "winning_variant_id": "B",
+    "winning_offer_id": "MRD_OFF_026",
+    "winning_channel": "branch",
+    "no_offer_recommended": false,
+    "channel_attribution": {
+      "in_app": 0.045,
+      "email": 0.406,
+      "direct_mail": 0.045,
+      "branch": 0.503
+    }
+  },
+  {
+    "experiment_id": "EXP_RETIREE_ANCHOR_MRDP019",
+    "product_id": "MRD_P019",
+    "product_name": "Meridian Traditional IRA",
+    "persona": "Retiree Anchor",
+    "experiment_date": "2025-Q1",
+    "n_per_group": 400,
+    "total_n": 1200,
+    "holdout": {
+      "n_exposed": 400,
+      "n_converted": 36,
+      "conversion_rate": 0.09
+    },
+    "variants": [
+      {
+        "variant_id": "A",
+        "offer_id": "MRD_OFF_027",
+        "offer_name": "Fee-Free IRA for 2 Years",
+        "offer_type": "fee_waiver",
+        "channel": "email",
+        "n_exposed": 400,
+        "n_converted": 68,
+        "conversion_rate": 0.17,
+        "lift_abs": 0.08,
+        "lift_pct": 88.9,
+        "z_stat": 3.3641,
+        "p_value": 0.000384,
+        "is_significant": true
+      },
+      {
+        "variant_id": "B",
+        "offer_id": "MRD_OFF_028",
+        "offer_name": "Retirement Ready Match â€” Deposit $500, Get $50",
+        "offer_type": "signup_bonus",
+        "channel": "in_app",
+        "n_exposed": 400,
+        "n_converted": 52,
+        "conversion_rate": 0.13,
+        "lift_abs": 0.04,
+        "lift_pct": 44.4,
+        "z_stat": 1.8079,
+        "p_value": 0.035308,
+        "is_significant": true
+      }
+    ],
+    "winning_variant_id": "A",
+    "winning_offer_id": "MRD_OFF_027",
+    "winning_channel": "email",
+    "no_offer_recommended": false,
+    "channel_attribution": {
+      "in_app": 0.394,
+      "email": 0.515,
+      "direct_mail": 0.045,
+      "branch": 0.045
+    }
+  },
+  {
+    "experiment_id": "EXP_WEALTH_BUILDER_MRDP019",
+    "product_id": "MRD_P019",
+    "product_name": "Meridian Traditional IRA",
+    "persona": "Wealth Builder",
+    "experiment_date": "2025-Q1",
+    "n_per_group": 400,
+    "total_n": 1200,
+    "holdout": {
+      "n_exposed": 400,
+      "n_converted": 32,
+      "conversion_rate": 0.08
+    },
+    "variants": [
+      {
+        "variant_id": "A",
+        "offer_id": "MRD_OFF_027",
+        "offer_name": "Fee-Free IRA for 2 Years",
+        "offer_type": "fee_waiver",
+        "channel": "email",
+        "n_exposed": 400,
+        "n_converted": 62,
+        "conversion_rate": 0.155,
+        "lift_abs": 0.075,
+        "lift_pct": 93.8,
+        "z_stat": 3.2938,
+        "p_value": 0.000494,
+        "is_significant": true
+      },
+      {
+        "variant_id": "B",
+        "offer_id": "MRD_OFF_028",
+        "offer_name": "Retirement Ready Match â€” Deposit $500, Get $50",
+        "offer_type": "signup_bonus",
+        "channel": "in_app",
+        "n_exposed": 400,
+        "n_converted": 48,
+        "conversion_rate": 0.12,
+        "lift_abs": 0.04,
+        "lift_pct": 50.0,
+        "z_stat": 1.8856,
+        "p_value": 0.029673,
+        "is_significant": true
+      }
+    ],
+    "winning_variant_id": "A",
+    "winning_offer_id": "MRD_OFF_027",
+    "winning_channel": "email",
+    "no_offer_recommended": false,
+    "channel_attribution": {
+      "in_app": 0.396,
+      "email": 0.513,
+      "direct_mail": 0.045,
+      "branch": 0.045
+    }
+  },
+  {
+    "experiment_id": "EXP_DIGITAL_NATIVE_MRDP020",
+    "product_id": "MRD_P020",
+    "product_name": "Meridian Roth IRA",
+    "persona": "Digital Native",
+    "experiment_date": "2025-Q1",
+    "n_per_group": 400,
+    "total_n": 1200,
+    "holdout": {
+      "n_exposed": 400,
+      "n_converted": 28,
+      "conversion_rate": 0.07
+    },
+    "variants": [
+      {
+        "variant_id": "A",
+        "offer_id": "MRD_OFF_029",
+        "offer_name": "Roth IRA Young Saver Promo",
+        "offer_type": "fee_waiver",
+        "channel": "in_app",
+        "n_exposed": 400,
+        "n_converted": 60,
+        "conversion_rate": 0.15,
+        "lift_abs": 0.08,
+        "lift_pct": 114.3,
+        "z_stat": 3.6159,
+        "p_value": 0.00015,
+        "is_significant": true
+      },
+      {
+        "variant_id": "B",
+        "offer_id": "MRD_OFF_030",
+        "offer_name": "$75 Roth IRA Welcome Contribution",
+        "offer_type": "signup_bonus",
+        "channel": "in_app",
+        "n_exposed": 400,
+        "n_converted": 48,
+        "conversion_rate": 0.12,
+        "lift_abs": 0.05,
+        "lift_pct": 71.4,
+        "z_stat": 2.4116,
+        "p_value": 0.007942,
+        "is_significant": true
+      }
+    ],
+    "winning_variant_id": "A",
+    "winning_offer_id": "MRD_OFF_029",
+    "winning_channel": "in_app",
+    "no_offer_recommended": false,
+    "channel_attribution": {
+      "in_app": 0.87,
+      "email": 0.043,
+      "direct_mail": 0.043,
+      "branch": 0.043
+    }
+  },
+  {
+    "experiment_id": "EXP_WEALTH_BUILDER_MRDP020",
+    "product_id": "MRD_P020",
+    "product_name": "Meridian Roth IRA",
+    "persona": "Wealth Builder",
+    "experiment_date": "2025-Q1",
+    "n_per_group": 400,
+    "total_n": 1200,
+    "holdout": {
+      "n_exposed": 400,
+      "n_converted": 28,
+      "conversion_rate": 0.07
+    },
+    "variants": [
+      {
+        "variant_id": "A",
+        "offer_id": "MRD_OFF_029",
+        "offer_name": "Roth IRA Young Saver Promo",
+        "offer_type": "fee_waiver",
+        "channel": "in_app",
+        "n_exposed": 400,
+        "n_converted": 30,
+        "conversion_rate": 0.075,
+        "lift_abs": 0.005,
+        "lift_pct": 7.1,
+        "z_stat": 0.2727,
+        "p_value": 0.392548,
+        "is_significant": false
+      },
+      {
+        "variant_id": "B",
+        "offer_id": "MRD_OFF_030",
+        "offer_name": "$75 Roth IRA Welcome Contribution",
+        "offer_type": "signup_bonus",
+        "channel": "in_app",
+        "n_exposed": 400,
+        "n_converted": 30,
+        "conversion_rate": 0.076,
+        "lift_abs": 0.006,
+        "lift_pct": 8.6,
+        "z_stat": 0.2727,
+        "p_value": 0.392548,
+        "is_significant": false
+      }
+    ],
+    "winning_variant_id": null,
+    "winning_offer_id": null,
+    "winning_channel": null,
+    "no_offer_recommended": true,
+    "channel_attribution": {
+      "in_app": 0.25,
+      "email": 0.25,
+      "direct_mail": 0.1,
+      "branch": 0.4
+    }
+  },
+  {
+    "experiment_id": "EXP_RETIREE_ANCHOR_MRDP020",
+    "product_id": "MRD_P020",
+    "product_name": "Meridian Roth IRA",
+    "persona": "Retiree Anchor",
+    "experiment_date": "2025-Q1",
+    "n_per_group": 400,
+    "total_n": 1200,
+    "holdout": {
+      "n_exposed": 400,
+      "n_converted": 20,
+      "conversion_rate": 0.05
+    },
+    "variants": [
+      {
+        "variant_id": "A",
+        "offer_id": "MRD_OFF_029",
+        "offer_name": "Roth IRA Young Saver Promo",
+        "offer_type": "fee_waiver",
+        "channel": "in_app",
+        "n_exposed": 400,
+        "n_converted": 22,
+        "conversion_rate": 0.054,
+        "lift_abs": 0.004,
+        "lift_pct": 8.0,
+        "z_stat": 0.317,
+        "p_value": 0.375606,
+        "is_significant": false
+      },
+      {
+        "variant_id": "B",
+        "offer_id": "MRD_OFF_030",
+        "offer_name": "$75 Roth IRA Welcome Contribution",
+        "offer_type": "signup_bonus",
+        "channel": "in_app",
+        "n_exposed": 400,
+        "n_converted": 21,
+        "conversion_rate": 0.053,
+        "lift_abs": 0.003,
+        "lift_pct": 6.0,
+        "z_stat": 0.1603,
+        "p_value": 0.436308,
+        "is_significant": false
+      }
+    ],
+    "winning_variant_id": null,
+    "winning_offer_id": null,
+    "winning_channel": null,
+    "no_offer_recommended": true,
+    "channel_attribution": {
+      "in_app": 0.25,
+      "email": 0.25,
+      "direct_mail": 0.1,
+      "branch": 0.4
+    }
+  },
+  {
+    "experiment_id": "EXP_WEALTH_BUILDER_MRDB001",
+    "product_id": "MRD_B001",
+    "product_name": "Meridian Business Essential Checking",
+    "persona": "Wealth Builder",
+    "experiment_date": "2025-Q1",
+    "n_per_group": 400,
+    "total_n": 1200,
+    "holdout": {
+      "n_exposed": 400,
+      "n_converted": 36,
+      "conversion_rate": 0.09
+    },
+    "variants": [
+      {
+        "variant_id": "A",
+        "offer_id": "MRD_OFF_031",
+        "offer_name": "$400 Business Account Opening Bonus",
+        "offer_type": "signup_bonus",
+        "channel": "branch",
+        "n_exposed": 400,
+        "n_converted": 76,
+        "conversion_rate": 0.19,
+        "lift_abs": 0.1,
+        "lift_pct": 111.1,
+        "z_stat": 4.0757,
+        "p_value": 2.3e-05,
+        "is_significant": true
+      },
+      {
+        "variant_id": "B",
+        "offer_id": "MRD_OFF_032",
+        "offer_name": "Fee Waiver + Free Business Debit Card",
+        "offer_type": "fee_waiver",
+        "channel": "email",
+        "n_exposed": 400,
+        "n_converted": 58,
+        "conversion_rate": 0.145,
+        "lift_abs": 0.055,
+        "lift_pct": 61.1,
+        "z_stat": 2.4155,
+        "p_value": 0.007857,
+        "is_significant": true
+      }
+    ],
+    "winning_variant_id": "A",
+    "winning_offer_id": "MRD_OFF_031",
+    "winning_channel": "branch",
+    "no_offer_recommended": false,
+    "channel_attribution": {
+      "in_app": 0.045,
+      "email": 0.394,
+      "direct_mail": 0.045,
+      "branch": 0.515
+    }
+  },
+  {
+    "experiment_id": "EXP_WEALTH_BUILDER_MRDB004",
+    "product_id": "MRD_B004",
+    "product_name": "Meridian Business Line of Credit",
+    "persona": "Wealth Builder",
+    "experiment_date": "2025-Q1",
+    "n_per_group": 400,
+    "total_n": 800,
+    "holdout": {
+      "n_exposed": 400,
+      "n_converted": 28,
+      "conversion_rate": 0.07
+    },
+    "variants": [
+      {
+        "variant_id": "A",
+        "offer_id": "MRD_OFF_050",
+        "offer_name": "0.25% Rate Discount — Business LOC",
+        "offer_type": "rate_discount",
+        "channel": "email",
+        "n_exposed": 400,
+        "n_converted": 56,
+        "conversion_rate": 0.14,
+        "lift_abs": 0.07,
+        "lift_pct": 100.0,
+        "z_stat": 3.2293,
+        "p_value": 0.000621,
+        "is_significant": true
+      }
+    ],
+    "winning_variant_id": "A",
+    "winning_offer_id": "MRD_OFF_050",
+    "winning_channel": "email",
+    "no_offer_recommended": false,
+    "channel_attribution": {
+      "in_app": 0.043,
+      "email": 0.87,
+      "direct_mail": 0.043,
+      "branch": 0.043
+    }
+  },
+  {
+    "experiment_id": "EXP_EVERYDAY_ESSENTIAL_MRDA001",
+    "product_id": "MRD_A001",
+    "product_name": "Meridian Farm Operating Line",
+    "persona": "Everyday Essential",
+    "experiment_date": "2025-Q1",
+    "n_per_group": 400,
+    "total_n": 800,
+    "holdout": {
+      "n_exposed": 400,
+      "n_converted": 20,
+      "conversion_rate": 0.05
+    },
+    "variants": [
+      {
+        "variant_id": "A",
+        "offer_id": "MRD_OFF_034",
+        "offer_name": "Spring Operating Line Rate Special",
+        "offer_type": "rate_discount",
+        "channel": "branch",
+        "n_exposed": 400,
+        "n_converted": 44,
+        "conversion_rate": 0.11,
+        "lift_abs": 0.06,
+        "lift_pct": 120.0,
+        "z_stat": 3.1277,
+        "p_value": 0.000881,
+        "is_significant": true
+      }
+    ],
+    "winning_variant_id": "A",
+    "winning_offer_id": "MRD_OFF_034",
+    "winning_channel": "branch",
+    "no_offer_recommended": false,
+    "channel_attribution": {
+      "in_app": 0.043,
+      "email": 0.043,
+      "direct_mail": 0.043,
+      "branch": 0.87
+    }
+  },
+  {
+    "experiment_id": "EXP_AT_RISK_BORROWER_MRDA001",
+    "product_id": "MRD_A001",
+    "product_name": "Meridian Farm Operating Line",
+    "persona": "At-Risk Borrower",
+    "experiment_date": "2025-Q1",
+    "n_per_group": 400,
+    "total_n": 800,
+    "holdout": {
+      "n_exposed": 400,
+      "n_converted": 20,
+      "conversion_rate": 0.05
+    },
+    "variants": [
+      {
+        "variant_id": "A",
+        "offer_id": "MRD_OFF_034",
+        "offer_name": "Spring Operating Line Rate Special",
+        "offer_type": "rate_discount",
+        "channel": "branch",
+        "n_exposed": 400,
+        "n_converted": 40,
+        "conversion_rate": 0.1,
+        "lift_abs": 0.05,
+        "lift_pct": 100.0,
+        "z_stat": 2.6846,
+        "p_value": 0.003631,
+        "is_significant": true
+      }
+    ],
+    "winning_variant_id": "A",
+    "winning_offer_id": "MRD_OFF_034",
+    "winning_channel": "branch",
+    "no_offer_recommended": false,
+    "channel_attribution": {
+      "in_app": 0.043,
+      "email": 0.043,
+      "direct_mail": 0.043,
+      "branch": 0.87
+    }
+  }
+]

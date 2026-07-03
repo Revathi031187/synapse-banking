@@ -55,10 +55,10 @@ class BankingPersonaAlignedRecommender:
         )
         
         logger.info(f"✨ Banking Persona-Aligned Recommender initialized")
-        logger.info(f"  - {len(customers_df)} customers")
-        logger.info(f"  - {len(products_df)} products")
-        logger.info(f"  - {len(transactions_df)} transactions")
-        logger.info(f"  - {len(personas)} personas")
+        logger.info(f"  - {len(customers_df) if customers_df is not None else 0} customers")
+        logger.info(f"  - {len(products_df) if products_df is not None else 0} products")
+        logger.info(f"  - {len(transactions_df) if transactions_df is not None else 0} transactions")
+        logger.info(f"  - {len(personas) if personas is not None else 0} personas")
     
     def get_persona_aligned_recommendations(
         self,

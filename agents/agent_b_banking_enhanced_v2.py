@@ -78,9 +78,9 @@ class AgentB_Banking_Enhanced:
         logger.info(f"  - Persona-aligned recommendations: ✓")
         logger.info(f"  - Banking 12-factor scoring: ✓")
         logger.info(f"  - Together AI explanations: ✓")
-        logger.info(f"  - {len(personas)} personas loaded")
-        logger.info(f"  - {len(customers_df)} customers")
-        logger.info(f"  - {len(products_df)} products")
+        logger.info(f"  - {len(personas) if personas is not None else 0} personas loaded")
+        logger.info(f"  - {len(customers_df) if customers_df is not None else 0} customers")
+        logger.info(f"  - {len(products_df) if products_df is not None else 0} products")
     
     def get_recommendations(
         self,

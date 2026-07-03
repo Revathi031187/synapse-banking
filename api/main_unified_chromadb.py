@@ -18,7 +18,7 @@ load_dotenv()
 sys.path.append(os.path.dirname(os.path.abspath(__file__)))
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from fastapi import FastAPI, HTTPException, BackgroundTasks, Body
+from fastapi import FastAPI, HTTPException, BackgroundTasks, Body, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 from fastapi.responses import FileResponse
@@ -82,12 +82,25 @@ from agents.agent_b_banking_logit_enhanced import AgentB_Banking_LogitEnhanced  
 from agents.agent_b_banking_enhanced import AgentB_Banking_Enhanced as AgentB_Banking_Modal  # Customer modal agent
 from agents.agent_c_banking import AgentC_Banking
 from agents.agent_d_banking import AgentD_Banking
+from agents.agent_director_banking import DirectorAgent
 
-fmb_data_path = project_root / 'data' / 'preloaded' / 'fmb_bank'  # F&M Bank data
-banking_agent_a = AgentA_Banking_Enhanced(data_path=str(fmb_data_path))
+meridian_data_path = project_root / 'data' / 'preloaded' / 'meridian_bank'
+jpm_data_path      = project_root / 'data' / 'preloaded' / 'jpm_bank'
+fmb_data_path      = project_root / 'data' / 'preloaded' / 'fmb_bank'  # legacy fallback
+# Priority: Meridian → JPM → FMB
+banking_data_path = (
+    meridian_data_path if meridian_data_path.exists()
+    else jpm_data_path if jpm_data_path.exists()
+    else fmb_data_path
+)
+banking_agent_a = AgentA_Banking_Enhanced(data_path=str(banking_data_path))
 banking_agent_b = None  # Lazy init after Agent A runs
-banking_agent_c = AgentC_Banking()
+_offers_cfg = project_root / 'data' / 'config' / 'product_offers.json'
+banking_agent_c = AgentC_Banking(
+    offers_config_path=str(_offers_cfg) if _offers_cfg.exists() else None
+)
 banking_agent_d = AgentD_Banking()
+banking_director_agent = DirectorAgent()
 banking_agent_b_chromadb = None  # Rule-based agent (lazy init)
 banking_agent_b_logit = None  # Hybrid ML agent (lazy init)
 banking_agent_b_modal = None  # Customer modal agent (lazy init)
@@ -95,40 +108,69 @@ banking_agent_b_modal = None  # Customer modal agent (lazy init)
 def init_banking_agent_b():
     """Initialize Banking Agent B after Agent A has created personas"""
     global banking_agent_b, banking_agent_b_chromadb, banking_agent_b_logit, banking_agent_b_modal
+    print(f"[INIT-B] called — banking_agent_b is None: {banking_agent_b is None}, agent_a_results present: {bool(system_state['banking']['agent_a_results'])}", flush=True)
     if banking_agent_b is None and system_state['banking']['agent_a_results']:
         try:
+            # Ensure Agent A data is loaded from disk if segmentation hasn't run this session
+            print(f"[INIT-B] banking_agent_a.customers_df is None: {banking_agent_a.customers_df is None}", flush=True)
+            if banking_agent_a.customers_df is None:
+                logger.info("Agent A data not loaded — loading from disk before initializing Agent B")
+                print("[INIT-B] calling banking_agent_a.load_data() ...", flush=True)
+                loaded = banking_agent_a.load_data()
+                print(f"[INIT-B] banking_agent_a.load_data() returned: {loaded}", flush=True)
+                if not loaded:
+                    logger.warning("Could not load Agent A data from disk; Agent B will use fallback scoring")
+
+            # Use loaded DataFrames (or None if load failed — agents handle None gracefully)
+            _customers = banking_agent_a.customers_df
+            _products = banking_agent_a.products_df
+            _transactions = banking_agent_a.transactions_df
+            _personas = banking_agent_a.personas
+            print(f"[INIT-B] DataFrames: customers={_customers is not None}, products={_products is not None}, transactions={_transactions is not None}, personas={bool(_personas)}", flush=True)
+
             # Legacy agent
+            print("[INIT-B] creating AgentB_Banking_Enhanced ...", flush=True)
             banking_agent_b = AgentB_Banking_Enhanced(
-                customers_df=banking_agent_a.customers_df,
-                products_df=banking_agent_a.products_df,
-                transactions_df=banking_agent_a.transactions_df,
-                personas=banking_agent_a.personas
+                customers_df=_customers,
+                products_df=_products,
+                transactions_df=_transactions,
+                personas=_personas
             )
-            
+            print("[INIT-B] AgentB_Banking_Enhanced OK", flush=True)
+
             # Rule-based chromadb agent
+            print(f"[INIT-B] creating AgentB_Banking (chromadb) with data_path={banking_data_path} ...", flush=True)
             banking_agent_b_chromadb = AgentB_Banking(
-                data_path=str(fmb_data_path),
+                data_path=str(banking_data_path),
                 agent_a=banking_agent_a
             )
-            
+            print("[INIT-B] AgentB_Banking OK", flush=True)
+
             # Hybrid ML agent
+            print("[INIT-B] creating AgentB_Banking_LogitEnhanced ...", flush=True)
             banking_agent_b_logit = AgentB_Banking_LogitEnhanced(
-                products_df=banking_agent_a.products_df,
-                customers_df=banking_agent_a.customers_df,
-                transactions_df=banking_agent_a.transactions_df,
-                personas=banking_agent_a.personas
+                products_df=_products,
+                customers_df=_customers,
+                transactions_df=_transactions,
+                personas=_personas
             )
-            
+            print("[INIT-B] AgentB_Banking_LogitEnhanced OK", flush=True)
+
             # Customer modal agent
+            print("[INIT-B] creating AgentB_Banking_Modal ...", flush=True)
             banking_agent_b_modal = AgentB_Banking_Modal(
-                customers_df=banking_agent_a.customers_df,
-                products_df=banking_agent_a.products_df,
-                transactions_df=banking_agent_a.transactions_df,
-                personas=banking_agent_a.personas
+                customers_df=_customers,
+                products_df=_products,
+                transactions_df=_transactions,
+                personas=_personas
             )
-            
-            logger.info("✅ All Banking Agent B variants initialized with persona data")
+            print("[INIT-B] AgentB_Banking_Modal OK", flush=True)
+
+            logger.info("All Banking Agent B variants initialized with persona data")
         except Exception as e:
+            import traceback as _tb
+            print(f"[INIT-B] EXCEPTION: {e}", flush=True)
+            print(_tb.format_exc(), flush=True)
             logger.error(f"Error initializing Banking Agent B: {e}")
             raise
 
@@ -144,7 +186,10 @@ system_state = {
         'academy_micro_segments': {}
     },
     'banking': {
+        'banking_data_loaded': False,  # True only after explicit POST /datasets/load in this session
         'agent_a_results': None,
+        'agent_a_status': 'idle',      # idle | running | complete | failed
+        'agent_a_progress': 0.0,       # 0.0 to 1.0
         'agent_b_results': None,
         'banking_micro_segments': {},
         'agent_d_ledger': {},  # customer_id -> { impressions, last_directives, ... }
@@ -159,6 +204,10 @@ system_state = {
 
 
 def _banking_fmb_path() -> Path:
+    meridian = project_root / 'data' / 'preloaded' / 'meridian_bank'
+    jpm      = project_root / 'data' / 'preloaded' / 'jpm_bank'
+    if meridian.exists(): return meridian
+    if jpm.exists():      return jpm
     return project_root / 'data' / 'preloaded' / 'fmb_bank'
 
 
@@ -250,6 +299,20 @@ def get_dataset_file_path(filename: str) -> str:
         versioned_filename = filename
     
     return f'data/preloaded/academy_sports/{versioned_filename}'
+
+
+def _apply_banking_column_compat(df):
+    """Add backward-compat aliases so all agents work after column renames."""
+    aliases = {
+        'total_deposit_value':       'total_deposits',
+        'avg_daily_balance_p30days': 'avg_daily_balance',
+        'customer_type':             'customer_segment',
+        'credit_score_trend_p6mo':   'credit_score_trend',
+    }
+    for new_col, old_col in aliases.items():
+        if new_col in df.columns and old_col not in df.columns:
+            df[old_col] = df[new_col]
+    return df
 
 
 def preload_academy_data(dataset_version: str, max_retries: int = 3):
@@ -2317,10 +2380,10 @@ async def list_banking_datasets():
     
     try:
         project_root = Path(__file__).parent.parent
-        data_path = project_root / "data" / "preloaded" / "fmb_bank"
-        
-        logger.info(f"📂 Checking for F&M Bank datasets in: {data_path}")
-        
+        data_path = _banking_fmb_path()
+
+        logger.info(f"📂 Checking for JPMorgan Chase datasets in: {data_path}")
+
         data_path.mkdir(parents=True, exist_ok=True)
         
         datasets = []
@@ -2332,44 +2395,76 @@ async def list_banking_datasets():
         
         if customers_file.exists():
             try:
-                customers_df = pd.read_csv(customers_file)
+                customers_df = _apply_banking_column_compat(pd.read_csv(customers_file))
                 customer_count = len(customers_df)
-                
+
                 product_count = 0
                 if products_file.exists():
                     products_df = pd.read_csv(products_file)
                     product_count = len(products_df)
-                
+
                 transaction_count = 0
                 if transactions_file.exists():
                     transactions_df = pd.read_csv(transactions_file)
                     transaction_count = len(transactions_df)
-                
+
+                profile_file = data_path / "customer_profile.csv"
+                profile_count = len(pd.read_csv(profile_file)) if profile_file.exists() else 0
+
+                engagement_file = data_path / "customer_engagement.csv"
+                engagement_count = len(pd.read_csv(engagement_file)) if engagement_file.exists() else 0
+
+                tables = [
+                    {
+                        "name": "customers",
+                        "display_name": "Customers",
+                        "row_count": customer_count,
+                        "loaded": True
+                    },
+                    {
+                        "name": "products",
+                        "display_name": "Products",
+                        "row_count": product_count,
+                        "loaded": True
+                    },
+                    {
+                        "name": "transactions",
+                        "display_name": "Transactions",
+                        "row_count": transaction_count,
+                        "loaded": True
+                    }
+                ]
+                if profile_count > 0:
+                    tables.append({
+                        "name": "customer_profile",
+                        "display_name": "Customer Profile",
+                        "row_count": profile_count,
+                        "loaded": True
+                    })
+                if engagement_count > 0:
+                    tables.append({
+                        "name": "customer_engagement",
+                        "display_name": "Customer Engagement",
+                        "row_count": engagement_count,
+                        "loaded": True
+                    })
+
+                mta_file = data_path / "mta_touchpoint_history.csv"
+                if mta_file.exists():
+                    mta_count = len(pd.read_csv(mta_file))
+                    tables.append({
+                        "name": "mta_touchpoint_history",
+                        "display_name": "MTA Touchpoint History",
+                        "row_count": mta_count,
+                        "loaded": True
+                    })
+
                 datasets.append({
                     "name": "banking_v1",
                     "display_name": "Banking Platform V1",
                     "version": "v1",
                     "description": f"Banking dataset with {customer_count} customers and financial products",
-                    "tables": [
-                        {
-                            "name": "customers",
-                            "display_name": "Customers",
-                            "row_count": customer_count,
-                            "loaded": True
-                        },
-                        {
-                            "name": "products",
-                            "display_name": "Products",
-                            "row_count": product_count,
-                            "loaded": True
-                        },
-                        {
-                            "name": "transactions",
-                            "display_name": "Transactions",
-                            "row_count": transaction_count,
-                            "loaded": True
-                        }
-                    ],
+                    "tables": tables,
                     "loaded": True,
                     "status": "ready",
                     "customer_count": customer_count,
@@ -2396,7 +2491,7 @@ async def list_banking_datasets():
                     {
                         "name": "products",
                         "display_name": "Products",
-                        "row_count": 20,
+                        "row_count": 24,
                         "loaded": False
                     },
                     {
@@ -2404,12 +2499,30 @@ async def list_banking_datasets():
                         "display_name": "Transactions",
                         "row_count": 25000,
                         "loaded": False
+                    },
+                    {
+                        "name": "customer_profile",
+                        "display_name": "Customer Profile",
+                        "row_count": 5000,
+                        "loaded": False
+                    },
+                    {
+                        "name": "customer_engagement",
+                        "display_name": "Customer Engagement",
+                        "row_count": 5000,
+                        "loaded": False
+                    },
+                    {
+                        "name": "mta_touchpoint_history",
+                        "display_name": "MTA Touchpoint History",
+                        "row_count": 42286,
+                        "loaded": False
                     }
                 ],
                 "loaded": False,
                 "status": "not_generated",
                 "customer_count": 5000,
-                "product_count": 20,
+                "product_count": 24,
                 "path": str(data_path)
             })
             logger.warning(f"⚠️ Banking dataset not found at {customers_file}")
@@ -2433,13 +2546,16 @@ async def view_banking_dataset_table(dataset_name: str, table_name: str):
     
     try:
         project_root = Path(__file__).parent.parent
-        data_path = project_root / "data" / "preloaded" / "fmb_bank"
-        
+        data_path = _banking_fmb_path()
+
         # Map table names to file names
         table_files = {
             "customers": "customers.csv",
             "products": "products.csv",
-            "transactions": "transactions.csv"
+            "transactions": "transactions.csv",
+            "customer_profile": "customer_profile.csv",
+            "customer_engagement": "customer_engagement.csv",
+            "mta_touchpoint_history": "mta_touchpoint_history.csv"
         }
         
         if table_name not in table_files:
@@ -2455,14 +2571,19 @@ async def view_banking_dataset_table(dataset_name: str, table_name: str):
         
         # Get first 100 rows for preview
         preview_df = df.head(100)
-        
-        # Replace NaN/Inf values with None for JSON compatibility
-        preview_df = preview_df.replace([np.inf, -np.inf], np.nan)
-        preview_df = preview_df.where(pd.notnull(preview_df), None)
-        
+
+        # Use pandas JSON serializer to handle NaN/Inf → null correctly.
+        # preview_df.to_dict() emits float('nan') for NaN in float64 columns even
+        # after .where(notnull, None) because pandas re-casts None back to NaN.
+        import json as _json
+        data = _json.loads(
+            preview_df.replace([np.inf, -np.inf], np.nan)
+                      .to_json(orient='records', default_handler=str)
+        )
+
         return {
             "columns": df.columns.tolist(),
-            "data": preview_df.to_dict(orient='records'),
+            "data": data,
             "total_rows": len(df),
             "preview_rows": len(preview_df)
         }
@@ -2485,26 +2606,26 @@ async def load_banking_dataset(request: dict):
     
     try:
         from pathlib import Path
-        project_root = Path(__file__).parent.parent
-        data_path = project_root / "data" / "preloaded" / "fmb_bank"
-        
+        data_path = _banking_fmb_path()
+
         customers_file = data_path / "customers.csv"
         products_file = data_path / "products.csv"
         transactions_file = data_path / "transactions.csv"
-        
+
         if not customers_file.exists():
-            raise HTTPException(status_code=404, detail="Banking dataset not found. Run generate_banking_data.bat first.")
+            raise HTTPException(status_code=404, detail="Banking dataset not found. Run scripts/generate_jpm_dataset.py first.")
         
         import pandas as pd
-        customers_df = pd.read_csv(customers_file)
+        customers_df = _apply_banking_column_compat(pd.read_csv(customers_file))
         products_df = pd.read_csv(products_file)
         transactions_df = pd.read_csv(transactions_file)
-        
+
         # Store in system_state for Agent B
         system_state['banking']['products'] = products_df
         system_state['banking']['transactions'] = transactions_df
         system_state['banking']['customers'] = customers_df
-        
+        system_state['banking']['banking_data_loaded'] = True
+
         logger.info(f"✅ Banking dataset loaded successfully")
         
         return {
@@ -2526,9 +2647,8 @@ async def get_banking_status():
     """Get Banking system status"""
     try:
         from pathlib import Path
-        project_root = Path(__file__).parent.parent
-        data_path = project_root / "data" / "preloaded" / "fmb_bank"
-        
+        data_path = _banking_fmb_path()
+
         customers_path = data_path / "customers.csv"
         data_loaded = customers_path.exists()
         
@@ -2558,46 +2678,118 @@ async def get_banking_status():
         }
 
 
-@app.post("/api/banking/agent_a/execute")
-async def execute_banking_agent_a(config: AgentAConfigAcademy):
-    """Execute Banking Agent A - Customer Segmentation"""
+def _persist_agent_a_cache(results: dict):
+    """Save Agent A personas to JSON file so they survive server restarts."""
     try:
-        logger.info("="*80)
-        logger.info(f"🏦 BANKING AGENT A - CUSTOMER SEGMENTATION")
-        logger.info(f"   Requested clusters: {config.n_clusters}")
-        logger.info("="*80)
-        
+        cache_path = _banking_fmb_path() / '.agent_a_cache.json'
+        serializable = {k: v for k, v in results.items() if k not in ('customers_df', 'customers_with_clusters_df')}
+        # Also persist customer->cluster map
+        customers = results.get('customers_with_clusters') or []
+        serializable['_cluster_map'] = [
+            {'customer_id': c.get('customer_id'), 'cluster': c.get('cluster')}
+            for c in customers if isinstance(c, dict)
+        ]
+        with open(cache_path, 'w', encoding='utf-8') as f:
+            import json as _json
+            _json.dump(serializable, f)
+        logger.info(f"Agent A results persisted to {cache_path}")
+    except Exception as e:
+        logger.warning(f"Could not persist Agent A cache: {e}")
+
+
+def _load_agent_a_cache():
+    """Load Agent A cache from JSON file on startup."""
+    try:
+        cache_path = _banking_fmb_path() / '.agent_a_cache.json'
+        print(f"[CACHE] looking for Agent A cache at: {cache_path}", flush=True)
+        print(f"[CACHE] cache exists: {cache_path.exists()}", flush=True)
+        if cache_path.exists():
+            with open(cache_path, 'r', encoding='utf-8') as f:
+                import json as _json
+                data = _json.load(f)
+            system_state['banking']['agent_a_results'] = data
+            system_state['banking']['agent_a_status'] = 'complete'
+            # Auto-set banking_data_loaded so Agent B can run without an explicit
+            # "Load Dataset" click when the Agent A cache (and thus full data) is present.
+            system_state['banking']['banking_data_loaded'] = True
+            print(f"[CACHE] loaded {len(data.get('personas', {}))} personas — banking_data_loaded=True", flush=True)
+            logger.info(f"Agent A results loaded from cache ({len(data.get('personas', {}))} personas) — banking_data_loaded set to True")
+    except Exception as e:
+        print(f"[CACHE] ERROR loading Agent A cache: {e}", flush=True)
+        logger.warning(f"Could not load Agent A cache: {e}")
+
+
+# Try to load persisted Agent A results on startup
+_load_agent_a_cache()
+
+
+def _run_agent_a_background(config_dict: dict):
+    """Background worker for Agent A execution."""
+    try:
+        system_state['banking']['agent_a_status'] = 'running'
+        system_state['banking']['agent_a_progress'] = 0.1
         start_time = datetime.now()
-        
-        # Execute Banking Agent A with user's gamma selection
-        results = banking_agent_a.execute({
-            'dataset_version': 'v1',
-            'n_clusters': config.n_clusters,
-            'gamma': config.gamma  # USE USER INPUT, NOT HARDCODED
-        })
-        
-        execution_time = (datetime.now() - start_time).total_seconds()
-        logger.info(f"✅ Banking Agent A completed in {execution_time:.2f}s")
-        logger.info(f"   Generated {results.get('n_clusters', 0)} personas")
-        
-        # Convert numpy types BEFORE storing (converts DataFrames to dicts)
+
+        results = banking_agent_a.execute(config_dict)
+        system_state['banking']['agent_a_progress'] = 0.9
+
         results = numpy_to_python_types(results)
-        
-        # Store converted results and clear churn cache so it’s recomputed with new data
         system_state['banking']['agent_a_results'] = results
         system_state['banking']['customers_with_churn'] = None
+        system_state['banking']['agent_a_status'] = 'complete'
+        system_state['banking']['agent_a_progress'] = 1.0
 
+        _persist_agent_a_cache(results)
+        execution_time = (datetime.now() - start_time).total_seconds()
+        logger.info(f"Agent A background task completed in {execution_time:.2f}s")
+    except Exception as e:
+        system_state['banking']['agent_a_status'] = 'failed'
+        system_state['banking']['agent_a_progress'] = 0.0
+        logger.error(f"Agent A background task failed: {e}")
+        logger.error(traceback.format_exc())
+
+
+@app.post("/api/banking/agent_a/execute")
+async def execute_banking_agent_a(config: AgentAConfigAcademy, background_tasks: BackgroundTasks):
+    """Execute Banking Agent A asynchronously. Poll /api/banking/agent_a/status for progress."""
+    print(f"[AGENT-A] execute called — n_clusters={config.n_clusters}, gamma={config.gamma}", flush=True)
+    if system_state['banking']['agent_a_status'] == 'running':
         return {
             "success": True,
-            "result": results,
-            "execution_time_seconds": execution_time,
-            "timestamp": datetime.now().isoformat()
+            "status": "already_running",
+            "poll_url": "/api/banking/agent_a/status",
+            "message": "Agent A is already running. Poll the status endpoint."
         }
-        
-    except Exception as e:
-        logger.error(f"❌ Banking Agent A failed: {e}")
-        logger.error(traceback.format_exc())
-        raise HTTPException(status_code=500, detail=str(e))
+
+    config_dict = {
+        'dataset_version': 'v1',
+        'n_clusters': config.n_clusters,
+        'gamma': config.gamma,
+    }
+    system_state['banking']['agent_a_status'] = 'running'
+    system_state['banking']['agent_a_progress'] = 0.0
+    background_tasks.add_task(_run_agent_a_background, config_dict)
+
+    return {
+        "success": True,
+        "status": "started",
+        "poll_url": "/api/banking/agent_a/status",
+        "message": "Agent A started in background. Poll the status endpoint every 2 seconds.",
+        "timestamp": datetime.now().isoformat()
+    }
+
+
+@app.get("/api/banking/agent_a/status")
+async def get_banking_agent_a_status():
+    """Get current Agent A execution status."""
+    b = system_state['banking']
+    results = b.get('agent_a_results') or {}
+    return {
+        "status": b.get('agent_a_status', 'idle'),
+        "progress": b.get('agent_a_progress', 0.0),
+        "personas_count": len(results.get('personas', {})),
+        "last_completed": results.get('last_refreshed'),
+    }
 
 
 @app.get("/api/banking/agent_a/results")
@@ -2844,11 +3036,13 @@ async def create_banking_micro_segments(macro_segment_id: int, n_micro_segments:
     try:
         logger.info(f"🚀 Creating banking micro segments for macro segment {macro_segment_id}")
         
-        # Check if Agent A has been executed
+        # Require explicit dataset load + Agent A run
+        if not system_state['banking']['banking_data_loaded']:
+            raise HTTPException(status_code=400, detail="Please load the banking dataset first.")
         if not system_state['banking']['agent_a_results']:
             raise HTTPException(
                 status_code=400,
-                detail="Agent A must be executed first. Please run macro segmentation."
+                detail="Please run customer segmentation (Agent A) first."
             )
         
         # Get Agent A results
@@ -2867,18 +3061,23 @@ async def create_banking_micro_segments(macro_segment_id: int, n_micro_segments:
                     detail=f"Macro segment {macro_segment_id} not found. Available segments: {available_segments}"
                 )
         
-        # Initialize micro segmentation agent
+        # Initialize micro segmentation agent, passing all names used in previous runs
         from agents.agent_a_banking_micro import AgentA_Banking_Micro
-        micro_agent = AgentA_Banking_Micro(customers_df, personas)
-        
+        global_names = system_state['banking'].get('used_micro_names', set())
+        micro_agent = AgentA_Banking_Micro(customers_df, personas, global_used_names=global_names)
+
         # Execute micro segmentation
         logger.info(f"  Executing banking micro segmentation agent...")
         result = micro_agent.execute(macro_segment_id, n_micro_segments)
-        
+
+        # Accumulate all generated micro names so future runs avoid them
+        new_names = {seg['name'] for seg in result.get('micro_segments', []) if seg.get('name')}
+        system_state['banking']['used_micro_names'] = global_names | new_names
+
         # Store in system state
         if 'banking_micro_segments' not in system_state['banking']:
             system_state['banking']['banking_micro_segments'] = {}
-        
+
         system_state['banking']['banking_micro_segments'][macro_segment_id] = result
         
         micro_count = len(result.get('micro_segments', []))
@@ -3233,25 +3432,39 @@ async def banking_agent_b_factor_weights_ai(body: BankingFactorWeightsAIBody):
 @app.post("/api/banking/agent_b/execute")
 async def execute_banking_agent_b(request: dict = Body(...)):
     """Execute Banking Agent B - Product Recommendations (MATCHES Academy Sports)"""
+    print("[AGENT-B] execute called", flush=True)
     try:
         customer_id = request.get('customer_id')
         if customer_id is not None:
             customer_id = str(customer_id).strip()
         persona = request.get('persona')  # NEW: Accept persona parameter
-        top_n = request.get('top_n', 5)  # NEW: Number of recommendations
+        top_n = request.get('top_n', 5)  # Number of recommendations
         explain = request.get('explain', True)  # NEW: Generate explanations
-        
+
+        print(f"[AGENT-B] customer_id={customer_id!r} persona={persona!r}", flush=True)
+        print(f"[AGENT-B] banking_data_loaded={system_state['banking']['banking_data_loaded']}", flush=True)
+        print(f"[AGENT-B] agent_a_results present={bool(system_state['banking']['agent_a_results'])}", flush=True)
+
         # MATCHES ACADEMY SPORTS: Accept either customer_id OR persona
         if not customer_id and not persona:
             raise HTTPException(status_code=400, detail="Either customer_id or persona is required")
-        
-        # Check if Agent A has been executed
-        if not system_state['banking']['agent_a_results']:
+
+        # Require explicit dataset load in this session
+        if not system_state['banking']['banking_data_loaded']:
+            print("[AGENT-B] BLOCKED: banking_data_loaded is False", flush=True)
             raise HTTPException(
-                status_code=400, 
-                detail="Agent A must be executed first to create personas"
+                status_code=400,
+                detail="Please load the banking dataset first before running recommendations."
             )
-        
+
+        # Require Agent A to have run (cache loaded at startup does not satisfy this)
+        if not system_state['banking']['agent_a_results']:
+            print("[AGENT-B] BLOCKED: agent_a_results is empty", flush=True)
+            raise HTTPException(
+                status_code=400,
+                detail="Please run customer segmentation (Agent A) before running recommendations."
+            )
+
         # If persona provided, get a random customer from that persona
         if persona and not customer_id:
             customers_with_clusters = system_state['banking']['agent_a_results'].get('customers_with_clusters', [])
@@ -3259,28 +3472,32 @@ async def execute_banking_agent_b(request: dict = Body(...)):
                 customers_list = customers_with_clusters.to_dict('records')
             else:
                 customers_list = customers_with_clusters
-            
+
+            print(f"[AGENT-B] persona mode: {len(customers_list)} customers in cache, looking for cluster={persona}", flush=True)
             # Find customers in this persona (use 'cluster' column)
             persona_customers = [c for c in customers_list if c.get('cluster', c.get('macro_segment_id')) == int(persona)]
-            
+
             if not persona_customers:
+                print(f"[AGENT-B] No customers found for persona {persona}", flush=True)
                 raise HTTPException(status_code=404, detail=f"No customers found for persona {persona}")
-            
+
             # Pick first customer from persona
             customer_id = str(persona_customers[0]['customer_id']).strip()
-            logger.info(f"📊 Persona mode: Selected customer {customer_id} from persona {persona}")
-        
+            logger.info(f"Persona mode: Selected customer {customer_id} from persona {persona}")
+
         logger.info("="*80)
-        logger.info(f"🏦 BANKING AGENT B - RULE-BASED RECOMMENDATIONS")
-        logger.info(f"   Customer ID: {customer_id}")
-        logger.info(f"   Persona: {persona}")
-        logger.info(f"   Top N: {top_n}")
-        logger.info(f"   Explain: {explain}")
+        logger.info(f"BANKING AGENT B - RULE-BASED RECOMMENDATIONS")
+        logger.info(f"  Customer ID: {customer_id}")
+        logger.info(f"  Persona:     {persona}")
+        logger.info(f"  Top N:       {top_n}")
+        logger.info(f"  Explain:     {explain}")
         logger.info("="*80)
-        
+
         # Initialize Agent B if needed
+        print(f"[AGENT-B] calling init_banking_agent_b — banking_agent_b is None: {banking_agent_b is None}", flush=True)
         init_banking_agent_b()
-        
+        print(f"[AGENT-B] init done — banking_agent_b_chromadb is None: {banking_agent_b_chromadb is None}", flush=True)
+
         if banking_agent_b_chromadb is None:
             raise HTTPException(
                 status_code=500,
@@ -3316,16 +3533,19 @@ async def execute_banking_agent_b(request: dict = Body(...)):
             else:
                 logger.warning(
                     f"Agent B requested use_agent_d_directives but no usable Agent D ledger for customer_id={cid_key!r} "
-                    f"(run Agent D “Load supervisor view” / orchestrate, or use Pin on a product)."
+                    "(run Agent D 'Load supervisor view' / orchestrate, or use Pin on a product)."
                 )
         # Use the RULE-BASED chromadb agent with execute()
+        print(f"[AGENT-B] calling banking_agent_b_chromadb.execute() for customer {customer_id}", flush=True)
         result = banking_agent_b_chromadb.execute(exec_params)
-        
+        print(f"[AGENT-B] execute() returned keys: {list(result.keys()) if isinstance(result, dict) else type(result)}", flush=True)
+
         if not isinstance(result, dict):
             raise ValueError(f"Agent returned invalid result type: {type(result)}")
-        
+
         # Check if agent returned error
         if 'error' in result:
+            print(f"[AGENT-B] ERROR in result: {result['error']}", flush=True)
             logger.error(f"❌ Agent B returned error: {result['error']}")
             raise HTTPException(status_code=500, detail=result['error'])
         
@@ -3374,13 +3594,15 @@ async def execute_banking_agent_b_logit(config: AgentBLogitConfig):
         
         start_time = datetime.now()
         
-        # Check if Agent A has been executed
+        # Require explicit dataset load + Agent A run
+        if not system_state['banking']['banking_data_loaded']:
+            raise HTTPException(status_code=400, detail="Please load the banking dataset first.")
         if not system_state['banking']['agent_a_results']:
             raise HTTPException(
                 status_code=400,
-                detail="Agent A must be executed first to create personas"
+                detail="Please run customer segmentation (Agent A) before running recommendations."
             )
-        
+
         # Get personas from Agent A results
         personas = system_state['banking']['agent_a_results'].get('personas', {})
         
@@ -3540,13 +3762,12 @@ async def explain_banking_recommendation(request: dict = Body(...)):
         
         logger.info(f"💡 Generating AI explanation: {customer_id} + {product_id}")
         
-        # Check if Agent A has been executed
+        # Require explicit dataset load + Agent A run
+        if not system_state['banking']['banking_data_loaded']:
+            raise HTTPException(status_code=400, detail="Please load the banking dataset first.")
         if not system_state['banking']['agent_a_results']:
-            raise HTTPException(
-                status_code=400,
-                detail="Agent A must be executed first"
-            )
-        
+            raise HTTPException(status_code=400, detail="Please run customer segmentation (Agent A) first.")
+
         # Initialize Agent B if needed
         init_banking_agent_b()
         
@@ -3965,6 +4186,306 @@ async def banking_agent_d_ledger_reset(customer_id: str):
     return {'success': True, 'message': f'Ledger cleared for {cid}'}
 
 
+@app.post("/api/banking/agent_director/analyze")
+async def banking_director_analyze(request: Request):
+    """
+    Director Agent: analyze session behavioral signals and produce next-visit directives.
+
+    Body:
+      customer_id                    : str
+      behavioral_signals             : [{product_id, signal_type}]
+      current_recommended_product_id : str  (optional)
+      experiment_channel             : str  (optional — channel from winning offer experiment)
+      auto_from_ledger               : bool (optional — derive signals from impression ledger)
+    """
+    try:
+        body = await request.json()
+    except Exception:
+        raise HTTPException(status_code=400, detail="Invalid JSON body")
+
+    customer_id = str(body.get("customer_id", "")).strip()
+    if not customer_id:
+        raise HTTPException(status_code=400, detail="customer_id required")
+
+    current_product = body.get("current_recommended_product_id")
+    experiment_channel = body.get("experiment_channel")
+    auto_from_ledger = bool(body.get("auto_from_ledger", False))
+
+    behavioral_signals = body.get("behavioral_signals") or []
+
+    # Auto-derive signals from impression ledger if requested
+    if auto_from_ledger:
+        try:
+            ledger_store = system_state['banking'].get('agent_d_ledger', {})
+            ledger = ledger_store.get(customer_id, {})
+            impressions = ledger.get('impressions', {})
+            # Convert {product_id: {shown, clicked}} -> list of dicts for derive_signals_from_ledger
+            ledger_rows = [
+                {
+                    "product_id": pid,
+                    "shown_count": v.get("shown", 0),
+                    "click_count": v.get("clicked", 0),
+                    "application_started": v.get("application_started", False),
+                    "application_completed": v.get("application_completed", False),
+                }
+                for pid, v in impressions.items()
+            ]
+            if ledger_rows:
+                derived = banking_director_agent.derive_signals_from_ledger(ledger_rows)
+                behavioral_signals = derived + behavioral_signals
+        except Exception as e:
+            logger.warning(f"[DIRECTOR] Could not read ledger for {customer_id}: {e}")
+
+    result = banking_director_agent.analyze_session(
+        customer_id=customer_id,
+        behavioral_signals=behavioral_signals,
+        current_recommended_product_id=current_product,
+        experiment_channel=experiment_channel,
+    )
+
+    return {
+        "success": True,
+        "data": result,
+        "customer_id": customer_id,
+        "signals_used": len(behavioral_signals),
+        "source": "ledger_auto" if auto_from_ledger else "manual",
+    }
+
+
+# ── MTA endpoints ─────────────────────────────────────────────────────────────
+
+@app.get("/api/banking/mta/persona-heatmap")
+async def banking_mta_persona_heatmap():
+    """
+    Returns per-persona × per-channel conversion/open stats for the 5×5 heatmap.
+    {persona: {channel: {conversion_rate, open_rate, reach_pct, sample_size}}}
+    """
+    try:
+        from utils.mta_engine import get_mta_engine
+        mta = get_mta_engine()
+        heatmap = mta.get_all_personas_heatmap()
+        return {"success": True, "data": heatmap}
+    except Exception as e:
+        logger.warning(f"[MTA] persona-heatmap failed: {e}")
+        return {"success": False, "data": {}, "error": str(e)}
+
+
+@app.get("/api/banking/mta/customer-journey/{customer_id}")
+async def banking_mta_customer_journey(customer_id: str, days: int = 60):
+    """
+    Returns chronological touchpoints for a customer:
+    [{journey_id, channel, offer_id, product_id, timestamp, opened, clicked, converted, position}]
+    """
+    try:
+        from utils.mta_engine import get_mta_engine
+        mta = get_mta_engine()
+        journey = mta.get_customer_journey(customer_id, last_n_days=days)
+        return {"success": True, "data": journey, "customer_id": customer_id, "days": days}
+    except Exception as e:
+        logger.warning(f"[MTA] customer-journey failed for {customer_id}: {e}")
+        return {"success": False, "data": [], "error": str(e)}
+
+
+@app.post("/api/banking/run-pipeline/{customer_id}")
+async def run_banking_pipeline(customer_id: str):
+    """
+    Agentic orchestrator: runs B -> C -> D in sequence for one customer.
+    Uses cached Agent A results. Returns full reasoning trace per agent.
+    """
+    import time as _time
+
+    if not system_state['banking']['agent_a_results']:
+        raise HTTPException(
+            status_code=503,
+            detail="Run Agent A first to load customer segments."
+        )
+
+    run_id = f"run_{datetime.now().strftime('%Y%m%d_%H%M%S')}_{customer_id}"
+    pipeline_start = _time.monotonic()
+    trace = {}
+
+    try:
+        init_banking_agent_b()
+
+        # ── Agent A: get persona for this customer ────────────────────────────
+        t0 = _time.monotonic()
+        customer_details = banking_agent_a.get_customer_details(customer_id)
+        personas = system_state['banking']['agent_a_results'].get('personas', {})
+        persona_name = "Unknown"
+        cluster_id = None
+        segment_name_source = "cached"
+        if customer_details:
+            cluster_id = customer_details.get('cluster')
+            persona_obj = personas.get(str(cluster_id), {})
+            persona_name = persona_obj.get('persona_name', persona_obj.get('name', 'Unknown'))
+            segment_name_source = persona_obj.get('segment_name_source', 'rule_based')
+        trace['agent_a'] = {
+            'persona_name': persona_name,
+            'cluster_id': cluster_id,
+            'segment_name_source': segment_name_source,
+            'reasoning_trace': [
+                {'step': 1, 'action': 'get_customer_persona', 'input': customer_id,
+                 'output': f'cluster={cluster_id}, persona={persona_name}',
+                 'duration_ms': int((_time.monotonic() - t0) * 1000)}
+            ]
+        }
+
+        # ── Agent B: get product recommendations ─────────────────────────────
+        t0 = _time.monotonic()
+        b_recs = {}
+        b_trace = []
+        try:
+            b_recs = banking_agent_b_chromadb.execute({
+                'customer_id': customer_id,
+                'top_n': 10,
+                'explain': True,
+                'use_agent_d_directives': True,
+                'factor_weights': system_state['banking'].get('agent_b_factor_weights_pct'),
+            }) if banking_agent_b_chromadb else {}
+            recommendations = b_recs.get('recommendations', [])
+            # Anomaly detection: flag if top-N scores within 5% of each other
+            scores = [r.get('score', 0) for r in recommendations[:5]]
+            low_diff = len(scores) >= 3 and (max(scores) - min(scores)) < 0.05
+            b_trace = [
+                {'step': 1, 'action': 'score_products', 'input': f'customer={customer_id}, persona={persona_name}',
+                 'output': f'{len(recommendations)} products scored', 'duration_ms': int((_time.monotonic() - t0) * 1000)},
+            ]
+            if low_diff:
+                b_trace.append({'step': 2, 'action': 'anomaly_detected', 'output': 'low_differentiation: top scores within 5%'})
+
+            # LLM rationale for top 3
+            try:
+                from utils.claude_client import get_claude_client
+                claude = get_claude_client()
+                if claude.is_available() and recommendations:
+                    t_llm = _time.monotonic()
+                    rationales = claude.generate_batch_rationale(
+                        top3_products=recommendations[:3],
+                        customer_info=customer_details or {},
+                        persona_name=persona_name,
+                    )
+                    b_trace.append({
+                        'step': 3, 'action': 'llm_rationale', 'model': 'claude-haiku-4-5',
+                        'output': f'{len(rationales)} rationales generated',
+                        'duration_ms': int((_time.monotonic() - t_llm) * 1000)
+                    })
+                    for r in recommendations:
+                        if r.get('product_id') in rationales:
+                            r['llm_rationale'] = rationales[r['product_id']]
+            except Exception as e:
+                logger.warning(f"Pipeline LLM rationale failed: {e}")
+        except Exception as e:
+            logger.warning(f"Pipeline Agent B failed: {e}")
+
+        trace['agent_b'] = {
+            'recommendations_count': len(b_recs.get('recommendations', [])),
+            'recommendations': b_recs.get('recommendations', [])[:5],
+            'anomaly_flags': {'low_differentiation': low_diff} if 'low_diff' in dir() else {},
+            'reasoning_trace': b_trace,
+        }
+
+        # ── Agent C: one best offer ───────────────────────────────────────────
+        t0 = _time.monotonic()
+        c_result = {}
+        c_trace = []
+        try:
+            all_recs_for_c = b_recs if b_recs else {}
+            offer_result = banking_agent_c.get_one_best_offer(
+                customer_id=customer_id,
+                all_recommendations=all_recs_for_c,
+                customer_details=customer_details,
+            )
+            c_result = offer_result or {}
+            offer_name = (c_result.get('offer') or {}).get('product_name', 'N/A')
+            c_trace = [
+                {'step': 1, 'action': 'select_best_offer', 'input': f'{len(b_recs.get("recommendations", []))} candidates',
+                 'output': f'selected: {offer_name}', 'duration_ms': int((_time.monotonic() - t0) * 1000)},
+            ]
+        except Exception as e:
+            logger.warning(f"Pipeline Agent C failed: {e}")
+            c_trace.append({'step': 1, 'action': 'error', 'output': str(e)})
+
+        trace['agent_c'] = {
+            'offer': c_result.get('offer'),
+            'score': c_result.get('score'),
+            'reason': c_result.get('reason'),
+            'explainability': c_result.get('explainability'),
+            'channels': c_result.get('channels'),
+            'reasoning_trace': c_trace,
+        }
+
+        # ── Agent D: supervisor orchestration ────────────────────────────────
+        t0 = _time.monotonic()
+        d_result = {}
+        d_trace = []
+        try:
+            _load_banking_agent_d_csv_tables()
+            ledger_store = system_state['banking'].setdefault('agent_d_ledger', {})
+            wishlist_rows = system_state['banking'].get('agent_d_wishlist_rows', [])
+            incomplete_rows = system_state['banking'].get('agent_d_incomplete_rows', [])
+            impression_rows = system_state['banking'].get('agent_d_impression_rows', [])
+
+            d_result = banking_agent_d.orchestrate(
+                customer_id=customer_id,
+                agent_b_recommendations=b_recs.get('recommendations', []),
+                agent_c_primary=c_result.get('offer'),
+                ledger_store=ledger_store,
+                products_df=banking_agent_a.products_df,
+                customers_df=banking_agent_a.customers_df,
+                wishlist_rows=wishlist_rows,
+                incomplete_rows=incomplete_rows,
+                impression_rows=impression_rows,
+                clicked_product_ids=[],
+                persona_label=persona_name,
+            ) or {}
+            d_trace = [
+                {'step': 1, 'action': 'orchestrate_stack',
+                 'output': f'{len(d_result.get("live_recommendations", []))} items in live stack',
+                 'duration_ms': int((_time.monotonic() - t0) * 1000)},
+            ]
+            if d_result.get('next_visit_directives', {}).get('priority_pin_product_id'):
+                d_trace.append({'step': 2, 'action': 'set_priority_pin',
+                                'output': d_result['next_visit_directives']['priority_pin_product_id']})
+        except Exception as e:
+            logger.warning(f"Pipeline Agent D failed: {e}")
+            d_trace.append({'step': 1, 'action': 'error', 'output': str(e)})
+
+        trace['agent_d'] = {
+            'live_recommendations': d_result.get('live_recommendations', []),
+            'next_visit_directives': d_result.get('next_visit_directives', {}),
+            'supervisor_narrative': d_result.get('supervisor_narrative', ''),
+            'reasoning_trace': d_trace,
+        }
+
+        total_ms = int((_time.monotonic() - pipeline_start) * 1000)
+        return {
+            'pipeline_run_id': run_id,
+            'customer_id': customer_id,
+            'duration_ms': total_ms,
+            **trace
+        }
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Pipeline failed for {customer_id}: {e}")
+        logger.error(traceback.format_exc())
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/api/banking/observability/summary")
+async def banking_observability_summary():
+    """Return LLM call counts and status from system state."""
+    b = system_state['banking']
+    return {
+        'agent_a_status': b.get('agent_a_status', 'idle'),
+        'agent_a_personas': len((b.get('agent_a_results') or {}).get('personas', {})),
+        'dataset': 'jpm_bank' if (_banking_fmb_path().name == 'jpm_bank') else 'fmb_bank',
+        'agent_b_weights_set': b.get('agent_b_factor_weights_pct') is not None,
+        'agent_d_ledger_customers': len(b.get('agent_d_ledger', {})),
+    }
+
+
 @app.get("/api/banking/agent_c/one-best-offer/{customer_id}")
 async def get_banking_one_best_offer(customer_id: str):
     """
@@ -4152,6 +4673,15 @@ async def get_banking_persona_best_offer(persona_id: int = 0):
         result["persona_name"] = persona_name
         result["segment_size"] = int(len(segment_customers))
         result["representative_customer_id"] = result.get("customer_id")
+        # Channel distribution for this segment
+        if "channel_preference" in segment_customers.columns:
+            ch_counts = segment_customers["channel_preference"].value_counts()
+            total_ch = len(segment_customers)
+            result["channel_distribution"] = {
+                str(k): int(round(v / total_ch * 100)) for k, v in ch_counts.items()
+            }
+        else:
+            result["channel_distribution"] = {}
         rep_row = segment_customers[segment_customers["customer_id"].astype(str) == str(result.get("customer_id"))]
         result["representative_customer_name"] = str(rep_row.iloc[0].get("customer_name", result.get("customer_id"))) if len(rep_row) > 0 else str(result.get("customer_id"))
         result["note"] = f"Representative offer for segment **{persona_name}** ({len(segment_customers)} customers). Use for segment-level campaigns."
@@ -4490,7 +5020,7 @@ async def list_banking_products():
         from pathlib import Path
         
         project_root = Path(__file__).parent.parent
-        products_path = project_root / "data" / "preloaded" / "fmb_bank" / "products.csv"
+        products_path = _banking_fmb_path() / "products.csv"
         
         if not products_path.exists():
             raise HTTPException(status_code=404, detail="Products catalog not found. Generate data first.")
@@ -4626,12 +5156,12 @@ async def startup_event():
         else:
             logger.warning(f"⚠️  Academy Sports data not found")
         
-        # Check Banking data (fmb_bank folder)
-        banking_path = project_root / "data" / "preloaded" / "fmb_bank"
+        # Check Banking data (jpm_bank or fmb_bank folder)
+        banking_path = _banking_fmb_path()
         if (banking_path / "customers.csv").exists():
-            logger.info(f"✓ Banking data: {banking_path}")
+            logger.info(f"✓ Banking data ({banking_path.name}): {banking_path}")
         else:
-            logger.warning(f"⚠️  Banking data not found at {banking_path}. Add data/preloaded/fmb_bank/ with customers.csv, products.csv, transactions.csv")
+            logger.warning(f"⚠️  Banking data not found at {banking_path}. Run scripts/generate_jpm_dataset.py")
     except Exception as e:
         logger.warning(f"⚠️  Could not check data files: {e}")
     
@@ -4643,6 +5173,153 @@ async def startup_event():
     logger.info(f"   - Academy: http://localhost:5173/academy/agent-a")
     logger.info(f"   - Banking: http://localhost:5173/banking/agent-a")
     logger.info("="*80 + "\n")
+
+
+# ── Notification request models ─────────────────────────────────────────────
+
+class SendOfferEmailRequest(BaseModel):
+    customer_id: str
+    customer_name: str
+    to_email: str
+    subject: str
+    email_body: str
+    offer_intelligence: dict = {}
+    persona_name: str = ""
+
+class SendOfferSmsRequest(BaseModel):
+    customer_id: str
+    customer_name: str
+    to_phone: str
+    sms_text: str
+
+class RephraseOfferRequest(BaseModel):
+    customer_id: str
+    persona_name: str
+    offer_name: str
+    current_body: str
+    tone: str = "professional"   # professional | warm | urgent
+
+
+@app.post("/api/banking/agent_c/send_offer_email")
+async def send_banking_offer_email(req: SendOfferEmailRequest):
+    """
+    Send a Meridian Bank branded HTML offer email via SMTP.
+    Uses SMTP_HOST/PORT/USER/PASS/FROM from environment variables.
+    """
+    try:
+        from utils.notification_sender import send_offer_email
+        result = send_offer_email(
+            to_email=req.to_email,
+            customer_name=req.customer_name,
+            subject=req.subject,
+            email_body=req.email_body,
+            offer_intelligence=req.offer_intelligence,
+            persona_name=req.persona_name,
+        )
+        logger.info(
+            f"[API] Offer email sent | cust={req.customer_id} | to={req.to_email}"
+        )
+        return result
+    except ValueError as ve:
+        raise HTTPException(status_code=400, detail=str(ve))
+    except Exception as e:
+        logger.error(f"[API] send_offer_email error: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail=f"Failed to send email: {e}")
+
+
+@app.post("/api/banking/agent_c/send_offer_sms")
+async def send_banking_offer_sms(req: SendOfferSmsRequest):
+    """
+    Send a personalized offer SMS via Twilio.
+    Uses TWILIO_ACCOUNT_SID/AUTH_TOKEN/FROM_NUMBER from environment variables.
+    """
+    try:
+        from utils.notification_sender import send_offer_sms
+        result = send_offer_sms(
+            to_phone=req.to_phone,
+            sms_text=req.sms_text,
+            customer_name=req.customer_name,
+        )
+        logger.info(
+            f"[API] Offer SMS sent | cust={req.customer_id} | to={req.to_phone}"
+        )
+        return result
+    except ValueError as ve:
+        raise HTTPException(status_code=400, detail=str(ve))
+    except ImportError as ie:
+        raise HTTPException(status_code=422, detail=str(ie))
+    except RuntimeError as re:
+        # Twilio API-level error — surface the message directly
+        raise HTTPException(status_code=502, detail=str(re))
+    except Exception as e:
+        logger.error(f"[API] send_offer_sms error: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail=f"Failed to send SMS: {e}")
+
+
+@app.post("/api/banking/agent_c/rephrase_offer_content")
+async def rephrase_banking_offer_content(req: RephraseOfferRequest):
+    """
+    Rephrase an offer email body (and generate a new subject line) using the LLM.
+    Returns rephrased_body and rephrased_subject.
+    """
+    try:
+        from utils.together_ai import together_ai
+
+        tone_map = {
+            "professional": "formal, professional banking tone",
+            "warm": "warm, friendly and conversational tone",
+            "urgent": "urgent, time-sensitive tone that highlights limited availability",
+        }
+        tone_desc = tone_map.get(req.tone, "formal, professional banking tone")
+
+        body_prompt = (
+            f"You are a Meridian Bank marketing copywriter.\n\n"
+            f"Rephrase the following banking offer email body for a {req.persona_name} customer.\n"
+            f"Offer: {req.offer_name}\n"
+            f"Tone: {tone_desc}\n\n"
+            f"Original body:\n{req.current_body}\n\n"
+            f"Rules:\n"
+            f"- Preserve all key information (offer name, benefits, terms)\n"
+            f"- Apply {tone_desc}\n"
+            f"- Keep it between 120-180 words\n"
+            f"- Start with a compelling hook relevant to the persona\n"
+            f"- Return ONLY the rephrased body text — no subject line, no commentary"
+        )
+
+        rephrased_body = together_ai.generate_text(
+            prompt=body_prompt,
+            system_message=(
+                "You are an expert banking marketing copywriter. "
+                "Return only the rephrased email body text."
+            ),
+            max_tokens=400,
+            temperature=0.8,
+        )
+
+        subject_prompt = (
+            f"Write one compelling email subject line for a Meridian Bank offer.\n"
+            f"Persona: {req.persona_name}\n"
+            f"Offer: {req.offer_name}\n"
+            f"Tone: {tone_desc}\n\n"
+            f"Return ONLY the subject line text. Maximum 80 characters. "
+            f"No quotes, no commentary."
+        )
+
+        new_subject = together_ai.generate_text(
+            prompt=subject_prompt,
+            system_message="Write only the email subject line, nothing else.",
+            max_tokens=60,
+            temperature=0.7,
+        )
+
+        return {
+            "success": True,
+            "rephrased_body": rephrased_body.strip(),
+            "rephrased_subject": new_subject.strip().strip('"').strip("'"),
+        }
+    except Exception as e:
+        logger.error(f"[API] rephrase_offer_content error: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail=f"Rephrase failed: {e}")
 
 
 if __name__ == "__main__":

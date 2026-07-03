@@ -24,7 +24,7 @@ try:
     IMAGE_MAPPER_AVAILABLE = True
 except ImportError:
     IMAGE_MAPPER_AVAILABLE = False
-    print("⚠️  Warning: Image mapper not available")
+    print("Warning: Image mapper not available")
 try:
     from utils.together_ai import together_ai
     TOGETHER_AI_AVAILABLE = True
@@ -32,7 +32,123 @@ except ImportError:
     TOGETHER_AI_AVAILABLE = False
     together_ai = None
 
+try:
+    from utils.claude_client import get_claude_client
+    CLAUDE_AVAILABLE = True
+except ImportError:
+    CLAUDE_AVAILABLE = False
+    get_claude_client = None
+
 logger = logging.getLogger(__name__)
+
+# ── Per-macro feature sets ────────────────────────────────────────────────────
+# Each macro segment type uses 3 features most relevant to its defining trait.
+# Customers within a macro are split along THESE dimensions — different macros
+# split along different axes, so micro sub-groups are meaningfully distinct.
+_MICRO_FEATURE_SETS = {
+    'deposits':     ['account_maturity', 'portfolio_depth', 'digital_engagement'],
+    'digital':      ['transaction_velocity', 'portfolio_depth', 'cross_sell_receptivity'],
+    'products':     ['account_maturity', 'transaction_velocity', 'digital_engagement'],
+    'transactions': ['account_maturity', 'digital_engagement', 'cross_sell_receptivity'],
+    'cross_sell':   ['account_maturity', 'portfolio_depth', 'transaction_velocity'],
+    'income':       ['portfolio_depth', 'digital_engagement', 'credit_utilization'],
+}
+
+# Human-readable labels used in LLM prompts
+_FEATURE_LABELS = {
+    'account_maturity':       'account tenure',
+    'portfolio_depth':        'product breadth',
+    'credit_utilization':     'credit usage',
+    'transaction_velocity':   'transaction activity',
+    'digital_engagement':     'digital adoption',
+    'cross_sell_receptivity': 'openness to new products',
+}
+
+# Micro segment rule-based naming ─────────────────────────────────────────────
+# Short name appended after the descriptor word: e.g. "Digital Retiree"
+_PARENT_SHORT_NAMES = {
+    'Wealth Builder':     'Builder',
+    'Everyday Essential': 'Essential',
+    'Digital Native':     'Native',
+    'Retiree Anchor':     'Retiree',
+    'At-Risk Borrower':   'Borrower',
+}
+
+# Maps (feature_name, direction) → plain-English descriptor word
+_FEATURE_DIRECTION_WORDS = {
+    ('account_maturity',      'High'): 'Established',
+    ('account_maturity',      'Low'):  'New',
+    ('portfolio_depth',       'High'): 'Multi-Product',
+    ('portfolio_depth',       'Low'):  'Focused',
+    ('digital_engagement',    'High'): 'Digital',
+    ('digital_engagement',    'Low'):  'Branch',
+    ('transaction_velocity',  'High'): 'Active',
+    ('transaction_velocity',  'Low'):  'Occasional',
+    ('cross_sell_receptivity','High'): 'Growth-Ready',
+    ('cross_sell_receptivity','Low'):  'Anchored',
+    ('credit_utilization',    'High'): 'Credit-Active',
+    ('credit_utilization',    'Low'):  'Credit-Light',
+}
+
+# Feature priority: most meaningful differentiator first
+_NAMING_PRIORITY = [
+    'digital_engagement', 'account_maturity', 'transaction_velocity',
+    'portfolio_depth', 'cross_sell_receptivity', 'credit_utilization',
+]
+
+
+def _build_micro_name(feature_profile, split_features, parent_short, used_adjectives):
+    """
+    Build a plain '[Adjective] [Parent Short Name]' micro segment name.
+    Picks the highest-priority non-Mid feature direction, avoiding already-used adjectives.
+    """
+    candidates = []
+    for feat in _NAMING_PRIORITY:
+        if feat in split_features and feat in feature_profile:
+            direction = feature_profile.get(feat, 'Mid')
+            if direction == 'Mid':
+                continue
+            word = _FEATURE_DIRECTION_WORDS.get((feat, direction))
+            if word:
+                candidates.append(word)
+
+    for adj in candidates:
+        if adj not in used_adjectives:
+            return f"{adj} {parent_short}"
+    # All preferred adjectives taken — use first candidate anyway to avoid "Core X"
+    if candidates:
+        return f"{candidates[0]} {parent_short}"
+    return f"Core {parent_short}"
+
+# Rule-based fallback name pools keyed by macro primary trait.
+# Names are plain 2-word archetypes a non-banker immediately understands.
+# 8 entries per pool so 4 micro segments across 2 same-trait macros never collide.
+_MICRO_FALLBACK_POOLS = {
+    'deposits': [
+        'Loyal Saver', 'New Wealth', 'Debt-Free Holder', 'Growing Saver',
+        'Low-Risk Saver', 'Active Depositor', 'Steady Holder', 'Cautious Saver',
+    ],
+    'digital': [
+        'Mobile First', 'Casual Digital', 'App Explorer', 'Digital Starter',
+        'Screen Saver', 'Digital Minimalist', 'Connected Banker', 'Light Digital',
+    ],
+    'products': [
+        'Full Bundle', 'Bundle Starter', 'Core Holder', 'Wide Portfolio',
+        'Focused Products', 'Growing Bundler', 'Deep Holder', 'Selective User',
+    ],
+    'transactions': [
+        'Daily Spender', 'Weekend Payer', 'Steady Sender', 'Frequent Buyer',
+        'Light Transactor', 'Regular Mover', 'Active Payer', 'Batch Sender',
+    ],
+    'cross_sell': [
+        'Ready Adopter', 'Curious Saver', 'Early Mover', 'Steady Climber',
+        'Growth Starter', 'Open Mover', 'Next-Step Ready', 'Careful Grower',
+    ],
+    'income': [
+        'High Earner', 'Budget Wise', 'Growing Earner', 'Careful Spender',
+        'Active Earner', 'Conservative Earner', 'Balanced Earner', 'Passive Saver',
+    ],
+}
 
 
 class AgentA_Banking_Micro:
@@ -43,20 +159,45 @@ class AgentA_Banking_Micro:
     more granular personalization and targeted financial services
     """
     
-    def __init__(self, customers_df: pd.DataFrame, macro_personas: Dict):
+    def __init__(self, customers_df: pd.DataFrame, macro_personas: Dict, global_used_names=None):
         """
         Initialize Micro Segmentation Agent
-        
-        Args:
-            customers_df: DataFrame with customer data and cluster assignments
-            macro_personas: Dictionary of macro personas from Agent A
+
+        global_used_names: set/list of names already used across all prior micro segment
+        runs in this session — prevents cross-macro name collisions.
         """
         self.customers_df = customers_df
         self.macro_personas = macro_personas
         self.micro_segments = {}
-        
-        logger.info(f"Micro Segmentation Agent initialized with {len(customers_df)} customers")
+        self._global_used_names: set = set(global_used_names or [])
+
+        logger.info(f"Micro Segmentation Agent initialized with {len(customers_df)} customers, "
+                    f"{len(self._global_used_names)} globally reserved names")
     
+    def _get_primary_trait_from_persona(self, macro_persona: dict) -> str:
+        """Derive the primary differentiating trait from a macro persona dict."""
+        chars = macro_persona.get('characteristics', {})
+        stored = chars.get('_primary_trait', '') or chars.get('primary_trait', '')
+        if stored and stored in _MICRO_FEATURE_SETS:
+            return stored
+
+        avg_deposits   = float(chars.get('avg_deposits', 0) or 0)
+        avg_digital    = float(chars.get('avg_digital_engagement', 0) or 0)
+        avg_products   = float(chars.get('avg_products', 0) or chars.get('avg_num_products', 0) or 0)
+        avg_txn        = float(chars.get('avg_transactions_per_customer', 0) or chars.get('avg_monthly_transactions', 0) or 0)
+        avg_cross_sell = float(chars.get('avg_cross_sell_receptivity', 0) or 0)
+        avg_income     = float(chars.get('avg_income', 0) or 0)
+
+        scores = {
+            'deposits':     avg_deposits / 50000,
+            'digital':      avg_digital / 0.5,
+            'products':     avg_products / 3.0,
+            'transactions': avg_txn / 20.0,
+            'cross_sell':   avg_cross_sell / 0.5,
+            'income':       avg_income / 60000,
+        }
+        return max(scores, key=scores.get)
+
     def execute(self, macro_segment_id: int, n_micro_segments: int = 4) -> Dict:
         """
         Execute micro segmentation for a specific macro segment
@@ -80,34 +221,43 @@ class AgentA_Banking_Micro:
             
             logger.info(f"Creating {n_micro_segments} micro segments for macro segment {macro_segment_id} ({len(macro_customers)} customers)")
             
-            # Calculate micro segmentation features
+            # Calculate micro segmentation features (all 6 computed, subset selected below)
             features_df = self._calculate_micro_features(macro_customers)
-            
-            # Perform K-Means clustering
-            micro_assignments = self._cluster_micro_segments(
-                features_df, 
-                n_micro_segments
-            )
-            
-            # Add micro segment assignments
-            macro_customers['micro_segment'] = micro_assignments
-            
-            # Generate micro segment profiles - handle flexible key types
+
+            # Resolve macro persona — needed to determine which features to split on
             macro_persona = None
             for key in [macro_segment_id, str(macro_segment_id), int(macro_segment_id)]:
                 if key in self.macro_personas:
                     macro_persona = self.macro_personas[key]
                     break
-            
+
             if not macro_persona:
                 raise KeyError(f"Macro segment {macro_segment_id} not found in personas. Available: {list(self.macro_personas.keys())}")
-            
+
             macro_name = macro_persona['persona_name']
+
+            # Select features most relevant to THIS macro segment's defining trait
+            primary_trait = self._get_primary_trait_from_persona(macro_persona)
+            selected_features = list(_MICRO_FEATURE_SETS.get(primary_trait, _MICRO_FEATURE_SETS['deposits']))
+            logger.info(f"Macro '{macro_name}' trait='{primary_trait}' → micro features: {selected_features}")
+
+            # Perform K-Means clustering on the selected features only
+            micro_assignments = self._cluster_micro_segments(
+                features_df,
+                n_micro_segments,
+                feature_names=selected_features,
+            )
+
+            # Add micro segment assignments
+            macro_customers['micro_segment'] = micro_assignments
+
             micro_segments = self._generate_micro_profiles(
                 macro_customers,
                 macro_segment_id,
                 n_micro_segments,
-                macro_name
+                macro_name,
+                primary_trait=primary_trait,
+                selected_features=selected_features,
             )
             
             # Store results
@@ -130,7 +280,7 @@ class AgentA_Banking_Micro:
                     'size': seg_data.get('size', 0),
                     'percentage': seg_data.get('percentage', 0.0),
                     'avg_spend': avg_value,
-                    'avg_balance': avg_value,  # Frontend expects this
+                    'avg_annual_balance': avg_value,  # Frontend expects this
                     'ltv_tier': seg_data.get('ltv_tier', 'Bronze'),
                     'characteristics': seg_data.get('characteristics', {}),
                     'revenue_metrics': seg_data.get('revenue_metrics', {}),
@@ -200,8 +350,9 @@ class AgentA_Banking_Micro:
             features['transaction_velocity'] = 0.5
         
         # 5. Account Age (tenure normalized)
-        if 'tenure_months' in customers_df.columns:
-            tenure = customers_df['tenure_months']
+        tenure_col = 'months_since_relationship_started' if 'months_since_relationship_started' in customers_df.columns else 'tenure_months'
+        if tenure_col in customers_df.columns:
+            tenure = customers_df[tenure_col]
             features['account_maturity'] = (tenure - tenure.min()) / (tenure.max() - tenure.min() + 1e-6)
         else:
             features['account_maturity'] = 0.5
@@ -215,49 +366,54 @@ class AgentA_Banking_Micro:
         return features
     
     def _cluster_micro_segments(
-        self, 
-        features_df: pd.DataFrame, 
-        n_clusters: int
+        self,
+        features_df: pd.DataFrame,
+        n_clusters: int,
+        feature_names: list = None,
     ) -> np.ndarray:
         """
-        Perform K-Means clustering on micro features
-        
-        Args:
-            features_df: Features for clustering
-            n_clusters: Number of micro segments
-            
-        Returns:
-            Array of cluster assignments
+        Perform K-Means clustering on a specific subset of micro features.
+
+        feature_names selects which columns to cluster on.  After fitting,
+        self._last_cluster_feature_profiles stores a High/Mid/Low profile
+        per cluster per feature — used downstream to generate meaningful names.
         """
-        # Select features for clustering
-        clustering_features = [
-            'digital_engagement',
-            'portfolio_depth',
-            'credit_utilization',
-            'transaction_velocity',
-            'account_maturity',
-            'cross_sell_receptivity'
+        all_features = [
+            'digital_engagement', 'portfolio_depth', 'credit_utilization',
+            'transaction_velocity', 'account_maturity', 'cross_sell_receptivity',
         ]
-        
-        X = features_df[clustering_features].values
-        
-        # Standardize features
+        if feature_names is None:
+            feature_names = all_features
+
+        X_raw = features_df[feature_names].values
+
         scaler = StandardScaler()
-        X_scaled = scaler.fit_transform(X)
-        
-        # K-Means clustering
+        X_scaled = scaler.fit_transform(X_raw)
+
         kmeans = KMeans(
             n_clusters=n_clusters,
             init='k-means++',
             n_init=10,
             max_iter=300,
-            random_state=42
+            random_state=42,
         )
-        
         clusters = kmeans.fit_predict(X_scaled)
-        
-        logger.info(f"K-Means clustering complete with inertia: {kmeans.inertia_:.2f}")
-        
+
+        # Store raw (unscaled) cluster means so naming code can label High/Mid/Low
+        self._last_cluster_feature_profiles: dict = {}
+        global_mean = X_raw.mean(axis=0)
+        global_std  = X_raw.std(axis=0) + 1e-8
+        for cid in range(n_clusters):
+            mask = clusters == cid
+            if mask.any():
+                cluster_mean = X_raw[mask].mean(axis=0)
+                profile = {}
+                for i, feat in enumerate(feature_names):
+                    z = (cluster_mean[i] - global_mean[i]) / global_std[i]
+                    profile[feat] = 'High' if z > 0.25 else 'Low' if z < -0.25 else 'Mid'
+                self._last_cluster_feature_profiles[cid] = profile
+
+        logger.info(f"K-Means complete (inertia {kmeans.inertia_:.1f}), features={feature_names}")
         return clusters
     
     def _generate_micro_profiles(
@@ -265,7 +421,9 @@ class AgentA_Banking_Micro:
         customers_df: pd.DataFrame,
         macro_segment_id: int,
         n_micro_segments: int,
-        macro_name: str = ""
+        macro_name: str = "",
+        primary_trait: str = "deposits",
+        selected_features: list = None,
     ) -> Dict:
         """
         Generate profiles for each micro segment - Banking specific
@@ -280,25 +438,52 @@ class AgentA_Banking_Micro:
             Dictionary of micro segment profiles
         """
         micro_segments = {}
-        used_names = set()
-        
+        # Seed with globally reserved names so no two micro segments across any macro share a name
+        used_names = set(self._global_used_names)
+
         for micro_id in range(n_micro_segments):
             micro_customers = customers_df[customers_df['micro_segment'] == micro_id]
             
             if len(micro_customers) == 0:
                 continue
             
-            # Calculate characteristics (fixed .get() issue)
+            # Calculate characteristics
+            def _col_mean(col, default):
+                return float(micro_customers[col].mean()) if col in micro_customers.columns else default
+
+            def _col_mode(col, default):
+                s = micro_customers[col] if col in micro_customers.columns else None
+                return s.mode()[0] if s is not None and len(s.mode()) > 0 else default
+
             characteristics = {
-                'avg_digital_engagement': float(micro_customers['digital_engagement_score'].mean() if 'digital_engagement_score' in micro_customers.columns else 0.5),
-                'avg_portfolio_depth': float(micro_customers['num_products'].mean() if 'num_products' in micro_customers.columns else 2),
-                'avg_credit_utilization': float(micro_customers['credit_utilization_ratio'].mean() if 'credit_utilization_ratio' in micro_customers.columns else 0.3),
-                'avg_transaction_velocity': float(micro_customers['transaction_volume_30d'].mean() if 'transaction_volume_30d' in micro_customers.columns else 5),
-                'avg_account_tenure': float(micro_customers['tenure_months'].mean() if 'tenure_months' in micro_customers.columns else 24),
-                'avg_cross_sell_score': float(micro_customers['cross_sell_receptivity'].mean() if 'cross_sell_receptivity' in micro_customers.columns else 0.5),
-                'avg_deposits': float(micro_customers['total_deposits'].mean() if 'total_deposits' in micro_customers.columns else 0),
-                'avg_income': float(micro_customers['income'].mean() if 'income' in micro_customers.columns else 50000)
+                'avg_digital_engagement':  _col_mean('digital_engagement_score', 0.5),
+                'avg_portfolio_depth':     _col_mean('num_products', 2),
+                'avg_credit_utilization':  _col_mean('credit_utilization_ratio', 0.3),
+                'avg_transaction_velocity': _col_mean('transaction_volume_30d', 5),
+                'avg_account_tenure': float(
+                    micro_customers['months_since_relationship_started'].mean()
+                    if 'months_since_relationship_started' in micro_customers.columns else (
+                        micro_customers['tenure_months'].mean()
+                        if 'tenure_months' in micro_customers.columns else 24
+                    )
+                ),
+                'avg_cross_sell_score':    _col_mean('cross_sell_receptivity', 0.5),
+                'avg_deposits':            _col_mean('total_deposits', 0),
+                'avg_income':              _col_mean('income', 50000),
+                'avg_credit_score':        _col_mean('credit_score', 650),
+                'avg_age':                 _col_mean('age', 40),
+                'dominant_life_stage':     _col_mode('life_stage', ''),
+                'dominant_risk_tolerance': _col_mode('risk_tolerance', 'Moderate'),
+                'dominant_financial_goal': _col_mode('financial_goal', ''),
+                'avg_churn_probability':   _col_mean('churn_probability', 0.15),
             }
+
+            # Attach the High/Mid/Low feature profile for this cluster so the
+            # naming function can build context-aware, non-repeating names.
+            fp = getattr(self, '_last_cluster_feature_profiles', {}).get(micro_id, {})
+            characteristics['_feature_profile'] = fp
+            characteristics['_split_features'] = selected_features or []
+            characteristics['_macro_primary_trait'] = primary_trait
             
             # Determine Value tier for segment
             avg_deposits = characteristics['avg_deposits']
@@ -311,23 +496,24 @@ class AgentA_Banking_Micro:
             else:
                 ltv_tier = 'Platinum'
             
-            # Generate UNIQUE micro segment name
-            # Use macro_name parameter or fallback to persona dict
+            # Generate UNIQUE micro segment name + description in one LLM call
             parent_name = macro_name if macro_name else self.macro_personas[macro_segment_id].get('short_name', f'Macro_{macro_segment_id}')
-            segment_name = self._generate_micro_segment_name(
+            segment_name, micro_description = self._generate_micro_segment_profile(
                 characteristics,
                 ltv_tier,
                 parent_name,
-                micro_id
+                micro_id,
+                used_names=used_names,
             )
-            
-            # STRICT: No numbers allowed - if duplicate, this is a critical error
+
             if segment_name in used_names:
-                # This should NEVER happen with our new naming logic
-                logger.error(f"CRITICAL: Duplicate micro segment name '{segment_name}'!")
-                # Add micro_id suffix as last resort (but this indicates a logic bug)
-                segment_name = f"{segment_name} (Micro-{chr(65 + micro_id)})"
-            
+                logger.warning(f"Micro name collision '{segment_name}' — regenerating with rule-based fallback")
+                fp   = characteristics.get('_feature_profile', {})
+                sf   = characteristics.get('_split_features', [])
+                ps   = _PARENT_SHORT_NAMES.get(macro_name, macro_name.split()[-1] if macro_name else 'Customer')
+                used_adj = {n.split()[0] for n in used_names if len(n.split()) >= 2}
+                segment_name = _build_micro_name(fp, sf, ps, used_adj)
+
             used_names.add(segment_name)
             
             logger.info(f"Generated micro segment: '{segment_name}' (LTV: {ltv_tier}, Size: {len(micro_customers)})")
@@ -344,6 +530,7 @@ class AgentA_Banking_Micro:
                 len(micro_customers),
                 avg_deposits_per_customer,
                 micro_id=micro_id,
+                description=micro_description,
             )
             
             micro_segments[micro_id] = {
@@ -364,90 +551,93 @@ class AgentA_Banking_Micro:
         
         return micro_segments
     
-    def _generate_micro_segment_name(
+    def _generate_micro_segment_profile(
         self,
         characteristics: Dict,
         ltv_tier: str,
         macro_name: str,
-        micro_id: int = 0
-    ) -> str:
+        micro_id: int = 0,
+        used_names: set = None,
+    ) -> tuple:
         """
-        Generate UNIQUE micro segment names dynamically
-        Works for ANY number of macro segments (3, 4, 5, 6, 7, etc.)
-        Each micro gets unique name by combining macro context + micro traits
+        Generate micro segment name + description in one LLM call.
+        Returns (name: str, description: str). Falls back to rule-based on failure.
+
+        The LLM receives:
+        - macro parent name (so names feel like sub-categories of that macro)
+        - feature profile (High/Mid/Low on each split dimension)
+        - globally used names (to prevent cross-macro repeats)
         """
-        digital = characteristics['avg_digital_engagement']
-        portfolio = characteristics['avg_portfolio_depth']
-        velocity = characteristics['avg_transaction_velocity']
-        deposits = characteristics['avg_deposits']
-        income = characteristics['avg_income']
-        
-        # Extract key words from macro name for context
-        macro_words = macro_name.split()
-        macro_key = macro_words[0] if macro_words else "Banking"
-        
-        # Define 4 dimension templates (one per micro_id)
-        # Each template creates unique names using macro context + characteristics
-        
-        if micro_id == 0:
-            # MICRO A: Value/Wealth Dimension
-            if deposits > 2000000:
-                descriptor = "Ultra-Premium"
-            elif deposits > 1000000:
-                descriptor = "High-Value"
-            elif deposits > 500000:
-                descriptor = "Affluent"
-            elif deposits > 200000:
-                descriptor = "Upper-Tier"
-            else:
-                descriptor = "Core"
-            name = f"{descriptor} {macro_key} Leaders"
-            
-        elif micro_id == 1:
-            # MICRO B: Activity/Engagement Dimension
-            if velocity > 1.5:
-                descriptor = "Hyperactive"
-            elif velocity > 1.0:
-                descriptor = "High-Activity"
-            elif velocity > 0.5:
-                descriptor = "Engaged"
-            else:
-                descriptor = "Stable"
-            name = f"{descriptor} {macro_key} Users"
-            
-        elif micro_id == 2:
-            # MICRO C: Product/Service Dimension
-            if portfolio >= 4:
-                descriptor = "Multi-Product"
-            elif portfolio >= 3:
-                descriptor = "Diversified"
-            elif portfolio >= 2:
-                descriptor = "Dual-Service"
-            else:
-                descriptor = "Focused"
-            name = f"{descriptor} {macro_key} Customers"
-            
-        else:  # micro_id == 3
-            # MICRO D: Income/Digital Dimension
-            if income > 150000 and digital > 0.6:
-                descriptor = "Premium Digital"
-            elif income > 100000:
-                descriptor = "High-Income"
-            elif income > 70000:
-                descriptor = "Upper-Income"
-            elif digital > 0.6:
-                descriptor = "Tech-Enabled"
-            else:
-                descriptor = "Traditional"
-            name = f"{descriptor} {macro_key} Segment"
-        
-        # Result: "Descriptor MacroKey Type (Tier)"
-        # Examples:
-        #   "Ultra-Premium Savers Leaders (Platinum)"
-        #   "Hyperactive Earners Users (Gold)"
-        #   "Multi-Product Natives Customers (Silver)"
-        #   "Premium Digital Members Segment (Platinum)"
-        return f"{name} ({ltv_tier})"
+        feature_profile = characteristics.get('_feature_profile', {})
+        split_features  = characteristics.get('_split_features', [])
+        macro_trait     = characteristics.get('_macro_primary_trait', 'deposits')
+
+        # ── Build split-dimension context for LLM ──
+        dim_parts = []
+        for f in split_features:
+            direction = feature_profile.get(f, 'Mid')
+            if direction != 'Mid':
+                label = _FEATURE_LABELS.get(f, f)
+                dim_parts.append(f"{label} is {direction.lower()}")
+        split_context = '; '.join(dim_parts) if dim_parts else 'no strong differentiator'
+
+        # ── Short parent label (used in fallback AND passed to LLM as format hint) ──
+        parent_short = _PARENT_SHORT_NAMES.get(macro_name, macro_name.split()[-1] if macro_name else 'Customer')
+
+        if CLAUDE_AVAILABLE and get_claude_client:
+            try:
+                client = get_claude_client()
+                if client.is_available():
+                    stats_for_llm = {
+                        'avg_income':              characteristics.get('avg_income', 0),
+                        'avg_credit_score':        characteristics.get('avg_credit_score', 650),
+                        'avg_deposits':            characteristics.get('avg_deposits', 0),
+                        'avg_digital_engagement':  characteristics.get('avg_digital_engagement', 0.5),
+                        'avg_products':            characteristics.get('avg_portfolio_depth', 2.0),
+                        'avg_transactions':        characteristics.get('avg_transaction_velocity', 5),
+                        'avg_age':                 characteristics.get('avg_age', 40),
+                        'dominant_life_stage':     characteristics.get('dominant_life_stage', ''),
+                        'dominant_risk_tolerance': characteristics.get('dominant_risk_tolerance', 'Moderate'),
+                        'dominant_financial_goal': characteristics.get('dominant_financial_goal', ''),
+                        'avg_churn_probability':   characteristics.get('avg_churn_probability', 0.15),
+                        'primary_trait':           macro_trait,
+                        'macro_parent':            macro_name,
+                        'parent_short':            parent_short,
+                        'split_dimensions':        split_context,
+                        'feature_profile':         feature_profile,
+                    }
+                    result = client.generate_segment_profile(
+                        stats_for_llm,
+                        used_names=list(used_names) if used_names else [],
+                        segment_type="micro",
+                    )
+                    llm_name = result.get('name', '').strip()
+                    llm_desc = result.get('description', '').strip()
+                    if llm_name and llm_desc and llm_name not in (used_names or set()):
+                        return llm_name, llm_desc
+                    elif llm_name and llm_desc:
+                        # LLM returned a duplicate — fall through to rule-based naming
+                        # which tracks used adjectives and always produces a unique name
+                        logger.warning(f"LLM micro name collision '{llm_name}', using rule-based fallback")
+            except Exception as e:
+                logger.warning(f"Claude micro profile failed: {e}")
+
+        # ── Fallback: rule-based name + simple description ──
+        used_adjectives = {n.split()[0] for n in (used_names or []) if len(n.split()) >= 2}
+        segment_name = _build_micro_name(feature_profile, split_features, parent_short, used_adjectives)
+        deposits  = characteristics.get('avg_deposits', 0)
+        digital   = characteristics.get('avg_digital_engagement', 0.5)
+        portfolio = characteristics.get('avg_portfolio_depth', 2.0)
+        desc = (
+            f"Customers with {split_context}. "
+            f"Avg savings ${deposits:,.0f}, {digital*100:.0f}% digital usage, {portfolio:.1f} products held."
+        )
+        return segment_name, desc
+
+    def _generate_micro_segment_name(self, characteristics, ltv_tier, macro_name, micro_id=0, used_names=None) -> str:
+        """Backward-compat wrapper — returns name only."""
+        name, _ = self._generate_micro_segment_profile(characteristics, ltv_tier, macro_name, micro_id, used_names)
+        return name
     
     def _generate_name_explanation(
         self,
@@ -540,10 +730,11 @@ class AgentA_Banking_Micro:
         segment_size: int,
         avg_customer_value: float,
         micro_id: int = 0,
+        description: str = '',
     ) -> Dict:
         """
-        Generate COMPLETELY UNIQUE insights for each micro segment
-        Uses segment name + characteristics to ensure NO TWO micros have same insights
+        Generate COMPLETELY UNIQUE insights for each micro segment.
+        `description` is the LLM-generated narrative (name + key facts in one paragraph).
         """
         digital_engagement = characteristics['avg_digital_engagement']
         portfolio_depth = characteristics['avg_portfolio_depth']
@@ -701,12 +892,13 @@ class AgentA_Banking_Micro:
         )
         
         return {
-            'name_explanation': name_explanation,  # NEW: Explains why this name
+            'description': description,            # LLM-generated narrative paragraph
+            'name_explanation': name_explanation,
             'segment_definition': segment_def_text,
-            'key_behaviors': key_behaviors[:4],  # Top 4
+            'key_behaviors': key_behaviors[:4],
             'marketing_recommendations': recommendations,
             'segment_size': segment_size,
-            'avg_customer_value': avg_customer_value
+            'avg_customer_value': avg_customer_value,
         }
     def _get_top_customers(self, customers_df: pd.DataFrame, n: int = 5) -> List[Dict]:
         """

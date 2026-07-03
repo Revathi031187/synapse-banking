@@ -1,4 +1,4 @@
-import React, { useEffect } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { Play, Users, TrendingUp, BarChart3, AlertCircle, CheckCircle2, Download, DollarSign, Sparkles, ArrowRight } from 'lucide-react';
@@ -37,19 +37,16 @@ export default function BankingAgentA() {
   const queryClient = useQueryClient();
   const [ui, setUi] = useSessionStorageState(AGENT_A_UI_KEY, DEFAULT_AGENT_A_UI);
   const { nClusters, gamma, resultsEnabled } = ui;
+  const [pollingStatus, setPollingStatus] = useState<'idle' | 'running' | 'complete' | 'failed'>('idle');
+  const [pollingProgress, setPollingProgress] = useState(0);
+  const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
-  // Check for cached results on mount
+  // Reset on every mount — user must explicitly run segmentation; never replay stale session data.
   useEffect(() => {
-    const checkCache = () => {
-      const cachedResults = queryClient.getQueryData(['banking-agent-a-results']);
-      if (cachedResults) {
-        setUi((prev) => ({ ...prev, resultsEnabled: true }));
-      }
-    };
-    checkCache();
-    const timeout = setTimeout(checkCache, 100);
-    return () => clearTimeout(timeout);
-  }, [queryClient]);
+    setUi((prev) => ({ ...prev, resultsEnabled: false }));
+    queryClient.removeQueries({ queryKey: ['banking-agent-a-results'] });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   // Mutation to execute Agent A
   const executeMutation = useMutation({
@@ -65,21 +62,45 @@ export default function BankingAgentA() {
       }
       return response.json();
     },
-    onSuccess: async (data) => {
-      setUi((prev) => ({ ...prev, resultsEnabled: true }));
-      
-      try {
-        const response = await fetch(`${API_BASE_URL}/api/banking/agent_a/results`);
-        if (response.ok) {
-          const resultsData = await response.json();
-          const results = resultsData.results || resultsData;
-          queryClient.setQueryData(['banking-agent-a-results'], results);
+    onSuccess: () => {
+      setPollingStatus('running');
+      setPollingProgress(0);
+
+      if (pollRef.current) clearInterval(pollRef.current);
+
+      pollRef.current = setInterval(async () => {
+        try {
+          const statusRes = await fetch(`${API_BASE_URL}/api/banking/agent_a/status`);
+          if (!statusRes.ok) return;
+          const statusData = await statusRes.json();
+
+          setPollingProgress(Math.round((statusData.progress ?? 0) * 100));
+
+          if (statusData.status === 'complete') {
+            clearInterval(pollRef.current!);
+            pollRef.current = null;
+            // Fetch and commit results BEFORE clearing the loading state to avoid
+            // a flash of the empty panel between spinner and results.
+            const resultsRes = await fetch(`${API_BASE_URL}/api/banking/agent_a/results`);
+            if (resultsRes.ok) {
+              const resultsData = await resultsRes.json();
+              queryClient.setQueryData(['banking-agent-a-results'], resultsData.results || resultsData);
+              setUi((prev) => ({ ...prev, resultsEnabled: true }));
+            }
+            setPollingStatus('complete');
+          } else if (statusData.status === 'failed') {
+            clearInterval(pollRef.current!);
+            pollRef.current = null;
+            setPollingStatus('failed');
+          }
+        } catch {
+          /* network blip — keep polling */
         }
-      } catch (error) {
-        console.error('Error fetching results:', error);
-      }
+      }, 2000);
     }
   });
+
+  useEffect(() => () => { if (pollRef.current) clearInterval(pollRef.current); }, []);
 
   // Query to get results
   const resultsQuery = useQuery({
@@ -102,7 +123,7 @@ export default function BankingAgentA() {
   });
 
   const results = resultsQuery.data;
-  const isLoading = executeMutation.isPending || resultsQuery.isLoading;
+  const isLoading = executeMutation.isPending || pollingStatus === 'running' || resultsQuery.isLoading;
   const personas = results?.personas || {};
   const vizData = results?.visualization_data || {};
 
@@ -197,7 +218,7 @@ export default function BankingAgentA() {
           {isLoading ? (
             <>
               <div className="animate-spin rounded-full h-5 w-5 border-b-2 border-white"></div>
-              <span>Running Segmentation...</span>
+              <span>{pollingStatus === 'running' ? `Segmenting... ${pollingProgress}%` : 'Starting...'}</span>
             </>
           ) : (
             <>
@@ -206,6 +227,15 @@ export default function BankingAgentA() {
             </>
           )}
         </button>
+
+        {pollingStatus === 'failed' && (
+          <div className="mt-4 bg-red-50 border border-red-200 rounded-lg p-4">
+            <div className="flex items-center gap-2 text-red-800">
+              <AlertCircle className="w-5 h-5" />
+              <span className="font-semibold">Segmentation failed — check server logs</span>
+            </div>
+          </div>
+        )}
 
         {executeMutation.isError && (
           <div className="mt-4 bg-red-50 border border-red-200 rounded-lg p-4">
@@ -343,10 +373,10 @@ export default function BankingAgentA() {
 
                   <div className="space-y-3">
                     <div className="flex justify-between items-center">
-                      <span className="text-sm text-gray-600">Avg Balance</span>
+                      <span className="text-sm text-gray-600">Avg Annual Balance</span>
                       <span className="font-semibold text-blue-700 flex items-center gap-1">
                         <DollarSign className="w-4 h-4" />
-                        {formatCompactUsd(persona.avg_balance)}
+                        {formatCompactUsd(persona.avg_annual_balance)}
                       </span>
                     </div>
                     

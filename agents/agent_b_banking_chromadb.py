@@ -18,6 +18,13 @@ from agents.banking_12_factor_scorer import Banking12FactorScorer
 
 logger = logging.getLogger(__name__)
 
+try:
+    from utils.claude_client import get_claude_client
+    CLAUDE_AVAILABLE = True
+except ImportError:
+    CLAUDE_AVAILABLE = False
+    get_claude_client = None
+
 
 class AgentB_Banking:
     """
@@ -55,38 +62,46 @@ class AgentB_Banking:
         Args:
             dataset_version: 'v1' or 'v2' dataset version
         """
+        print(f"[Agent B] load_data() starting — path={self.data_path}", flush=True)
         try:
             # Load banking data (no v2 for now, just use v1)
             products_path = self.data_path / 'products.csv'
             customers_path = self.data_path / 'customers.csv'
             transactions_path = self.data_path / 'transactions.csv'
-            
+
             self.products_df = pd.read_csv(products_path)
-            logger.info(f"✅ Loaded {len(self.products_df)} banking products from {products_path.name}")
-            
+            logger.info(f"Loaded {len(self.products_df)} banking products from {products_path.name}")
+            print(f"[Agent B] products loaded: {len(self.products_df)}", flush=True)
+
             if len(self.products_df) == 0:
-                logger.error("❌ Products dataframe is empty!")
+                logger.error("Products dataframe is empty!")
                 return False
-            
+
             # Load customer and transaction data for customer-specific recommendations
             if customers_path.exists():
                 self.customers_df = pd.read_csv(customers_path)
-                logger.info(f"✅ Loaded {len(self.customers_df)} customers from {customers_path.name}")
-            
+                _col_aliases = {
+                    'total_deposit_value':       'total_deposits',
+                    'avg_daily_balance_p30days': 'avg_daily_balance',
+                    'customer_type':             'customer_segment',
+                    'credit_score_trend_p6mo':   'credit_score_trend',
+                }
+                for new_col, old_col in _col_aliases.items():
+                    if new_col in self.customers_df.columns and old_col not in self.customers_df.columns:
+                        self.customers_df[old_col] = self.customers_df[new_col]
+                logger.info(f"Loaded {len(self.customers_df)} customers from {customers_path.name}")
+
             if transactions_path.exists():
                 self.transactions_df = pd.read_csv(transactions_path)
-                logger.info(f"✅ Loaded {len(self.transactions_df)} transactions from {transactions_path.name}")
+                logger.info(f"Loaded {len(self.transactions_df)} transactions from {transactions_path.name}")
             else:
-                logger.info("ℹ️  No transactions.csv found")
+                logger.info("No transactions.csv found")
             
             # Initialize Banking 12-Factor Scorer
-            print("\n" + "="*80)
-            print("🔍 INITIALIZING BANKING 12-FACTOR SCORER")
-            print("="*80)
-            print(f"customers_df exists: {self.customers_df is not None}")
-            print(f"transactions_df exists: {self.transactions_df is not None}")
+            logger.info("Initializing Banking 12-Factor Scorer ...")
+            logger.info(f"  customers_df: {len(self.customers_df)} rows" if self.customers_df is not None else "  customers_df: None")
+            logger.info(f"  transactions_df: {len(self.transactions_df)} rows" if self.transactions_df is not None else "  transactions_df: None")
             if self.customers_df is not None and self.transactions_df is not None:
-                print("✅ Attempting to initialize...")
                 try:
                     # Prefer Agent A's clustered customers + transactions so segment popularity / pairing match the live session
                     scorer_customers = self.customers_df
@@ -108,22 +123,24 @@ class AgentB_Banking:
                         transactions_df=scorer_txn,
                         personas=personas_for or {},
                     )
-                    print("✅✅✅ BANKING 12-FACTOR SCORER INITIALIZED! ✅✅✅")
-                    logger.info(f"✅ Initialized Banking 12-Factor Scorer")
+                    logger.info("Banking 12-Factor Scorer initialized successfully")
                 except Exception as e:
-                    print(f"❌ INIT FAILED: {e}")
+                    logger.error(f"12-factor scorer init failed: {e}")
                     import traceback
-                    traceback.print_exc()
+                    logger.error(traceback.format_exc())
                     self.enhanced_scorer = None
             else:
                 self.enhanced_scorer = None
-                print("❌ Cannot initialize - missing data")
-                logger.warning("⚠️ Cannot initialize 12-factor scorer (missing customer/transaction data)")
-            print("="*80 + "\n")
+                logger.warning("Cannot initialize 12-factor scorer: missing customer/transaction data")
             
+            print(f"[Agent B] load_data() SUCCESS", flush=True)
             return True
         except Exception as e:
-            logger.error(f"Error loading data: {e}")
+            import traceback
+            logger.error(f"Agent B load_data failed: {e}")
+            logger.error(traceback.format_exc())
+            print(f"[Agent B] load_data ERROR: {e}", flush=True)
+            traceback.print_exc()
             return False
     
     def execute(self, params: Dict) -> Dict:
@@ -135,7 +152,7 @@ class AgentB_Banking:
                 - customer_id: Optional customer ID (will auto-detect persona)
                 - persona: Persona ID or name (required if no customer_id)
                 - search_query: Optional search filter
-                - category: Optional category filter (Personal/Business/Agricultural)
+                - category: Optional category filter (Bank Account/Certificate of Deposit/Credit Card/Loan/Mortgage/Investment)
                 - top_n: Number of recommendations (default: 10)
                 - explain: Whether to include explanations (default: True)
                 - dataset_version: 'v1' or 'v2' (default: 'v1')
@@ -165,6 +182,7 @@ class AgentB_Banking:
         if customer_id:
             customer_info = self._get_customer_info(customer_id)
             if customer_info:
+                self._last_customer_info = customer_info  # cache for LLM rationale
                 # Use customer's actual persona
                 if self.agent_a and hasattr(self.agent_a, 'customers_df') and self.agent_a.customers_df is not None:
                     # Get persona from Agent A's clustering results
@@ -197,26 +215,42 @@ class AgentB_Banking:
             # Segment-based recommendation - create synthetic customer from persona
             customer_segment, min_credit, max_fee, tier_name = self._calculate_segment_eligibility_range(persona_name)
         
-        # When user explicitly selects a product segment in the Category dropdown, use it for filtering
-        # This ensures "Agricultural Banking" returns only Agricultural products, not Personal
-        PRODUCT_SEGMENTS = ('Personal', 'Business', 'Agricultural')
-        if category and str(category).strip() in PRODUCT_SEGMENTS:
-            customer_segment = str(category).strip()
-            logger.info(f"📌 Using Category filter as segment: {customer_segment} (only {customer_segment} products will be recommended)")
-        
-        logger.info(f"💎 {'Customer' if customer_info else 'Segment'} tier: {tier_name} | Segment: {customer_segment}")
-        
-        # Filter products by segment, category, and eligibility
+        PRODUCT_TYPES = ('Bank Account', 'Certificate of Deposit', 'Credit Card', 'Loan', 'Mortgage', 'Investment')
+        if category and str(category).strip() in PRODUCT_TYPES:
+            logger.info(f"📌 Category filter: {category} (only {category} products will be recommended)")
+
+        logger.info(f"💎 {'Customer' if customer_info else 'Segment'} tier: {tier_name}")
+
+        # Build owned-product set for this customer so we never recommend what they already hold
+        owned_product_ids: set = set()
+        if customer_id and self.transactions_df is not None and 'product_id' in self.transactions_df.columns:
+            cid_str = str(customer_id).strip()
+            cid_col = self.transactions_df['customer_id'].astype(str).str.strip()
+            owned_product_ids = set(self.transactions_df.loc[cid_col == cid_str, 'product_id'].unique())
+            if owned_product_ids:
+                logger.info(f"🚫 Excluding {len(owned_product_ids)} already-owned products for {customer_id}")
+
+        # Filter products by segment, age, category, and eligibility
         filtered_products = self._filter_products(
-            search_query, category, customer_segment, min_credit, max_fee
+            search_query, category, min_credit, max_fee,
+            target_segment=customer_segment,
+            customer_info=customer_info
         )
-        
+
+        # Remove products the customer already owns
+        if owned_product_ids:
+            before_own = len(filtered_products)
+            filtered_products = [p for p in filtered_products if p.get('product_id') not in owned_product_ids]
+            logger.info(f"✂️ Ownership filter: {before_own} → {len(filtered_products)} products")
+
         if len(filtered_products) == 0:
             logger.warning(f"⚠️ No products found. Relaxing constraints...")
-            # Fallback: relax eligibility constraints
+            # Fallback: relax eligibility constraints (still exclude owned)
             filtered_products = self._filter_products(
-                search_query, category, customer_segment, min_credit - 100, max_fee * 2
+                search_query, category, min_credit - 100, max_fee * 2
             )
+            if owned_product_ids:
+                filtered_products = [p for p in filtered_products if p.get('product_id') not in owned_product_ids]
         
         if len(filtered_products) == 0:
             return {
@@ -267,7 +301,8 @@ class AgentB_Banking:
         insights = self._generate_insights(persona_name, in_stock_recs[:effective_top_n])
         
         # Prepare response: return only up to effective_top_n (never more than segment size)
-        return {
+        returned_count = len(in_stock_recs[:effective_top_n])
+        result = {
             'status': 'success',
             'persona': persona_name,
             'persona_id': persona_id,
@@ -276,8 +311,16 @@ class AgentB_Banking:
             'total_products_considered': len(filtered_products),
             'recommendations': in_stock_recs[:effective_top_n],
             'out_of_stock_recommendations': out_of_stock_recs[:effective_top_n],
-            'insights': insights
+            'insights': insights,
+            'returned_count': returned_count,
+            'requested_count': top_n,
         }
+        if effective_top_n < top_n:
+            result['count_note'] = (
+                f"Showing {returned_count} of {top_n} requested — only {len(filtered_products)} products "
+                f"available for this customer's segment/filters."
+            )
+        return result
     
     # Fallback: persona ID -> name when Agent A personas not available or key mismatch
     BANKING_PERSONA_ID_MAP = {
@@ -333,27 +376,19 @@ class AgentB_Banking:
         # WEALTH/PREMIUM SEGMENTS - High balance requirements (includes "Wealth Investors")
         if any(word in persona_lower for word in ['wealth', 'investor', 'premium', 'affluent', 'platinum', 'elite', 'private']):
             return ('Personal', 750, 500, "Premium")  # Min credit 750, max fee $500
-        
-        # BUSINESS SEGMENTS
-        elif any(word in persona_lower for word in ['business', 'commercial', 'entrepreneur', 'owner']):
-            return ('Business', 700, 300, "Business")  # Min credit 700, max fee $300
-        
-        # AGRICULTURAL SEGMENTS
-        elif any(word in persona_lower for word in ['agricultural', 'farm', 'rural', 'grower']):
-            return ('Agricultural', 680, 200, "Agricultural")  # Min credit 680, max fee $200
-        
+
         # HOUSEHOLD SAVERS (check before traditional so "Household Savers" gets Mainstream)
         elif any(word in persona_lower for word in ['household']):
             return ('Personal', 680, 150, "Mainstream")  # Min credit 680, max fee $150
-        
+
         # TRADITIONAL/ESTABLISHED SEGMENTS (includes "Traditional Savers")
         elif any(word in persona_lower for word in ['traditional', 'established', 'loyal', 'long-term', 'saver']):
             return ('Personal', 700, 200, "Traditional")  # Min credit 700, max fee $200
-        
+
         # YOUNG PROFESSIONALS / DIGITAL NATIVES
         elif any(word in persona_lower for word in ['young', 'professional', 'millennial', 'starter', 'digital', 'native']):
             return ('Personal', 650, 100, "Young")  # Min credit 650, max fee $100
-        
+
         # DEFAULT - Mainstream personal banking
         else:
             logger.info(f"Segment '{persona_name}' mapped to default Mainstream range")
@@ -390,88 +425,172 @@ class AgentB_Banking:
             return (credit_score - 50, 50, "Bronze")
         else:
             return (credit_score - 50, 25, "Entry")
-    
-    def _filter_products(self, search_query: str, category: str = None, customer_segment: str = 'Personal', 
-                        min_credit: float = 0, max_fee: float = 999999) -> List[Dict]:
+
+    _LOAN_SUBCATEGORIES = {
+        'Auto', 'Personal Loan', 'Home Equity', 'HELOC',
+        'Mortgage', 'Agricultural Loan', 'Business Loan'
+    }
+
+    def _revenue_products_df(self) -> pd.DataFrame:
+        """Return products filtered to revenue-generating products only.
+
+        Excludes products where all direct revenue fields (annual_fee, monthly_fee,
+        min_balance, regular_apr_pct, aum_fee_pct) are zero AND the subcategory is
+        not a loan type. This removes entry-level free checking/savings (e.g.
+        Essential Checking, Basic Savings) that generate no direct bank revenue.
+
+        Note: interest_rate alone is not used as the revenue flag because savings/CD
+        products store APY (bank cost) in that column; only loan subcategories store
+        a revenue-generating rate there.
         """
-        Filter products based on search query, category, segment, and eligibility
-        
+        df = self.products_df
+        is_loan = df.get('subcategory', pd.Series('', index=df.index)).isin(self._LOAN_SUBCATEGORIES)
+        rev_mask = (
+            (df.get('annual_fee',      pd.Series(0, index=df.index)).fillna(0).astype(float) > 0) |
+            (df.get('monthly_fee',     pd.Series(0, index=df.index)).fillna(0).astype(float) > 0) |
+            (df.get('min_balance',     pd.Series(0, index=df.index)).fillna(0).astype(float) > 0) |
+            (df.get('regular_apr_pct', pd.Series(0, index=df.index)).fillna(0).astype(float) > 0) |
+            (df.get('aum_fee_pct',     pd.Series(0, index=df.index)).fillna(0).astype(float) > 0) |
+            (is_loan & (df.get('interest_rate', pd.Series(0, index=df.index)).fillna(0).astype(float) > 0))
+        )
+        return df[rev_mask]
+
+    def _filter_products(self, search_query: str, category: str = None,
+                        min_credit: float = 0, max_fee: float = 999999,
+                        target_segment: str = None,
+                        customer_info: Dict = None) -> List[Dict]:
+        """
+        Filter products based on search query, category type, and eligibility.
+
         Args:
             search_query: Search text
-            category: Category filter
-            customer_segment: Personal/Business/Agricultural
+            category: Product type filter (Bank Account/Certificate of Deposit/Credit Card/Loan/Mortgage/Investment)
+                      or subcategory keyword
             min_credit: Minimum credit score customer has
             max_fee: Maximum fee customer can afford
-            
+            target_segment: Customer segment ('Personal', 'Business', 'Agricultural'); filters to matching products
+
         Returns:
             List of filtered product dictionaries
         """
-        df = self.products_df.copy()
-        
-        # Segment filter: only recommend products that belong to this segment (e.g. Agricultural → 5 products)
-        if 'category' in df.columns and customer_segment:
-            segment_products = df[df['category'].astype(str).str.strip().str.lower() == str(customer_segment).strip().lower()]
-            if len(segment_products) > 0:
-                df = segment_products
-                logger.info(f"🏦 Filtered to {customer_segment} segment: {len(df)} products")
+        PRODUCT_TYPES = ('Bank Account', 'Certificate of Deposit', 'Credit Card', 'Loan', 'Mortgage', 'Investment')
+        df = self._revenue_products_df().copy()
+        logger.info(f"💵 Revenue gate: {len(self.products_df)} total → {len(df)} revenue-generating products")
+
+        # Filter by target segment to avoid recommending Business/Agricultural products to Personal customers
+        if target_segment and 'target_segment' in df.columns:
+            before_seg = len(df)
+            df_seg = df[df['target_segment'].astype(str).str.strip() == target_segment]
+            if len(df_seg) > 0:
+                df = df_seg
+                logger.info(f"🎯 Segment filter ('{target_segment}'): {before_seg} → {len(df)} products")
             else:
-                # Try exact match in case of case mismatch
-                segment_products = df[df['category'] == customer_segment]
-                if len(segment_products) > 0:
-                    df = segment_products
-                    logger.info(f"🏦 Filtered to {customer_segment} segment: {len(df)} products")
+                logger.warning(f"⚠️ No products for segment '{target_segment}', keeping all revenue products")
+
+        # Snapshot the fully-gated pool so fallbacks never escape revenue/segment restrictions
+        _base_pool = df.copy()
+
+        # Age-based hard exclusions — remove products unsuitable for the customer's life stage
+        if customer_info:
+            _age = float(customer_info.get('age', 0) or 0)
+            if _age >= 70:
+                df = df[~(
+                    (df['subcategory'].astype(str) == 'Mortgage') &
+                    (df['product_name'].astype(str).str.contains('30yr|30-yr|30 yr', case=False, na=False))
+                )]
+                logger.info(f"🚫 Age {_age:.0f}: excluded 30-yr mortgage")
+            _ctype_excl = str(customer_info.get('customer_type', '') or '')
+            if _age < 30 or _ctype_excl in ('Digital_Native', 'Retiree'):
+                df = df[~df['subcategory'].astype(str).isin(['Home Equity', 'HELOC'])]
+                logger.info(f"🚫 {_ctype_excl}: excluded Home Equity/HELOC")
+            # Exclude secured/credit-builder cards for customers who qualify for unsecured cards
+            _cs = float(customer_info.get('credit_score', 0) or 0)
+            if _cs >= 670:
+                df = df[~(
+                    (df['subcategory'].astype(str) == 'Credit') &
+                    (df['product_name'].astype(str).str.contains('Secured', case=False, na=False))
+                )]
+                logger.info(f"🚫 Credit {_cs:.0f}: excluded Secured Card (qualifies for unsecured cards)")
+            # FHA Mortgage: exclude for High-Net-Worth, Retiree, and Digital_Native
+            # Retirees/HNW don't need entry-level govt-backed mortgages
+            # Digital_Native (young, mobile-first) profile: Roth IRA / savings products are more appropriate
+            if _ctype_excl in ('High_Net_Worth', 'Retiree', 'Digital_Native'):
+                df = df[~(df['product_name'].astype(str).str.contains('FHA', case=False, na=False))]
+                logger.info(f"🚫 {_ctype_excl}: excluded FHA Mortgage")
+            if len(df) == 0:
+                df = _base_pool.copy()
+            # Homeowner filter — renters cannot take out home equity products
+            _home_own = str(customer_info.get('home_ownership_type', '') or '').lower()
+            if _home_own == 'renter':
+                before_home = len(df)
+                df = df[~df['subcategory'].astype(str).isin(['Home Equity', 'HELOC'])]
+                if len(df) < before_home:
+                    logger.info(f"🏠 Renter: excluded Home Equity/HELOC ({before_home} → {len(df)} products)")
+            if len(df) == 0:
+                df = _base_pool.copy()
+            _base_pool = df.copy()   # update base pool so fallbacks also respect age/credit exclusions
+
+        # Filter by product type or subcategory keyword
+        if category and str(category).strip():
+            cat_val = str(category).strip()
+            if cat_val in PRODUCT_TYPES:
+                before_cat = len(df)
+                df_filtered = df[df['category'].astype(str).str.strip() == cat_val]
+                if len(df_filtered) > 0:
+                    df = df_filtered
+                    logger.info(f"📂 Category filter ('{cat_val}'): {before_cat} → {len(df)} products")
                 else:
-                    logger.warning(f"⚠️ No products in '{customer_segment}' segment ({len(df)} total in catalog); showing all products")
-        
-        # Filter by eligibility - credit score (more lenient)
+                    logger.warning(f"⚠️ No products in category '{cat_val}', showing all products")
+            elif 'subcategory' in df.columns:
+                before_cat = len(df)
+                df_sub = df[df['subcategory'].astype(str).str.contains(cat_val, case=False, na=False)]
+                if len(df_sub) > 0:
+                    df = df_sub
+                    logger.info(f"📂 Subcategory filter ('{cat_val}'): {before_cat} → {len(df)} products")
+                else:
+                    logger.warning(f"⚠️ No products in subcategory '{cat_val}', showing all products")
+
+        # Filter by eligibility — credit score (50-point buffer)
         if 'min_credit_score' in df.columns:
             before_credit = len(df)
             df = df[
                 (df['min_credit_score'].isna()) |
-                (df['min_credit_score'] <= min_credit + 50)  # Generous 50-point buffer
+                (df['min_credit_score'] <= min_credit + 50)
             ]
-            after_credit = len(df)
-            logger.info(f"💳 Credit filter (>={min_credit-50}): {before_credit} → {after_credit} products")
-            
-            # If too restrictive, relax filter
+            logger.info(f"💳 Credit filter (>={min_credit-50}): {before_credit} → {len(df)} products")
             if len(df) == 0:
-                logger.warning(f"⚠️ Credit filter too strict, relaxing to segment only")
-                df = self.products_df.copy()
-                if 'category' in df.columns and customer_segment:
-                    seg_lower = str(customer_segment).strip().lower()
-                    df = df[df['category'].astype(str).str.strip().str.lower() == seg_lower]
-        
+                logger.warning("⚠️ Credit filter too strict, relaxing to category/subcategory only")
+                df = _base_pool.copy()
+                if category and str(category).strip():
+                    cat_val = str(category).strip()
+                    if cat_val in PRODUCT_TYPES:
+                        df_cat = df[df['category'].astype(str).str.strip() == cat_val]
+                        if len(df_cat) > 0:
+                            df = df_cat
+                    elif 'subcategory' in df.columns:
+                        df_sub = df[df['subcategory'].astype(str).str.contains(cat_val, case=False, na=False)]
+                        if len(df_sub) > 0:
+                            df = df_sub
+
         # Filter by fee affordability (lenient)
+        # Secured Card is exempt — it's a credit-building product appropriate for Entry-tier customers
         if 'annual_fee' in df.columns:
             before_fee = len(df)
             df = df[
                 (df['annual_fee'].isna()) |
-                (df['annual_fee'] <= max_fee)
+                (df['annual_fee'] <= max_fee) |
+                (df['product_name'].astype(str).str.contains('Secured', case=False, na=False))
             ]
-            after_fee = len(df)
-            logger.info(f"💰 Fee filter (<=${max_fee}): {before_fee} → {after_fee} products")
-            
-            # If too restrictive, relax filter
+            logger.info(f"💰 Fee filter (<=${max_fee}): {before_fee} → {len(df)} products")
             if len(df) == 0:
-                logger.warning(f"⚠️ Fee filter too strict, relaxing to segment only")
-                df = self.products_df.copy()
-                if 'category' in df.columns and customer_segment:
-                    seg_lower = str(customer_segment).strip().lower()
-                    df = df[df['category'].astype(str).str.strip().str.lower() == seg_lower]
-        
-        # Filter by category: only as SUBcategory when it's not a product segment (Personal/Business/Agricultural)
-        # When category IS the segment we already filtered by it above; don't match subcategory to "Agricultural" (would return 0)
-        PRODUCT_SEGMENTS = ('Personal', 'Business', 'Agricultural')
-        if category and str(category).strip() not in PRODUCT_SEGMENTS and 'subcategory' in df.columns:
-            before_cat = len(df)
-            df_filtered = df[df['subcategory'].astype(str).str.contains(category, case=False, na=False)]
-            if len(df_filtered) > 0:
-                df = df_filtered
-                logger.info(f"📂 Subcategory filter ('{category}'): {before_cat} → {len(df)} products")
-            else:
-                logger.warning(f"⚠️ No products in subcategory '{category}', keeping segment products")
-        
-        # Filter by search query - with fallback
+                logger.warning("⚠️ Fee filter too strict, relaxing to category only")
+                df = _base_pool.copy()
+                if category and str(category).strip() in PRODUCT_TYPES:
+                    df_cat = df[df['category'].astype(str).str.strip() == str(category).strip()]
+                    if len(df_cat) > 0:
+                        df = df_cat
+
+        # Filter by search query — with fallback
         if search_query:
             before_search = len(df)
             mask = (
@@ -484,21 +603,13 @@ class AgentB_Banking:
                 df = df_filtered
                 logger.info(f"🔍 Search filter ('{search_query}'): {before_search} → {len(df)} products")
             else:
-                # BANKING OPTIMIZATION: If search returns 0, show top products instead
                 logger.warning(f"⚠️ Search '{search_query}' returned 0 products, showing all available products")
-        
-        # Final safety: never show other segments when user chose a segment (e.g. Agricultural)
+
+        # Final fallback: return base pool (revenue + segment gated) if all filters left nothing
         if len(df) == 0:
-            logger.warning(f"⚠️ Filters left 0 products. Re-applying segment '{customer_segment}' only (no fallback to other segments).")
-            df = self.products_df.copy()
-            if 'category' in df.columns and customer_segment:
-                seg_lower = str(customer_segment).strip().lower()
-                df = df[df['category'].astype(str).str.strip().str.lower() == seg_lower]
-            # Do NOT fall back to all products - return only segment products or empty
-            if len(df) == 0:
-                logger.warning(f"⚠️ No products in segment '{customer_segment}' in catalog. Returning empty.")
-        
-        # Convert to list of dictionaries
+            logger.warning("⚠️ All filters left 0 products. Returning base revenue+segment pool.")
+            df = _base_pool.copy()
+
         products = df.to_dict('records')
         logger.info(f"✅ Final product count for recommendations: {len(products)}")
         return products
@@ -528,9 +639,9 @@ class AgentB_Banking:
         if customer_info:
             customer_deposits = customer_info.get('total_deposits', 0)
         
-        print(f"\n🔍 Scoring {len(products)} banking products for {persona_name}...")
-        print(f"   enhanced_scorer: {self.enhanced_scorer is not None}")
-        print(f"   customer_info: {customer_info is not None}")
+        print(f"\n[Agent B] Scoring {len(products)} banking products for {persona_name}...", flush=True)
+        print(f"[Agent B]   enhanced_scorer: {self.enhanced_scorer is not None}", flush=True)
+        print(f"[Agent B]   customer_info: {customer_info is not None}", flush=True)
         
         for idx, product in enumerate(products):
             # Try to use Banking 12-Factor Scorer if available
@@ -542,7 +653,7 @@ class AgentB_Banking:
                     if not customer_info:
                         customer_info = self._create_synthetic_customer_from_persona(persona_name, tier_name)
                         if idx == 0:
-                            print(f"   ✅ Created synthetic customer for {persona_name}")
+                            print(f"[Agent B]   Created synthetic customer for {persona_name}", flush=True)
                     
                     # Get persona info for segment affinity
                     persona_info = None
@@ -558,18 +669,35 @@ class AgentB_Banking:
                     )
                     
                     score = detailed_breakdown['total_score']
-                    
+
+                    # High-revenue product boost: credit cards and loans surface higher
+                    # when the customer demonstrably qualifies (credit + income meet the product's
+                    # own minimums). This ensures Agent C receives these as top candidates.
+                    if customer_info:
+                        _subcat = str(product.get('subcategory', ''))
+                        _cs  = float(customer_info.get('credit_score', 0) or 0)
+                        _inc = float(customer_info.get('income', 0) or 0)
+                        _min_cr  = float(product.get('min_credit_score', 0) or 0)
+                        _min_inc = float(product.get('min_income', 0) or 0)
+                        _qualifies = (_cs >= _min_cr) and (_inc >= _min_inc)
+
+                        if _qualifies:
+                            if _subcat == 'Credit':
+                                score = min(score + 0.10, 1.0)
+                            elif _subcat in {'Auto', 'Personal Loan', 'Home Equity', 'HELOC', 'Mortgage'}:
+                                score = min(score + 0.08, 1.0)
+
                     # Log EVERY product score (not just first one!)
                     print(f"   Product {idx+1}/{len(products)}: {product.get('product_name', 'Unknown')[:30]} - Score: {score:.4f}")
-                    
+
                     # Generate comprehensive explanation from 12 factors
                     rec_text = f"Comprehensive match score based on banking 12 factors (see detailed calculation below)"
-                    logger.info(f"✅ Used banking 12-factor scorer for {product.get('product_name', 'unknown')}: {score:.3f}")
-                    
+                    logger.info(f"Used banking 12-factor scorer for {product.get('product_name', 'unknown')}: {score:.3f}")
+
                 except Exception as e:
                     if idx == 0:
-                        print(f"   ❌ Banking 12-factor scorer FAILED: {e}")
-                    logger.error(f"❌ Banking 12-factor scorer failed: {e}")
+                        print(f"[Agent B]   12-factor scorer FAILED: {e}", flush=True)
+                    logger.error(f"Banking 12-factor scorer failed: {e}")
                     import traceback
                     traceback.print_exc()
                     # Fallback to simple scoring
@@ -577,29 +705,41 @@ class AgentB_Banking:
                     rec_text = "Recommended banking product"
             else:
                 if idx == 0:
-                    print(f"   ⚠️ No enhanced scorer - using simple scoring")
+                    print(f"[Agent B]   No enhanced scorer - using simple scoring", flush=True)
                 # Simple fallback scoring
                 score = 0.7
                 rec_text = "Recommended for your financial profile"
             
             # Build recommendation object with explicit type conversions
             # CRITICAL: Convert numpy/pandas types to Python native types for JSON serialization
+            import math as _math
+            def _safe_float(v, default=0.0):
+                try:
+                    f = float(v)
+                    return default if (_math.isnan(f) or _math.isinf(f)) else f
+                except (TypeError, ValueError):
+                    return default
+
+            safe_score = _safe_float(score, 0.7)
             recommendation = {
                 'product_id': str(product.get('product_id', '')),
                 'product_name': str(product.get('product_name', '')),
                 'category': str(product.get('category', '')),
                 'subcategory': str(product.get('subcategory', '')),
-                'annual_fee': float(product.get('annual_fee', 0)) if product.get('annual_fee') is not None else 0.0,
-                'min_balance': float(product.get('min_balance', 0)) if product.get('min_balance') is not None else 0.0,
-                'interest_rate': float(product.get('interest_rate', 0)) if product.get('interest_rate') is not None else 0.0,
-                'interest_rate_apy': float(product.get('interest_rate_apy', product.get('interest_rate', 0))) if product.get('interest_rate_apy', product.get('interest_rate')) is not None else 0.0,
-                'score': round(float(score), 4),
-                'compatibility': round(float(score) * 100, 1),  # Convert to percentage
-                'match_level': self._get_match_level(score),
+                'customer_types': str(product.get('customer_types', '')),
+                'annual_fee': _safe_float(product.get('annual_fee', 0)),
+                'min_balance': _safe_float(product.get('min_balance', 0)),
+                'interest_rate': _safe_float(product.get('interest_rate', 0)),
+                'interest_rate_apy': _safe_float(
+                    product.get('interest_rate_apy', product.get('interest_rate', 0))
+                ),
+                'score': round(safe_score, 4),
+                'compatibility': round(safe_score * 100, 1),
+                'match_level': self._get_match_level(safe_score),
                 'recommendation_text': rec_text if explain else None,
-                'reason': rec_text if explain else None,  # Alias for compatibility
+                'reason': rec_text if explain else None,
                 'in_stock': bool(product.get('accepting_applications', True)),
-                'avg_rating': float(product.get('avg_rating', 4.5)) if product.get('avg_rating') is not None else 4.5,
+                'avg_rating': _safe_float(product.get('avg_rating', 4.5), 4.5),
                 'description': str(product.get('description', ''))
             }
             
@@ -616,18 +756,121 @@ class AgentB_Banking:
         recommendations.sort(key=lambda x: x['score'], reverse=True)
         
         # Wealth Investors: strong boost for premium (fee) products so they rank with free products
-        # 12-factor scorer already adds +0.12 to fee_score; post-ranking boost ensures fee products don't stay last
-        if persona_name and ('wealth' in (persona_name or '').lower() or 'investor' in (persona_name or '').lower()):
+        # Triggered by: High_Net_Worth customer_type OR persona name containing wealth keywords
+        # Deliberately NOT triggered by deposits/income alone — avoids boosting premium cards for Retirees
+        _is_wealth = bool(
+            customer_info and str(customer_info.get('customer_type', '') or '') == 'High_Net_Worth'
+        ) or bool(
+            persona_name and any(w in (persona_name or '').lower()
+                                 for w in ['wealth', 'investor', 'premium', 'affluent', 'wm'])
+        )
+        if _is_wealth:
             for r in recommendations:
                 if float(r.get('annual_fee', 0) or 0) > 0:
-                    r['score'] = round(r['score'] + 0.12, 4)  # +12% so premium products compete for top slots
+                    r['score'] = round(r['score'] + 0.12, 4)
                     r['compatibility'] = round(r['score'] * 100, 1)
             recommendations.sort(key=lambda x: x['score'], reverse=True)
             logger.info("   💎 Wealth Investor: applied 12% premium boost to fee products and re-ranked")
-        
+
+        # Customer-type affinity: boost products whose customer_types field matches this customer
+        # Uses the existing customer_types column in products.csv — no hardcoded persona rules needed
+        if customer_info:
+            _ctype = str(customer_info.get('customer_type', '') or '').strip()
+            if _ctype:
+                _affinity_applied = False
+                for r in recommendations:
+                    _ctypes_list = [c.strip() for c in str(r.get('customer_types', '') or '').split(',')]
+                    if _ctype in _ctypes_list:
+                        r['score'] = round(min(r['score'] + 0.10, 1.0), 4)
+                        r['compatibility'] = round(r['score'] * 100, 1)
+                        _affinity_applied = True
+                if _affinity_applied:
+                    recommendations.sort(key=lambda x: x['score'], reverse=True)
+                    logger.info(f"   🎯 Customer-type affinity (+10%) applied for '{_ctype}'")
+
+        # Inverse affinity: -5% when product has defined customer_types that exclude this customer's type
+        # Penalizes e.g. FHA Mortgage for Wealth Manager, Prestige Checking for Mass_Market
+        if customer_info:
+            _ctype = str(customer_info.get('customer_type', '') or '').strip()
+            if _ctype:
+                _penalty_applied = False
+                for r in recommendations:
+                    _ctypes_field = str(r.get('customer_types', '') or '').strip()
+                    if _ctypes_field:
+                        _ctypes_list = [c.strip() for c in _ctypes_field.split(',')]
+                        if _ctype not in _ctypes_list:
+                            r['score'] = round(max(r['score'] - 0.05, 0.0), 4)
+                            r['compatibility'] = round(r['score'] * 100, 1)
+                            _penalty_applied = True
+                if _penalty_applied:
+                    recommendations.sort(key=lambda x: x['score'], reverse=True)
+                    logger.info(f"   ⬇️ Inverse affinity penalty (-5%) applied for '{_ctype}' mismatches")
+
+        # Deprioritize investment/IRA products for very-low-credit customers who need credit building first
+        if customer_info:
+            _cs_rank = float(customer_info.get('credit_score', 0) or 0)
+            if _cs_rank < 580:
+                _inv_penalized = False
+                for r in recommendations:
+                    _sub = str(r.get('subcategory', '') or '')
+                    _pname_inv = str(r.get('product_name', '') or '').lower()
+                    if _sub in ('Investment', 'IRA', 'Retirement') or 'ira' in _pname_inv:
+                        r['score'] = round(max(r['score'] - 0.15, 0.0), 4)
+                        r['compatibility'] = round(r['score'] * 100, 1)
+                        _inv_penalized = True
+                if _inv_penalized:
+                    recommendations.sort(key=lambda x: x['score'], reverse=True)
+                    logger.info(f"   ⬇️ Investment/IRA products deprioritized for credit-building customer ({_cs_rank:.0f})")
+
+        # Retiree life-stage correction: savings/retirement products must rank above credit cards.
+        # The affinity system can over-boost credit cards if products.csv tags them with "Retiree".
+        # This post-affinity correction ensures IRA and CD products are always the top picks.
+        if customer_info:
+            _ctype_ret = str(customer_info.get('customer_type', '') or '').strip()
+            if _ctype_ret == 'Retiree':
+                _RETIREE_SAVE = {'CD', 'Investment', 'Savings'}  # covers CDs, IRAs (Investment), Money Market (Savings)
+                _ret_corrected = False
+                for r in recommendations:
+                    _rs = str(r.get('subcategory', '') or '')
+                    _rp = str(r.get('product_name', '') or '').lower()
+                    if _rs in _RETIREE_SAVE or 'money market' in _rp:
+                        r['score'] = round(min(r['score'] + 0.15, 1.0), 4)
+                        r['compatibility'] = round(r['score'] * 100, 1)
+                        _ret_corrected = True
+                    elif _rs == 'Credit':
+                        r['score'] = round(max(r['score'] - 0.10, 0.0), 4)
+                        r['compatibility'] = round(r['score'] * 100, 1)
+                        _ret_corrected = True
+                if _ret_corrected:
+                    recommendations.sort(key=lambda x: x['score'], reverse=True)
+                    logger.info("   📈 Retiree: boosted CD/IRA/Savings (+15%), penalized credit cards (-10%)")
+
+        # Category diversity: max 2 products per subcategory in top-N
+        # Prevents 5 CDs or 3 credit cards from dominating a retiree's recommendations
+        seen_subcats: Dict[str, int] = {}
+        diverse_recs = []
+        overflow = []
+        for r in recommendations:
+            subcat = str(r.get('subcategory', 'Other'))
+            if seen_subcats.get(subcat, 0) < 2:
+                seen_subcats[subcat] = seen_subcats.get(subcat, 0) + 1
+                diverse_recs.append(r)
+            else:
+                overflow.append(r)
+            if len(diverse_recs) >= top_n:
+                break
+        if len(diverse_recs) < top_n:
+            diverse_recs.extend(overflow[:top_n - len(diverse_recs)])
+        if len(diverse_recs) < len(recommendations[:top_n]):
+            logger.info(f"   🎨 Diversity pass: enforced max-2 per subcategory in top-{top_n}")
+
         # Add RANK EXPLANATIONS - Why #1, #2, #3, etc.
-        top_recommendations = recommendations[:top_n]
-        
+        top_recommendations = diverse_recs
+
+        # Anomaly detection: flag low differentiation (all top scores within 5%)
+        top_scores = [float(r.get('score', 0)) for r in top_recommendations[:5]]
+        low_differentiation = len(top_scores) >= 3 and (max(top_scores) - min(top_scores)) < 0.05
+
         for rank, rec in enumerate(top_recommendations, 1):
             # Generate rank explanation
             rank_explanation = self._generate_rank_explanation(
@@ -637,15 +880,37 @@ class AgentB_Banking:
                 persona_name=persona_name,
                 tier_name=tier_name
             )
-            
+
             # Add rank explanation to the recommendation
             rec['rank'] = rank
             rec['rank_explanation'] = rank_explanation
-            
+            if low_differentiation:
+                rec['low_differentiation_flag'] = True
+
             # Update reason to include rank explanation
             if explain and rec.get('reason'):
                 rec['reason'] = f"**#{rank} Recommended:** {rank_explanation}\n\n{rec['reason']}"
-        
+
+        # LLM rationale for top 3 (one batched call)
+        if CLAUDE_AVAILABLE and get_claude_client and top_recommendations:
+            try:
+                claude = get_claude_client()
+                if claude.is_available():
+                    customer_info = {}
+                    if hasattr(self, '_last_customer_info'):
+                        customer_info = self._last_customer_info
+                    rationales = claude.generate_batch_rationale(
+                        top3_products=top_recommendations[:3],
+                        customer_info=customer_info,
+                        persona_name=persona_name,
+                    )
+                    for rec in top_recommendations[:3]:
+                        pid = rec.get('product_id')
+                        if pid and pid in rationales:
+                            rec['llm_rationale'] = rationales[pid]
+            except Exception as e:
+                logger.warning(f"Agent B LLM rationale failed: {e}")
+
         return recommendations
 
     def _refresh_rank_explanations_after_reorder(
@@ -692,21 +957,13 @@ class AgentB_Banking:
         persona_lower = persona_name.lower()
         
         # Determine dominant relationship
-        if 'business' in persona_lower:
-            primary_relationship = 'Business_Checking'
-            customer_segment = 'Business'
-        elif 'agricultural' in persona_lower or 'farm' in persona_lower:
-            primary_relationship = 'Agricultural_Loan'
-            customer_segment = 'Agricultural'
-        elif 'wealth' in persona_lower or 'investment' in persona_lower:
+        if 'wealth' in persona_lower or 'investment' in persona_lower:
             primary_relationship = 'Investment'
-            customer_segment = 'Personal'
         elif 'traditional' in persona_lower:
             primary_relationship = 'Checking'
-            customer_segment = 'Personal'
         else:
             primary_relationship = 'Checking'
-            customer_segment = 'Personal'
+        customer_segment = 'Personal'
         
         # Determine financial profile from tier
         if tier_name == "Premium" or tier_name == "Ultra-Premium":
@@ -758,6 +1015,7 @@ class AgentB_Banking:
             'tier': tier_name,
             'customer_segment': customer_segment,
             'age': 45,
+            'months_since_relationship_started': 36,
             'tenure_months': 36
         }
         
@@ -1059,6 +1317,7 @@ class AgentB_Banking:
             'num_products': 2,
             'digital_engagement_score': 0.5,
             'cross_sell_receptivity': 0.5,
+            'months_since_relationship_started': 12,
             'tenure_months': 12,
         }
         for k, dflt in defaults.items():

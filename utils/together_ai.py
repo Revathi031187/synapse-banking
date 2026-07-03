@@ -3,7 +3,7 @@ Together AI Service Integration
 Handles embeddings and LLM completions for persona generation
 """
 import os
-from typing import List, Dict, Any
+from typing import List, Dict, Any, Optional
 import requests
 import numpy as np
 from utils.logger import get_logger
@@ -576,8 +576,18 @@ Generate exactly 3 or 4 opportunities. RULES: Each bullet MUST be one short sent
             lines = [ln.strip() for ln in text.strip().split("\n") if ln.strip()]
             cleaned = []
             max_len = 100  # keep bullets scannable
+            _preamble_starts = (
+                'here are', 'below are', 'the following', 'these are',
+                'above are', 'opportunities for', 'here is', 'i have',
+            )
             for ln in lines:
                 ln = ln.lstrip("0123456789.-*•) ")
+                # Skip preamble / header lines
+                ln_lower = ln.lower()
+                if any(ln_lower.startswith(p) for p in _preamble_starts):
+                    continue
+                if ln.endswith(':'):
+                    continue
                 if len(ln) > 20:
                     # Use first sentence only, or truncate to max_len
                     first_sentence = ln.split(".")[0].strip()
@@ -590,6 +600,265 @@ Generate exactly 3 or 4 opportunities. RULES: Each bullet MUST be one short sent
         except Exception as e:
             logger.warning(f"generate_marketing_opportunities failed: {e}")
             return []
+
+
+    def generate_complete_customer_analysis(
+        self,
+        customer: Dict[str, Any],
+        recommended_product: Dict[str, Any],
+        selected_offer: Optional[Dict[str, Any]] = None,
+        persona_name: str = "",
+        churn_category: str = "",
+    ) -> Dict[str, Any]:
+        """
+        Comprehensive LLM customer analysis for agentic product recommendation.
+
+        Reads all 52+ customer signals (income, credit, life_stage, financial_goal,
+        spending, debt, competitor card, digital engagement, etc.) and produces:
+          customer_insight_summary  — who they are and what they need now
+          product_fit_rationale     — why THIS product fits THIS customer
+          channel_rationale         — which channel and why
+          personalized_pitch        — ready-to-use 2-sentence pitch for banker/email
+          urgency_signal            — time-sensitive reason to act now (or none)
+
+        Returns {} on any failure — caller uses rule-based fallback.
+        """
+        age             = int(float(customer.get("age", 40) or 40))
+        income          = float(customer.get("income", 40000) or 40000)
+        credit_score    = int(float(customer.get("credit_score", 650) or 650))
+        total_deposits  = float(customer.get("total_deposits", 5000) or 5000)
+        life_stage      = str(customer.get("life_stage", "") or "")
+        financial_goal  = str(customer.get("financial_goal", "") or "").replace("_", " ")
+        num_products    = int(float(customer.get("num_products", 1) or 1))
+        employment_type = str(customer.get("employment_type", "") or "")
+        primary_cat     = str(customer.get("primary_spending_category", "") or "")
+        monthly_spend   = float(customer.get("monthly_spend_in_primary_cat", 0) or 0)
+        debt_total      = float(customer.get("outstanding_debt_total", 0) or 0)
+        has_competitor  = bool(customer.get("has_competitor_credit_card", False))
+        try:
+            high_overdraft = bool(int(float(customer.get("high_overdraft_flag", 0) or 0)))
+        except (TypeError, ValueError):
+            high_overdraft = False
+        digital_raw     = customer.get("digital_engagement_score") or customer.get("digital_engagement")
+        digital_score   = float(digital_raw if digital_raw is not None else 0.5)
+        pref_channel    = str(customer.get("preferred_channel", "") or "")
+        fee_sensitivity = str(customer.get("fee_sensitivity_tier", "medium") or "medium")
+        travel_freq     = str(customer.get("travel_frequency", "") or "")
+        home_type       = str(customer.get("home_ownership_type", "") or "")
+        recent_event    = str(customer.get("recent_life_event", "") or "")
+
+        product_name   = str(recommended_product.get("product_name", "") or "")
+        product_subcat = str(recommended_product.get("subcategory", "") or "")
+        product_fee    = float(recommended_product.get("annual_fee", 0) or 0)
+        raw_rate       = recommended_product.get("interest_rate") or recommended_product.get("interest_rate_apy") or 0
+        product_rate   = float(raw_rate or 0)
+        is_deposit     = product_subcat.lower() in ("savings", "cd", "investment", "money market")
+        rate_label     = f"{product_rate:.2%} {'APY' if is_deposit else 'APR'}" if product_rate else "competitive rate"
+
+        offer_name  = str((selected_offer or {}).get("offer_name", "") or "")
+        offer_value = str((selected_offer or {}).get("headline_value", "") or "")
+        channel_display = pref_channel or ("mobile app" if digital_score >= 0.65 else "email")
+
+        prompt = f"""You are an AI banking advisor at Meridian Bank. Analyze this customer and generate a precise recommendation report.
+
+CUSTOMER PROFILE:
+- Segment: {persona_name}, Age: {age}, Life Stage: {life_stage or 'not specified'}
+- Employment: {employment_type or 'not specified'}, Home: {home_type or 'not specified'}
+- Income: ${income:,.0f}/yr, Credit Score: {credit_score}, Deposits: ${total_deposits:,.0f}
+- Current Meridian products: {num_products}
+- Financial Goal: {financial_goal or 'not specified'}
+- Primary spending: {primary_cat or 'not specified'} at ${monthly_spend:,.0f}/month
+- Outstanding debt: ${debt_total:,.0f}
+- Competitor credit card: {'Yes' if has_competitor else 'No'}
+- Overdraft issues: {'Yes — frequent' if high_overdraft else 'No'}
+- Digital engagement: {digital_score:.0%} (preferred channel: {channel_display})
+- Fee sensitivity: {fee_sensitivity}
+- Travel frequency: {travel_freq or 'not specified'}
+- Recent life event: {recent_event or 'none'}
+- Churn risk: {churn_category or 'Normal'}
+
+RECOMMENDED PRODUCT: {product_name} ({product_subcat}), annual fee ${product_fee:.0f}, rate {rate_label}
+{f'SELECTED OFFER: {offer_name} — {offer_value}' if offer_name else ''}
+
+Output a JSON object with EXACTLY these 5 keys (no other keys, no markdown):
+- "customer_insight_summary": 2 sentences — WHO this customer is and WHAT they need most. Reference age, life stage, goal, and one financial signal.
+- "product_fit_rationale": 2 sentences — WHY {product_name} fits THIS customer. Reference credit score, deposits, debt, or spending data specifically.
+- "channel_rationale": 1 sentence — WHY use {channel_display} for this customer based on their {digital_score:.0%} digital engagement.
+- "personalized_pitch": 2 sentences ready for a banker or email campaign — open with the customer's goal/life stage, close with the product benefit.
+- "urgency_signal": 1 sentence about any time-sensitive reason to act now (life event, competitor card, churn risk, debt). If none: "No immediate urgency — recommend standard outreach."
+
+Output ONLY the JSON object."""
+
+        system_msg = (
+            "You are a senior AI banking advisor. Output only a valid JSON object — "
+            "no markdown, no preamble, no explanation. "
+            "Be specific: reference exact numbers from the customer profile."
+        )
+
+        raw = self.generate_text(
+            prompt=prompt,
+            system_message=system_msg,
+            max_tokens=650,
+            temperature=0.6,
+        )
+
+        if not raw or "Error generating" in raw:
+            return {}
+
+        import json as _json
+        import re as _re
+
+        cleaned = raw.strip()
+        cleaned = _re.sub(r"^```(?:json)?\s*", "", cleaned)
+        cleaned = _re.sub(r"\s*```$", "", cleaned)
+        cleaned = cleaned.strip()
+
+        EXPECTED_KEYS = (
+            "customer_insight_summary",
+            "product_fit_rationale",
+            "channel_rationale",
+            "personalized_pitch",
+            "urgency_signal",
+        )
+
+        def _extract_str_field(text, key):
+            m = _re.search(
+                rf'"{_re.escape(key)}"\s*:\s*"((?:[^"\\]|\\.)*)"', text, _re.DOTALL
+            )
+            if m:
+                try:
+                    return _json.loads('"' + m.group(1) + '"')
+                except Exception:
+                    return m.group(1)
+            return None
+
+        try:
+            parsed = _json.loads(cleaned)
+        except Exception:
+            parsed = {}
+            for k in EXPECTED_KEYS:
+                v = _extract_str_field(cleaned, k)
+                if v is not None:
+                    parsed[k] = v
+
+        if not parsed or not set(EXPECTED_KEYS).intersection(parsed.keys()):
+            logger.warning("generate_complete_customer_analysis: no usable keys parsed")
+            return {}
+
+        return {k: str(parsed.get(k, "")) for k in EXPECTED_KEYS}
+
+    def generate_offer_communication_content(
+        self,
+        customer_profile: Dict[str, Any],
+        product: Dict[str, Any],
+        offer: Dict[str, Any],
+        best_channel: str,
+    ) -> Dict[str, Any]:
+        """
+        Generate personalized flyer/email/push/SMS content for a selected offer.
+        Returns dict with: flyer_content, email_content, push_notification, sms_text,
+        generation_source. Falls back to empty dict on failure (caller uses template).
+        """
+        age         = int(customer_profile.get("age", 40))
+        income_tier = str(customer_profile.get("income_tier", "mid income"))
+        credit_tier = str(customer_profile.get("credit_tier", "good"))
+        persona     = str(customer_profile.get("persona_name", ""))
+        goal        = str(customer_profile.get("financial_goal_hint", "growing savings"))
+        pname       = str(product.get("product_name", "this product"))
+        subcategory = str(product.get("subcategory", "Banking"))
+        offer_name  = str(offer.get("offer_name", "this offer"))
+        terms       = str(offer.get("terms_summary", ""))
+        vp          = str(offer.get("value_proposition", ""))
+
+        system_msg = (
+            "You are a bank marketing copywriter. "
+            "Output only a single valid JSON object — no preamble, no explanation, no markdown. "
+            "Never use ALL CAPS except in push notifications. Keep copy warm, professional, and specific."
+        )
+
+        prompt = f"""Customer: age {age}, {income_tier}, {credit_tier} credit, financial goal: {goal}.
+Segment: {persona}.
+Product: {pname} ({subcategory}).
+Offer: {offer_name}.
+Offer detail: {vp}
+Terms: {terms}
+Preferred channel: {best_channel}
+
+Write a JSON object with exactly these keys:
+- "flyer_headline": punchy customer-specific headline referencing the offer value, max 12 words
+- "flyer_body": 2-3 sentences connecting customer's financial goal to the offer benefit, max 150 words
+- "email_subject": email subject line creating urgency or curiosity, max 60 characters
+- "email_body": personalized email — opening line addresses financial goal; middle paragraph explains offer clearly with terms; closing is a call to action for {best_channel} channel; max 250 words
+- "push_notification": app push text, max 50 characters, include key benefit and a verb
+- "sms_text": SMS text, max 160 characters, include product name and offer value
+
+Output ONLY the JSON object."""
+
+        raw = self.generate_text(
+            prompt=prompt,
+            system_message=system_msg,
+            max_tokens=900,
+            temperature=0.65,
+        )
+
+        if not raw or "Error generating" in raw:
+            return {}
+
+        # Parse JSON from LLM response
+        import json as _json
+        import re as _re
+
+        # Strip any markdown code fences
+        cleaned = raw.strip()
+        cleaned = _re.sub(r"^```(?:json)?\s*", "", cleaned)
+        cleaned = _re.sub(r"\s*```$", "", cleaned)
+        cleaned = cleaned.strip()
+
+        def _extract_field(text, key):
+            """Extract a string value for a JSON key even from partial/malformed JSON."""
+            import re as _re2
+            # Try double-quoted value
+            m = _re2.search(rf'"{_re2.escape(key)}"\s*:\s*"((?:[^"\\]|\\.)*)"', text, _re2.DOTALL)
+            if m:
+                try:
+                    return _json.loads('"' + m.group(1) + '"')
+                except Exception:
+                    return m.group(1)
+            return None
+
+        try:
+            parsed = _json.loads(cleaned)
+        except (_json.JSONDecodeError, Exception):
+            # Try partial extraction field-by-field
+            parsed = {}
+            for k in ("flyer_headline","flyer_body","email_subject","email_body","push_notification","sms_text"):
+                v = _extract_field(cleaned, k)
+                if v is not None:
+                    parsed[k] = v
+
+        if not parsed:
+            logger.warning("generate_offer_communication_content: empty parse result")
+            return {}
+
+        # Need at least the most important fields
+        min_fields = {"flyer_headline", "push_notification"}
+        if not min_fields.issubset(parsed.keys()):
+            logger.warning(f"generate_offer_communication_content: missing required fields, got {list(parsed.keys())}")
+            return {}
+
+        return {
+            "flyer_content": {
+                "headline": str(parsed.get("flyer_headline", "")),
+                "body": str(parsed.get("flyer_body", "")),
+            },
+            "email_content": {
+                "subject": str(parsed.get("email_subject", "")),
+                "body": str(parsed.get("email_body", "")),
+            },
+            "push_notification": str(parsed.get("push_notification", ""))[:55],
+            "sms_text": str(parsed.get("sms_text", ""))[:160],
+            "generation_source": "llm",
+        }
 
 
 # Global instance

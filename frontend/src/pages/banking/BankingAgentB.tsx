@@ -17,6 +17,9 @@ import {
   Target,
   BarChart2,
   User,
+  Gift,
+  Tag,
+  Clock,
 } from 'lucide-react';
 import { getBankingApiBase } from '../../utils/apiBase';
 import { useSessionStorageState } from '../../hooks/useSessionStorageState';
@@ -159,6 +162,11 @@ function mergeAgentBUi(saved: Partial<BankingAgentBUiState>, def: BankingAgentBU
   return {
     ...def,
     ...saved,
+    // Never restore stale results or run-state from session storage
+    executeData: null,
+    lastRunFactorWeights: null,
+    // Always reset to the canonical default — ignore any old value in session storage
+    topN: def.topN,
     factorWeights: { ...BANKING_DEFAULTS_PERCENT, ...def.factorWeights, ...saved.factorWeights },
     factorLabels: { ...def.factorLabels, ...saved.factorLabels },
     expandedExplanations: saved.expandedExplanations ?? def.expandedExplanations,
@@ -173,7 +181,7 @@ const DEFAULT_BANKING_AGENT_B_UI: BankingAgentBUiState = {
   customerId: '',
   searchQuery: '',
   category: '',
-  topN: 10,
+  topN: 5,
   expandedExplanations: {},
   useAgentDDirectives: false,
   factorWeights: { ...BANKING_DEFAULTS_PERCENT },
@@ -186,6 +194,69 @@ const DEFAULT_BANKING_AGENT_B_UI: BankingAgentBUiState = {
 };
 
 const AGENT_B_UI_KEY = 'banking-agent-b-v1';
+
+type PinnedOfferCardData = {
+  product_id?: string;
+  product_name?: string;
+  offer_name?: string;
+  offer_type?: string;
+  headline_value?: string;
+  content_benefit_1?: string;
+  content_benefit_2?: string;
+  content_benefit_3?: string;
+  days_remaining?: number | null;
+  terms_summary?: string;
+};
+
+function PinnedOfferCard({ card }: { card: PinnedOfferCardData }) {
+  const benefits = [card.content_benefit_1, card.content_benefit_2, card.content_benefit_3].filter(Boolean);
+  return (
+    <div className="mb-4 rounded-2xl overflow-hidden border border-indigo-200 shadow-md">
+      {/* Gradient header */}
+      <div className="bg-gradient-to-r from-indigo-700 via-violet-700 to-purple-700 px-5 py-4">
+        <div className="flex items-start gap-3 justify-between">
+          <div className="min-w-0">
+            <p className="text-[10px] font-bold uppercase tracking-widest text-indigo-200 mb-1 flex items-center gap-1.5">
+              <Gift className="w-3 h-3" />
+              Director's pinned offer · {card.product_name}
+            </p>
+            {card.offer_name && (
+              <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-white/20 text-white text-xs font-semibold">
+                <Tag className="w-3 h-3" />
+                {card.offer_name}
+              </span>
+            )}
+          </div>
+          {card.days_remaining != null && card.days_remaining < 30 && (
+            <span className="shrink-0 inline-flex items-center gap-1 px-2.5 py-1 rounded-full bg-amber-400/90 text-amber-950 text-[11px] font-bold">
+              <Clock className="w-3 h-3" />
+              {card.days_remaining}d left
+            </span>
+          )}
+        </div>
+        {card.headline_value && (
+          <p className="text-xl font-extrabold text-white mt-2.5 leading-tight">{card.headline_value}</p>
+        )}
+      </div>
+      {/* Benefits */}
+      {benefits.length > 0 && (
+        <div className="bg-white px-5 py-3.5 space-y-2">
+          {benefits.map((b, i) => (
+            <div key={i} className="flex items-start gap-2 text-sm text-slate-700">
+              <CheckCircle2 className="w-4 h-4 text-indigo-500 shrink-0 mt-0.5" />
+              <span>{b}</span>
+            </div>
+          ))}
+          {card.terms_summary && (
+            <p className="text-[11px] text-slate-400 leading-relaxed border-t border-slate-100 pt-2.5 mt-2">
+              {card.terms_summary}
+            </p>
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
 
 export default function BankingAgentB() {
   const queryClient = useQueryClient();
@@ -294,6 +365,42 @@ export default function BankingAgentB() {
       return response.json();
     },
     staleTime: 60_000,
+  });
+
+  // Fetch representative customer for the selected persona — used to read Director directives in persona mode.
+  // Mirrors how Director auto-selects the first customer in a segment.
+  const personaRepQuery = useQuery({
+    queryKey: ['banking-agent-b-persona-rep', persona],
+    queryFn: async () => {
+      const res = await fetch(
+        `${API_BASE_URL}/api/banking/agent_a/customers?cluster_id=${encodeURIComponent(persona)}&limit=1&skip=0`
+      );
+      if (!res.ok) return { data: { customers: [] } };
+      return res.json();
+    },
+    enabled: mode === 'persona' && !!persona,
+    staleTime: 60_000,
+  });
+  const personaRepCustomerId = String(
+    (personaRepQuery.data?.data?.customers?.[0] as { customer_id?: string } | undefined)?.customer_id ?? ''
+  ).trim();
+
+  // Directives for persona mode — fetched for the representative customer so the Director's offer card
+  // can be shown for the matching product in the persona recommendation list.
+  const personaDirectivesQuery = useQuery({
+    queryKey: ['banking-agent-d-directives-persona', personaRepCustomerId],
+    queryFn: async () => {
+      const res = await fetch(
+        `${API_BASE_URL}/api/banking/agent_d/directives/${encodeURIComponent(personaRepCustomerId)}`
+      );
+      if (!res.ok) return { next_visit_directives: null as Record<string, unknown> | null };
+      return res.json();
+    },
+    enabled: mode === 'persona' && !!personaRepCustomerId,
+    staleTime: 0,
+    gcTime: 5 * 60 * 1000,
+    refetchOnMount: 'always',
+    refetchOnWindowFocus: true,
   });
 
   const factorMetaQuery = useQuery({
@@ -598,6 +705,15 @@ export default function BankingAgentB() {
   const directivePinReasonUi = String(
     (agentDDirectivesQuery.data as { priority_pin_reason_ui?: string } | undefined)?.priority_pin_reason_ui || '',
   ).trim();
+
+  // In customer mode use the customer-specific directives; in persona mode use the representative's directives.
+  const directivePinnedOfferCard = (
+    mode === 'customer'
+      ? (agentDDirectivesQuery.data as { next_visit_directives?: { pinned_offer_card?: PinnedOfferCardData } } | undefined)
+          ?.next_visit_directives?.pinned_offer_card
+      : (personaDirectivesQuery.data as { next_visit_directives?: { pinned_offer_card?: PinnedOfferCardData } } | undefined)
+          ?.next_visit_directives?.pinned_offer_card
+  ) ?? null;
   const bankingSupervisorPinReason = (rec: { priority_pin_reason?: string; supervisor_pinned?: boolean }) => {
     const fromRec = typeof rec.priority_pin_reason === 'string' ? rec.priority_pin_reason.trim() : '';
     if (fromRec) return fromRec;
@@ -737,7 +853,7 @@ export default function BankingAgentB() {
                   {personasQuery.isLoading ? (
                     <option>Loading personas...</option>
                   ) : personas.length === 0 ? (
-                    <option>Run Agent A first</option>
+                    <option>Run Segmentation first</option>
                   ) : (
                     personas.map((p: { id: string; name: string; size?: number; percentage?: number }) => (
                       <option key={p.id} value={p.id}>
@@ -754,7 +870,7 @@ export default function BankingAgentB() {
                   </p>
                 )}
                 {personas.length === 0 && !personasQuery.isLoading && !personasQuery.isError && (
-                  <p className="text-sm text-amber-700 mt-2">Run Agent A clustering for named personas, or use the segment fallback from loaded data.</p>
+                  <p className="text-sm text-amber-700 mt-2">Run Segmentation for named personas, or use the segment fallback from loaded data.</p>
                 )}
               </div>
             ) : (
@@ -780,16 +896,19 @@ export default function BankingAgentB() {
               </div>
             )}
             <div className="flex flex-col">
-              <label className="block text-sm font-semibold text-gray-800 mb-2">Category (optional)</label>
+              <label className="block text-sm font-semibold text-gray-800 mb-2">Product Type (optional)</label>
               <select
                 value={category}
                 onChange={(e) => setUi((p) => ({ ...p, category: e.target.value }))}
                 className="w-full px-4 py-3 border border-gray-300 rounded-xl bg-white focus:ring-2 focus:ring-blue-500"
               >
-                <option value="">All categories</option>
-                <option value="Personal">Personal banking</option>
-                <option value="Business">Business banking</option>
-                <option value="Agricultural">Agricultural banking</option>
+                <option value="">All product types</option>
+                <option value="Bank Account">Bank Accounts</option>
+                <option value="Certificate of Deposit">Certificates of Deposit</option>
+                <option value="Credit Card">Credit Cards</option>
+                <option value="Loan">Loans</option>
+                <option value="Mortgage">Mortgages</option>
+                <option value="Investment">Investments</option>
               </select>
             </div>
           </div>
@@ -810,7 +929,7 @@ export default function BankingAgentB() {
               <input
                 type="number"
                 value={topN}
-                onChange={(e) => setUi((p) => ({ ...p, topN: parseInt(e.target.value, 10) || 10 }))}
+                onChange={(e) => setUi((p) => ({ ...p, topN: parseInt(e.target.value, 10) || 5 }))}
                 min={1}
                 max={20}
                 className="w-full px-4 py-3 border border-gray-300 rounded-xl focus:ring-2 focus:ring-blue-500 tabular-nums"
@@ -1074,6 +1193,14 @@ export default function BankingAgentB() {
               </div>
             </div>
 
+            {/* Count cap notice */}
+            {results?.count_note && (
+              <div className="mb-4 flex items-center gap-2 bg-amber-50 border border-amber-200 rounded-lg px-4 py-2 text-sm text-amber-800">
+                <span>⚠</span>
+                <span>{results.count_note}</span>
+              </div>
+            )}
+
             {/* Banking-Specific Metrics Grid */}
             {(insights || results.metrics) && (
               <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
@@ -1262,12 +1389,32 @@ export default function BankingAgentB() {
                     <div className="text-lg font-bold text-gray-900 mb-1">
                       {rec.annual_fee && rec.annual_fee > 0 ? (
                         `$${rec.annual_fee.toFixed(2)}/year`
+                      ) : rec.monthly_fee && rec.monthly_fee > 0 ? (
+                        <span className="text-amber-600">${rec.monthly_fee.toFixed(2)}/mo</span>
                       ) : (
                         <span className="text-green-600">Free</span>
                       )}
                     </div>
+                    {/* JPM product chips */}
+                    <div className="flex flex-wrap gap-1 justify-end mt-1">
+                      {rec.cash_back_pct > 0 && (
+                        <span className="px-1.5 py-0.5 rounded text-xs font-medium bg-green-100 text-green-700">{rec.cash_back_pct}% Cash Back</span>
+                      )}
+                      {rec.rewards_type === 'travel_points' && (
+                        <span className="px-1.5 py-0.5 rounded text-xs font-medium bg-blue-100 text-blue-700">Travel Rewards</span>
+                      )}
+                      {rec.intro_apr_months > 0 && (
+                        <span className="px-1.5 py-0.5 rounded text-xs font-medium bg-amber-100 text-amber-700">0% Intro {rec.intro_apr_months}mo</span>
+                      )}
+                      {rec.fee_waiver_condition && rec.fee_waiver_condition !== 'none' && (
+                        <span className="px-1.5 py-0.5 rounded text-xs font-medium bg-gray-100 text-gray-600">Fee Waivable</span>
+                      )}
+                      {rec.llm_rationale && (
+                        <span className="px-1.5 py-0.5 rounded text-xs font-medium bg-violet-100 text-violet-700">AI</span>
+                      )}
+                    </div>
                     {rec.interest_rate > 0 && (
-                      <div className="text-sm text-green-600 font-semibold">
+                      <div className="text-sm text-green-600 font-semibold mt-1">
                         {rec.interest_rate.toFixed(2)}% APY
                       </div>
                     )}
@@ -1294,8 +1441,22 @@ export default function BankingAgentB() {
                       (rankBody || rec.recommendation_text || pinFallback),
                   );
 
+                  // Customer mode: only show on the supervisor-pinned product.
+                  // Persona mode: show on whichever product matches the Director's pinned product_id
+                  // (supervisor_pinned is never set in persona mode because directives aren't applied to scoring).
+                  const showPinnedOffer = Boolean(
+                    directivePinnedOfferCard &&
+                    String(directivePinnedOfferCard.product_id || '') === String(rec.product_id || '') &&
+                    (mode === 'persona' || rec.supervisor_pinned),
+                  );
+
                   return (
                     <>
+                      {/* Director offer card — shown above spotlight for pinned product */}
+                      {showPinnedOffer && directivePinnedOfferCard && (
+                        <PinnedOfferCard card={directivePinnedOfferCard} />
+                      )}
+
                       {showSpotlight && (
                         <div className="mb-4 relative overflow-hidden rounded-2xl border border-violet-200/90 bg-gradient-to-br from-violet-50 via-fuchsia-50/50 to-indigo-50 shadow-md ring-1 ring-violet-100/80">
                           <div className="absolute -right-20 -top-20 h-44 w-44 rounded-full bg-fuchsia-200/25 blur-3xl pointer-events-none" />
@@ -1311,11 +1472,6 @@ export default function BankingAgentB() {
                                 </h4>
                                 {pinStory?.subhead && (
                                   <p className="text-sm text-slate-600 mt-2 leading-relaxed">{pinStory.subhead}</p>
-                                )}
-                                {pinStory?.llm_polished && (
-                                  <p className="text-xs text-violet-600/90 mt-2 font-medium">
-                                    Refined with AI (Together) using your API key — facts only, no invented numbers.
-                                  </p>
                                 )}
                               </div>
                               {pinStory?.highlights && pinStory.highlights.length > 0 && (
@@ -1370,69 +1526,124 @@ export default function BankingAgentB() {
                       )}
 
                       {showEmerald && (
-                        <div className="mb-4 overflow-hidden rounded-xl border border-emerald-200 bg-gradient-to-br from-emerald-50/80 to-teal-50/80 shadow-sm">
-                          <div className="border-b border-emerald-200 bg-emerald-100/60 px-4 py-2.5">
-                            <p className="text-sm font-bold text-emerald-900 flex items-center gap-2">
-                              {rec.supervisor_pinned ? 'Model fit & product detail' : 'Why This Product?'}
-                            </p>
+                        <div className="mb-4 overflow-hidden rounded-2xl border border-slate-200 shadow-md">
+                          {/* ── Header ── */}
+                          <div className="bg-gradient-to-r from-slate-800 via-slate-700 to-emerald-800 px-5 py-4">
+                            <div className="flex items-center justify-between gap-3">
+                              <div className="flex items-center gap-3">
+                                {/* Rank circle */}
+                                <div className="w-10 h-10 rounded-xl bg-white/15 border border-white/25 flex items-center justify-center shrink-0">
+                                  <span className="text-white font-extrabold text-base leading-none">
+                                    #{rec.supervisor_pinned ? '1' : (rec.rank || index + 1)}
+                                  </span>
+                                </div>
+                                <div>
+                                  <p className="text-[10px] font-bold uppercase tracking-widest text-slate-300">
+                                    {rec.supervisor_pinned ? 'Supervisor Priority' : 'Why This Product?'}
+                                  </p>
+                                  <p className="text-white font-bold text-sm leading-snug mt-0.5">
+                                    {rec.supervisor_pinned
+                                      ? `Position #1 · ${(rec.score * 100).toFixed(1)}% model fit`
+                                      : `Rank #${rec.rank || index + 1} · ${(rec.score * 100).toFixed(1)}% compatibility`}
+                                  </p>
+                                </div>
+                              </div>
+                              {/* Score pill */}
+                              <div className="shrink-0 flex flex-col items-end">
+                                <span className="text-2xl font-extrabold text-white tabular-nums leading-none">
+                                  {(rec.score * 100).toFixed(0)}%
+                                </span>
+                                <span className="text-[10px] text-emerald-300 font-semibold uppercase tracking-wide mt-0.5">match</span>
+                              </div>
+                            </div>
+                            {/* Score bar */}
+                            <div className="mt-3 h-1.5 rounded-full bg-white/15 overflow-hidden">
+                              <div
+                                className="h-full rounded-full bg-gradient-to-r from-emerald-400 to-teal-300 transition-all"
+                                style={{ width: `${Math.min(rec.score * 100, 100)}%` }}
+                              />
+                            </div>
                           </div>
-                          <div className="p-4 space-y-4">
+
+                          {/* ── Body ── */}
+                          <div className="bg-white px-5 py-4 space-y-4">
                             {rankBody ? (
-                              <div className="space-y-3">
-                                <p className="text-xs font-bold text-emerald-800 uppercase tracking-wide flex flex-wrap items-center gap-1.5">
-                                  {rec.supervisor_pinned ? (
-                                    <>
-                                      <span>
-                                        Session position #1 · {(rec.score * 100).toFixed(1)}% model fit
-                                      </span>
-                                      <span className="normal-case font-medium text-violet-700">
-                                        (supervisor priority — factor narrative below)
-                                      </span>
-                                    </>
-                                  ) : (
-                                    <span>
-                                      Rank #{rec.rank || index + 1} · {(rec.score * 100).toFixed(1)}% compatibility
-                                    </span>
-                                  )}
-                                </p>
-                                <div className="text-sm text-gray-800 leading-relaxed space-y-2">
-                                  {rankBody.split('\n\n').map((section: string, idx: number) => (
-                                    <div key={idx} className={idx > 0 ? 'mt-3 pt-3 border-t border-emerald-200' : ''}>
-                                      {section.split('\n').map((line: string, lineIdx: number) => {
-                                        const formattedLine = line.replace(
-                                          /\*\*(.*?)\*\*/g,
-                                          '<strong class="font-semibold text-emerald-900">$1</strong>',
-                                        );
-                                        const finalLine = formattedLine.replace(
-                                          /\*(.*?)\*/g,
-                                          '<em class="text-gray-600 text-xs">$1</em>',
-                                        );
+                              <>
+                                {rankBody.split('\n\n').map((section: string, idx: number) => {
+                                  const lines = section.split('\n').filter(Boolean);
+                                  /* Detect "Key Benefits:" section header */
+                                  const isBenefitBlock = lines.some(l => /key benefits/i.test(l));
+                                  if (isBenefitBlock) {
+                                    const items = lines.filter(l => !/key benefits/i.test(l) && l.trim());
+                                    return (
+                                      <div key={idx} className="space-y-1.5">
+                                        <p className="text-[11px] font-bold uppercase tracking-widest text-slate-500">Key Benefits</p>
+                                        <div className="space-y-1.5">
+                                          {items.map((item: string, ii: number) => {
+                                            const clean = item.replace(/^[-•*]\s*/, '').replace(/\*\*(.*?)\*\*/g, '$1').replace(/\*(.*?)\*/g, '$1').trim();
+                                            return (
+                                              <div key={ii} className="flex items-start gap-2.5 rounded-lg bg-emerald-50 border border-emerald-100 px-3 py-2">
+                                                <span className="text-emerald-600 font-bold text-sm shrink-0 mt-0.5">✓</span>
+                                                <span className="text-sm text-slate-700 leading-snug">{clean}</span>
+                                              </div>
+                                            );
+                                          })}
+                                        </div>
+                                      </div>
+                                    );
+                                  }
+                                  return (
+                                    <div key={idx} className={idx > 0 ? 'pt-3 border-t border-slate-100' : ''}>
+                                      {lines.map((line: string, lineIdx: number) => {
+                                        const isItalic = line.trim().startsWith('*') && !line.trim().startsWith('**');
+                                        const formattedLine = line
+                                          .replace(/\*\*(.*?)\*\*/g, '<strong class="font-semibold text-slate-900">$1</strong>')
+                                          .replace(/\*(.*?)\*/g, '<em class="text-slate-500 text-xs">$1</em>');
                                         return (
                                           <p
                                             key={lineIdx}
-                                            className={line.startsWith('*') ? 'text-xs italic text-gray-600 mt-2' : 'mb-1'}
-                                            dangerouslySetInnerHTML={{ __html: finalLine }}
+                                            className={isItalic
+                                              ? 'text-xs italic text-slate-500 mt-1'
+                                              : 'text-sm text-slate-700 leading-relaxed mb-1'}
+                                            dangerouslySetInnerHTML={{ __html: formattedLine }}
                                           />
                                         );
                                       })}
                                     </div>
-                                  ))}
+                                  );
+                                })}
+
+                                {/* AI Rationale */}
+                                {rec.llm_rationale && (
+                                  <div className="rounded-xl overflow-hidden border border-violet-200 shadow-sm">
+                                    <div className="bg-gradient-to-r from-violet-700 to-indigo-700 px-4 py-2.5 flex items-center gap-2">
+                                      <div className="w-5 h-5 rounded-md bg-white/20 flex items-center justify-center shrink-0">
+                                        <span className="text-white text-[10px] font-extrabold">AI</span>
+                                      </div>
+                                      <p className="text-[11px] font-bold uppercase tracking-widest text-violet-200">Why this product fits you</p>
+                                    </div>
+                                    <div className="bg-white px-4 py-3.5">
+                                      <p className="text-base font-semibold text-slate-800 leading-relaxed">{rec.llm_rationale}</p>
+                                    </div>
+                                  </div>
+                                )}
+
+                                {/* Footer */}
+                                <div className="flex items-center gap-2 pt-3 border-t border-slate-100">
+                                  <span className="text-slate-400 text-xs">📐</span>
+                                  <p className="text-[11px] text-slate-400 leading-relaxed">
+                                    Comprehensive match score based on banking 12 factors (see detailed calculation below).
+                                  </p>
                                 </div>
-                                <p className="text-xs text-emerald-800 pt-2 border-t border-emerald-200/80">
-                                  📐 Comprehensive match score based on banking 12 factors (see detailed calculation
-                                  below).
-                                </p>
-                              </div>
+                              </>
                             ) : null}
                             {!rankBody && rec.recommendation_text && (
                               <>
-                                <div className="text-sm text-gray-800 leading-relaxed">
-                                  {rec.reason || rec.recommendation_text}
+                                <p className="text-sm text-slate-700 leading-relaxed">{rec.reason || rec.recommendation_text}</p>
+                                <div className="flex items-center gap-2 pt-3 border-t border-slate-100">
+                                  <span className="text-slate-400 text-xs">📐</span>
+                                  <p className="text-[11px] text-slate-400">Comprehensive match score based on banking 12 factors (see detailed calculation below).</p>
                                 </div>
-                                <p className="text-xs text-emerald-800 pt-2 border-t border-emerald-200/80">
-                                  📐 Comprehensive match score based on banking 12 factors (see detailed calculation
-                                  below).
-                                </p>
                               </>
                             )}
                           </div>

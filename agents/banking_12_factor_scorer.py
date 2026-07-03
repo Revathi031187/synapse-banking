@@ -28,22 +28,22 @@ class Banking12FactorScorer:
     
     # BANKING-SPECIFIC 12-FACTOR WEIGHTS (Total = 100%)
     WEIGHTS = {
-        # TIER 1: Eligibility & Core Match (55%)
+        # TIER 1: Eligibility & Core Match (53%)
         'eligibility_score': 0.22,      # Credit score + income + balance requirements
         'financial_need_match': 0.18,   # Product matches customer's financial situation
-        'relationship_depth': 0.15,     # Tenure, product count, loyalty
-        
-        # TIER 2: Strategic Fit & Product Value (28%)
-        'product_value': 0.12,          # NEW! Product-specific value (fees, rates, min balance, ROI)
-        'product_pairing': 0.09,        # Cross-sell affinity, complementary products
-        'channel_fit': 0.07,            # Digital vs branch preference alignment
-        
-        # TIER 3: Behavioral & Contextual (10%)
+        'relationship_depth': 0.13,     # Tenure, product count, loyalty (reduced: short tenures common)
+
+        # TIER 2: Strategic Fit & Product Value (31%)
+        'product_value': 0.13,          # Product fees, rates, min balance, ROI (increased: key differentiator)
+        'product_pairing': 0.10,        # Cross-sell affinity, complementary products (increased: strong banking signal)
+        'channel_fit': 0.04,            # Digital vs branch alignment (reduced: Meridian is hybrid bank)
+
+        # TIER 3: Behavioral & Contextual (13%)
         'complexity_match': 0.04,       # Product sophistication vs customer level
-        'intent_score': 0.03,           # Cross-sell receptivity
+        'intent_score': 0.06,           # Cross-sell receptivity — directly measured, strong conversion signal
         'segment_affinity': 0.02,       # Peer behavior in segment
-        'transaction_pattern': 0.01,    # Activity level alignment
-        
+        'transaction_pattern': 0.01,    # Activity level derived from monthly_transaction_volume
+
         # TIER 4: Quality Signals (7%)
         'product_rating': 0.04,         # Product satisfaction score
         'popularity': 0.03,             # Adoption rate in segment
@@ -73,14 +73,18 @@ class Banking12FactorScorer:
         """Pre-compute statistics needed for banking scoring"""
         # Customer product holdings
         self.customer_products = {}
-        if 'product_id' in self.transactions_df.columns:
+        if self.transactions_df is not None and 'product_id' in self.transactions_df.columns:
             for cid, group in self.transactions_df.groupby('customer_id'):
                 key = str(cid).strip()
                 self.customer_products[key] = group['product_id'].unique().tolist()
-        
+
         # Product popularity by segment
         self.segment_product_popularity = {}
-        
+
+        if self.customers_df is None or self.transactions_df is None:
+            logger.info("📊 Pre-computed statistics (no transactions data)")
+            return
+
         # Check for both column names (Agent A uses 'cluster', old code used 'macro_segment_id')
         if 'cluster' in self.customers_df.columns:
             segment_col = 'cluster'
@@ -88,7 +92,7 @@ class Banking12FactorScorer:
             segment_col = 'macro_segment_id'
         else:
             segment_col = None
-        
+
         if segment_col and 'product_id' in self.transactions_df.columns:
             transactions_with_segment = self.transactions_df.merge(
                 self.customers_df[['customer_id', segment_col]],
@@ -97,7 +101,7 @@ class Banking12FactorScorer:
             )
             for seg_id, group in transactions_with_segment.groupby(segment_col):
                 self.segment_product_popularity[seg_id] = group['product_id'].value_counts().to_dict()
-        
+
         logger.info(f"📊 Pre-computed statistics for {len(self.customer_products)} customers")
     
     def _merge_factor_weights(self, factor_weights: Dict = None) -> Dict[str, float]:
@@ -176,7 +180,7 @@ class Banking12FactorScorer:
         
         # ==================== FACTOR 2: FINANCIAL NEED MATCH (18%) ====================
         financial_need = self._calculate_financial_need_match(
-            age, income, total_deposits, num_products, category, product
+            age, income, total_deposits, num_products, category, product, customer
         )
         w2 = wt['financial_need_match']
         c2 = financial_need['score'] * w2
@@ -189,7 +193,7 @@ class Banking12FactorScorer:
         }
         
         # ==================== FACTOR 3: RELATIONSHIP DEPTH (15%) ====================
-        relationship = self._calculate_relationship_depth(num_products, customer.get('tenure_months', 12))
+        relationship = self._calculate_relationship_depth(num_products, customer.get('months_since_relationship_started') or customer.get('tenure_months', 12))
         w3 = wt['relationship_depth']
         c3 = relationship['score'] * w3
         breakdown['relationship_depth'] = {
@@ -216,7 +220,7 @@ class Banking12FactorScorer:
         }
         
         # ==================== FACTOR 5: PRODUCT PAIRING (9%) ====================
-        pairing = self._calculate_product_pairing(customer_id, product_id, category)
+        pairing = self._calculate_product_pairing(customer_id, product_id, category, product=product, customer=customer)
         w5 = wt['product_pairing']
         c5 = pairing['score'] * w5
         breakdown['product_pairing'] = {
@@ -278,7 +282,17 @@ class Banking12FactorScorer:
         }
         
         # ==================== FACTOR 10: TRANSACTION PATTERN (1%) ====================
-        transaction = self._calculate_transaction_pattern(customer.get('transaction_frequency', 'medium'))
+        # Derive frequency from monthly_transaction_volume (transaction_frequency not in customers.csv)
+        _mtv = customer.get('monthly_transaction_volume', 0) or 0
+        if _mtv > 50:
+            _txn_freq = 'high'
+        elif _mtv > 20:
+            _txn_freq = 'medium'
+        elif _mtv > 5:
+            _txn_freq = 'low'
+        else:
+            _txn_freq = 'very_low'
+        transaction = self._calculate_transaction_pattern(customer.get('transaction_frequency', _txn_freq))
         w10 = wt['transaction_pattern']
         c10 = transaction['score'] * w10
         breakdown['transaction_pattern'] = {
@@ -328,10 +342,35 @@ class Banking12FactorScorer:
     
     def _calculate_eligibility_score(
         self, credit_score: float, income: float, deposits: float,
-        min_credit: float, min_income: float, min_balance: float
+        min_credit: float, min_income: float, min_balance: float,
+        product: Dict = None, customer: Dict = None
     ) -> Dict:
-        """Calculate eligibility based on credit, income, and balance"""
-        
+        """Calculate eligibility based on credit, income, balance, and JPM credit tier requirements."""
+
+        product = product or {}
+        customer = customer or {}
+
+        # Hard block: credit_tier_required == 'excellent' but customer is not excellent
+        credit_tier_required = str(product.get('credit_tier_required', 'any')).lower()
+        customer_credit_tier = str(customer.get('credit_tier', '')).lower()
+        if credit_tier_required == 'excellent' and customer_credit_tier not in ('excellent', ''):
+            return {
+                'score': 0.0,
+                'explanation': f"Requires excellent credit tier; customer is {customer_credit_tier or 'unclassified'}",
+                'sub_scores': {'credit': 0.0, 'income': 0.0, 'balance': 0.0},
+                'hard_block': True,
+            }
+
+        # Hard block: wealth management products require minimum balance
+        aum_fee_pct = float(product.get('aum_fee_pct', 0))
+        if aum_fee_pct > 0 and min_balance > 0 and deposits < min_balance:
+            return {
+                'score': 0.0,
+                'explanation': f"Wealth product requires ${min_balance:,.0f} minimum; customer has ${deposits:,.0f}",
+                'sub_scores': {'credit': 0.0, 'income': 0.0, 'balance': 0.0},
+                'hard_block': True,
+            }
+
         # Credit score match (40% of eligibility)
         if credit_score >= min_credit + 50:
             credit_match = 1.0
@@ -345,7 +384,7 @@ class Banking12FactorScorer:
         else:
             credit_match = 0.1
             credit_status = "not qualified"
-        
+
         # Income match (35% of eligibility)
         if min_income == 0:
             income_match = 1.0
@@ -353,7 +392,7 @@ class Banking12FactorScorer:
             income_match = min(1.0, income / min_income)
         else:
             income_match = (income / min_income) * 0.6
-        
+
         # Balance match (25% of eligibility)
         if min_balance == 0:
             balance_match = 1.0
@@ -361,14 +400,13 @@ class Banking12FactorScorer:
             balance_match = 1.0
         else:
             balance_match = 0.5
-        
-        # Weighted eligibility score
+
         eligibility_score = (credit_match * 0.4) + (income_match * 0.35) + (balance_match * 0.25)
-        
+
         explanation = f"Credit: {int(credit_score)} vs {int(min_credit)} required ({credit_status})"
         if min_income > 0:
             explanation += f", Income: ${income:,.0f} vs ${min_income:,.0f} required"
-        
+
         return {
             'score': eligibility_score,
             'explanation': explanation,
@@ -381,30 +419,40 @@ class Banking12FactorScorer:
     
     def _product_kind_for_need(self, product: Dict) -> str:
         """
-        Map catalog row to a coarse product kind. F&M CSV uses category='Personal' for almost
-        everything, so we must use subcategory + name (not category) for life-stage logic.
+        Map catalog row to a coarse product kind using subcategory and category.
+        Handles Meridian Bank taxonomy: category is product type (Bank Account /
+        Certificate of Deposit / Credit Card / Loan / Mortgage / Investment).
+        Subcategory values: Checking, Savings, Money Market, 12-Month, 24-Month,
+        Cash Back, Travel Rewards, Secured, Balance Transfer, Auto, Personal,
+        Home Equity, Student Refinance, 30-Year Fixed, FHA, 15-Year Fixed, Jumbo,
+        Cash-Out Refinance, Managed Portfolio, Health Savings.
         """
         sub = str(product.get('subcategory', '') or '').strip().lower()
+        cat = str(product.get('category', '') or '').strip().lower()
         name = str(product.get('product_name', '') or '').lower()
+
         if sub == 'checking':
             return 'Checking'
-        if sub == 'savings':
+        if sub in ('savings', 'money market'):
             return 'Savings'
-        if sub == 'investment':
+        if sub in ('12-month', '24-month') or cat == 'certificate of deposit':
             return 'Investment'
-        if sub == 'credit':
+        if cat == 'credit card':
             return 'Credit_Card'
-        if sub == 'loan':
-            if 'auto' in name:
-                return 'Auto_Loan'
-            if 'mortgage' in name or 'home' in name:
-                return 'Mortgage'
+        if cat == 'investment' or sub in ('managed portfolio', 'health savings'):
+            return 'Investment'
+        if sub == 'auto' or (cat == 'loan' and 'auto' in name):
+            return 'Auto_Loan'
+        if sub in ('home equity', 'student refinance', 'personal') or cat == 'loan':
             return 'Other_Loan'
+        if cat == 'mortgage':
+            return 'Mortgage'
         return 'Other'
 
     def _calculate_financial_need_match(
         self, age: int, income: float, deposits: float,
-        num_products: int, category: str, product: Dict
+        num_products: int, category: str, product: Dict,
+        customer: Dict = None
     ) -> Dict:
         """Match product to customer's financial life stage and needs (uses subcategory, not broad CSV category)."""
         kind = self._product_kind_for_need(product)
@@ -493,12 +541,90 @@ class Banking12FactorScorer:
                 score = max(score, 0.9)
                 explanation = "Entry-level products for younger, moderate-income households"
 
+        # --- JPM rewards type matching ---
+        rewards_type = str(product.get('rewards_type', 'none')).lower()
+        preferred_rewards = str(customer.get('preferred_rewards_type', 'none')).lower() if customer else 'none'
+        if rewards_type != 'none' and rewards_type == preferred_rewards:
+            score = min(1.0, score + 0.12)
+            explanation += f" + rewards match ({rewards_type})"
+
+        # --- Monthly fee sensitivity penalty ---
+        monthly_fee = float(product.get('monthly_fee', 0))
+        fee_sensitivity_tier = str(customer.get('fee_sensitivity_tier', 'medium')).lower() if customer else 'medium'
+        if monthly_fee > 0:
+            if fee_sensitivity_tier == 'high':
+                score = max(0.1, score - 0.20)
+                explanation += f" - fee penalty (${monthly_fee:.2f}/mo, high sensitivity)"
+            # Check if fee is waivable for this customer
+            waiver_cond = str(product.get('fee_waiver_condition', 'none')).lower()
+            has_dd = str(customer.get('has_direct_deposit', 'False')).lower() == 'true' if customer else False
+            dd_amt = float(customer.get('monthly_direct_deposit_amt', 0)) if customer else 0
+            deposits = float(customer.get('total_deposits', 0)) if customer else deposits
+            waived = False
+            if waiver_cond.startswith('direct_deposit'):
+                threshold = float(waiver_cond.split('_')[-1]) if waiver_cond.split('_')[-1].isdigit() else 500
+                waived = has_dd and dd_amt >= threshold
+            elif waiver_cond.startswith('balance'):
+                threshold = float(waiver_cond.split('_')[-1]) if waiver_cond.split('_')[-1].isdigit() else 1500
+                waived = deposits >= threshold
+            if waived and monthly_fee > 0:
+                score = min(1.0, score + 0.15)
+                explanation += f" + fee waiver eligible"
+
+        # --- Financial goal alignment (highest-signal predictor of conversion) ---
+        customer_obj = customer or {}
+        goal = str(customer_obj.get('financial_goal', '')).lower()
+        cat_lower = str(product.get('category', '') or '').strip().lower()
+
+        goal_boosts = {
+            'pay_off_debt':         {'credit card': 0.15, 'loan': 0.12},
+            'home_purchase':        {'mortgage': 0.20, 'bank account': 0.08, 'certificate of deposit': 0.06},
+            'retirement_savings':   {'investment': 0.18, 'certificate of deposit': 0.14, 'bank account': 0.10},
+            'grow_wealth':          {'investment': 0.18, 'certificate of deposit': 0.10, 'bank account': 0.08},
+            'build_emergency_fund': {'bank account': 0.15, 'certificate of deposit': 0.12},
+        }
+        goal_boost = goal_boosts.get(goal, {}).get(cat_lower, 0.0)
+        if goal_boost > 0:
+            score = min(1.0, score + goal_boost)
+            explanation += f" + goal match ({goal})"
+
+        # --- Life stage override (more precise than raw age brackets) ---
+        life_stage = str(customer_obj.get('life_stage', '')).lower()
+        life_stage_score_map = {
+            ('student',        'Credit_Card'):  0.88,
+            ('student',        'Checking'):     0.90,
+            ('young_single',   'Auto_Loan'):    0.90,
+            ('young_single',   'Credit_Card'):  0.88,
+            ('new_family',     'Mortgage'):     0.94,
+            ('new_family',     'Checking'):     0.85,
+            ('growing_family', 'Mortgage'):     0.92,
+            ('growing_family', 'Other_Loan'):   0.84,
+            ('empty_nester',   'Investment'):   0.93,
+            ('empty_nester',   'Mortgage'):     0.72,
+            ('pre_retiree',    'Investment'):   0.96,
+            ('pre_retiree',    'CD'):           0.90,
+            ('retiree',        'Investment'):   0.94,
+            ('retiree',        'Credit_Card'):  0.55,
+        }
+        ls_key = (life_stage, kind)
+        if ls_key in life_stage_score_map and life_stage:
+            # Only override when life_stage gives a materially different signal
+            score = life_stage_score_map[ls_key]
+            explanation = f"Life stage match: {life_stage} → {kind}"
+
+        # --- Overdraft LOC: strong signal for high-overdraft customers ---
+        high_overdraft = int(customer_obj.get('high_overdraft_flag', 0))
+        product_name_lower = str(product.get('product_name', '')).lower()
+        if high_overdraft and 'overdraft' in product_name_lower:
+            score = min(1.0, score + 0.20)
+            explanation += " + overdraft LOC match"
+
         score = max(0.2, min(1.0, float(score)))
         return {
             'score': score,
             'explanation': explanation
         }
-    
+
     def _calculate_relationship_depth(self, num_products: int, tenure_months: int) -> Dict:
         """Score based on customer relationship depth"""
         
@@ -540,9 +666,21 @@ class Banking12FactorScorer:
         
         # Extract product attributes
         annual_fee = float(product.get('annual_fee', 0))
+        monthly_fee = float(product.get('monthly_fee', 0))
         min_balance = float(product.get('min_balance', 0))
-        interest_rate = float(product.get('interest_rate', product.get('interest_rate_apy', 0)))
         subcategory = product.get('subcategory', '').lower()
+        category_lower = str(product.get('category', '') or '').strip().lower()
+
+        # Use personalized rate tier if available (JPM products have credit-tier-based rates)
+        customer_credit_tier = str(customer.get('credit_tier', '')).lower() if customer else ''
+        if customer_credit_tier == 'excellent' and product.get('rate_tier_excellent'):
+            interest_rate = float(product.get('rate_tier_excellent', 0))
+        elif customer_credit_tier == 'good' and product.get('rate_tier_good'):
+            interest_rate = float(product.get('rate_tier_good', 0))
+        elif customer_credit_tier == 'fair' and product.get('rate_tier_fair'):
+            interest_rate = float(product.get('rate_tier_fair', 0))
+        else:
+            interest_rate = float(product.get('interest_rate', product.get('interest_rate_apy', 0)))
         
         # ========== 1. FEE SCORE (30%) - Lower is better (with Wealth Investor adjustment) ==========
         fee_score = 0
@@ -565,23 +703,34 @@ class Banking12FactorScorer:
             fee_score = 0.2
             explanations.append(f"High fee ${annual_fee:.0f}/yr (for high-value services)")
         
-        # Adjust based on customer affordability
+        # JPM: also consider monthly fee in total cost burden
+        total_annual_cost = annual_fee + (monthly_fee * 12)
         max_affordable_fee = customer_deposits * 0.005  # 0.5% of deposits
-        if annual_fee > max_affordable_fee:
-            fee_score *= 0.7  # Penalty for high fees relative to customer wealth
+        if total_annual_cost > max_affordable_fee and total_annual_cost > 0:
+            fee_score *= 0.7
+            explanations.append(f"(adjusted down: total fees ${total_annual_cost:.0f}/yr vs deposits)")
+        elif annual_fee > max_affordable_fee:
+            fee_score *= 0.7
             explanations.append(f"(adjusted down: fee high vs deposits)")
-        
+
+        # JPM: intro APR bonus for new-to-credit customers
+        intro_apr_months = int(product.get('intro_apr_months', 0))
+        num_products = int(customer.get('num_products', 3)) if customer else 3
+        if intro_apr_months >= 12 and num_products <= 2 and category_lower == 'credit card':
+            fee_score = min(1.0, fee_score + 0.08)
+            explanations.append(f"0% intro APR for {intro_apr_months} months (great for new credit users)")
+
         # Wealth Investors: premium fee-based products are acceptable (don't over-penalize)
         if is_wealth_investor and annual_fee > 0:
             fee_score = min(1.0, fee_score + 0.12)
             explanations.append("(Wealth segment: premium fee acceptable)")
         
         details['fee_score'] = fee_score
-        score += fee_score * 0.30
-        
-        # ========== 2. INTEREST RATE SCORE (30%) - Higher is better for savings/investment ==========
+        score += fee_score * 0.25
+
+        # ========== 2. INTEREST RATE SCORE (25%) - Higher is better for savings/investment ==========
         rate_score = 0
-        if subcategory in ['savings', 'investment', 'cd', 'ira', 'money market']:
+        if category_lower in ('certificate of deposit', 'investment') or subcategory in ('savings', 'money market', 'managed portfolio', 'health savings', '12-month', '24-month'):
             # For interest-bearing products, higher rates are better
             if interest_rate >= 2.5:
                 rate_score = 1.0
@@ -604,7 +753,10 @@ class Banking12FactorScorer:
             else:
                 rate_score = 0.3
                 explanations.append("No interest")
-        elif subcategory in ['loan', 'credit', 'mortgage']:
+        elif category_lower in ('credit card', 'loan', 'mortgage') or subcategory in (
+                'auto', 'personal', 'home equity', 'student refinance',
+                '30-year fixed', 'fha', '15-year fixed', 'jumbo', 'cash-out refinance',
+                'cash back', 'travel rewards', 'balance transfer', 'secured'):
             # For loans/credit, LOWER rates are better
             if interest_rate <= 4.0:
                 rate_score = 1.0
@@ -632,9 +784,9 @@ class Banking12FactorScorer:
                 explanations.append(f"Bonus: earns {interest_rate:.2f}% APY")
         
         details['rate_score'] = rate_score
-        score += rate_score * 0.30
-        
-        # ========== 3. MINIMUM BALANCE SCORE (20%) - Lower is more accessible ==========
+        score += rate_score * 0.25
+
+        # ========== 3. MINIMUM BALANCE SCORE (15%) - Lower is more accessible ==========
         balance_score = 0
         if min_balance == 0:
             balance_score = 1.0
@@ -666,9 +818,9 @@ class Banking12FactorScorer:
             balance_score *= 0.8  # Moderate penalty
         
         details['balance_score'] = balance_score
-        score += balance_score * 0.20
-        
-        # ========== 4. FINANCIAL ROI SCORE (20%) - Overall value ==========
+        score += balance_score * 0.15
+
+        # ========== 4. FINANCIAL ROI SCORE (15%) - Customer net value ==========
         roi_score = 0.5  # Baseline
         
         # Calculate effective ROI
@@ -717,68 +869,200 @@ class Banking12FactorScorer:
                 roi_score = 0.5
         
         details['roi_score'] = roi_score
-        score += roi_score * 0.20
-        
+        score += roi_score * 0.15
+
+        # ========== 5. PROJECTED BANK REVENUE FROM THIS CUSTOMER (20%) ==========
+        # This score is CUSTOMER-SPECIFIC — it estimates how much revenue the bank
+        # will earn from THIS customer using THIS product, based on their actual
+        # spending, balances, credit behaviour, and financial goals.
+        # A free product ranks higher here for a customer whose profile generates
+        # meaningful deposit float or interchange, and lower for a low-activity customer.
+        aum_fee_pct     = float(product.get('aum_fee_pct', 0))
+        regular_apr_pct = float(product.get('regular_apr_pct', interest_rate))
+
+        # Pull customer behavioural signals (all default-safe)
+        monthly_spend       = float((customer or {}).get('monthly_spend_in_primary_cat', 200))
+        credit_util         = float((customer or {}).get('credit_utilization_ratio', 0.30))
+        avg_daily_bal       = float((customer or {}).get('avg_daily_balance', customer_deposits))
+        financial_goal      = str((customer or {}).get('financial_goal', '')).lower()
+        travel_freq         = str((customer or {}).get('travel_frequency', 'none')).lower()
+        total_loan_bal      = float((customer or {}).get('total_loan_balance', 0))
+        has_dd              = str((customer or {}).get('has_direct_deposit', 'False')).lower() == 'true'
+        dd_amt              = float((customer or {}).get('monthly_direct_deposit_amt', 0))
+        age_val             = float((customer or {}).get('age', 40))
+
+        bank_rev_score = 0.0
+        rev_explanation = ''
+
+        if category_lower == 'credit card':
+            # Bank earns interchange (~1.8 %) on every dollar spent PLUS
+            # interest on the revolving balance this customer is likely to carry.
+            monthly_interchange = monthly_spend * 0.018
+            # Travel-heavy customers amplify revenue on travel-reward cards
+            if travel_freq in ('domestic_frequent', 'international_frequent'):
+                monthly_interchange *= 1.25
+            likely_revolving = avg_daily_bal * 0.25 * credit_util
+            monthly_interest  = likely_revolving * (regular_apr_pct / 100 / 12)
+            projected_monthly = monthly_interchange + monthly_interest
+            # $0 → 0.25 | $25 → 0.55 | $60 → 0.80 | $100+ → 1.0
+            bank_rev_score = min(1.0, 0.25 + min(projected_monthly / 100, 0.75))
+            rev_explanation = f"Est. ${projected_monthly:.0f}/mo bank revenue (interchange + interest)"
+
+        elif category_lower in ('loan', 'mortgage') or subcategory in (
+                'auto', 'personal', 'home equity', 'student refinance',
+                '30-year fixed', 'fha', '15-year fixed', 'jumbo', 'cash-out refinance'):
+            # Bank earns net interest spread (rate minus ~3 % cost of funds)
+            net_spread = max(0.0, interest_rate - 3.0)
+            # Weight by how well the customer's goal aligns with this loan type
+            goal_fit = 1.0
+            if category_lower == 'mortgage' and financial_goal != 'home_purchase':
+                goal_fit = 0.40
+            elif subcategory == 'personal' and financial_goal not in ('pay_off_debt', 'build_emergency_fund'):
+                goal_fit = 0.55
+            elif subcategory == 'auto' and age_val > 65:
+                goal_fit = 0.45
+            bank_rev_score = min(1.0, 0.30 + goal_fit * 0.40 + (net_spread / 22) * 0.30)
+            rev_explanation = f"Est. {net_spread:.1f}% net spread, goal alignment {goal_fit:.0%}"
+
+        elif category_lower == 'investment' or subcategory in ('managed portfolio', 'health savings'):
+            # Bank earns AUM fees on investable assets above a living-expense buffer
+            investable = max(0.0, avg_daily_bal - 15_000)
+            projected_annual_aum = investable * (aum_fee_pct / 100) if aum_fee_pct > 0 else investable * 0.0025
+            # $0 → 0.25 | $500 → 0.55 | $2000 → 0.85 | $5000+ → 1.0
+            bank_rev_score = min(1.0, 0.25 + min(projected_annual_aum / 5_000, 0.75))
+            rev_explanation = f"Est. ${projected_annual_aum:.0f}/yr AUM revenue"
+
+        elif category_lower == 'certificate of deposit' or subcategory in ('savings', 'money market', '12-month', '24-month'):
+            # Bank borrows from customer; profit = NIM (~2.5 %) on deposit float
+            deposit_float_rev = avg_daily_bal * 0.025
+            bank_rev_score = min(0.85, 0.25 + min(deposit_float_rev / 5_000, 0.60))
+            rev_explanation = f"Est. ${deposit_float_rev:.0f}/yr NIM on deposits"
+
+        else:
+            # Checking — free accounts: revenue = NIM on deposit float + direct-deposit stability value
+            deposit_float_rev = avg_daily_bal * 0.025
+            dd_stability       = (dd_amt * 0.015) if has_dd else 0.0   # sticky DD customer
+            total_monthly_rev  = (deposit_float_rev + dd_stability) / 12 + monthly_fee
+            bank_rev_score = min(0.80, 0.20 + min(total_monthly_rev / 100, 0.60))
+            rev_explanation = f"Est. ${total_monthly_rev:.0f}/mo (float + fees)"
+
+        details['bank_revenue_score'] = bank_rev_score
+        details['projected_bank_revenue_explanation'] = rev_explanation
+        score += bank_rev_score * 0.20
+        if rev_explanation:
+            explanations.append(rev_explanation)
+
         # ========== FINAL SCORE & EXPLANATION ==========
         score = max(0.0, min(1.0, score))  # Clamp to [0,1]
-        
+
         # Build comprehensive explanation
         explanation_text = " | ".join(explanations[:3])  # Top 3 factors
-        
+
         return {
             'score': score,
             'explanation': explanation_text,
             'details': details
         }
     
-    def _calculate_product_pairing(self, customer_id: str, product_id: str, category: str) -> Dict:
-        """Calculate affinity with customer's existing products"""
-        
-        # Define complementary product categories
+    def _calculate_product_pairing(
+        self, customer_id: str, product_id: str, category: str,
+        product: Dict = None, customer: Dict = None
+    ) -> Dict:
+        """Calculate affinity with customer's existing products, using subcategory-based pairing rules."""
+
+        # Complementary subcategory pairs (keyed by owned subcategory → what pairs well next)
         pairing_rules = {
-            'Checking': ['Savings', 'Credit_Card', 'Investment', 'Debit_Card'],
-            'Savings': ['CD', 'Investment', 'Retirement_IRA', 'Money_Market'],
-            'Credit_Card': ['Loan', 'Investment', 'Line_of_Credit'],
-            'Loan': ['Insurance', 'Investment', 'Refinance'],
-            'Mortgage': ['Home_Equity_Line', 'Insurance', 'Investment', 'Refinance'],
-            'Investment': ['Retirement_IRA', 'Wealth_Management', 'CD'],
-            'Business_Checking': ['Business_Loan', 'Merchant_Services', 'Payroll'],
-            'Agricultural_Loan': ['Crop_Insurance', 'Equipment_Financing', 'Operating_Line']
+            'Checking':          ['Savings', 'Money Market', '12-Month', '24-Month', 'Cash Back', 'Managed Portfolio'],
+            'Savings':           ['12-Month', '24-Month', 'Managed Portfolio', 'Checking'],
+            'Money Market':      ['12-Month', '24-Month', 'Managed Portfolio', 'Checking'],
+            '12-Month':          ['Savings', 'Money Market', 'Managed Portfolio', '24-Month'],
+            '24-Month':          ['Savings', 'Money Market', 'Managed Portfolio'],
+            'Cash Back':         ['Personal', 'Managed Portfolio', 'Checking'],
+            'Travel Rewards':    ['Managed Portfolio', 'Checking', 'Savings'],
+            'Balance Transfer':  ['Checking', 'Savings', 'Personal'],
+            'Secured':           ['Checking', 'Savings'],
+            'Personal':          ['Checking', 'Savings', 'Cash Back'],
+            'Student Refinance': ['Checking', 'Savings'],
+            'Auto':              ['Checking', 'Cash Back'],
+            'Home Equity':       ['30-Year Fixed', 'Managed Portfolio'],
+            '30-Year Fixed':     ['Home Equity', 'Managed Portfolio', 'Checking'],
+            'FHA':               ['Checking', 'Savings'],
+            '15-Year Fixed':     ['Home Equity', 'Managed Portfolio'],
+            'Jumbo':             ['Managed Portfolio', 'Checking'],
+            'Cash-Out Refinance': ['Home Equity', 'Managed Portfolio'],
+            'Managed Portfolio': ['12-Month', '24-Month', 'Savings'],
+            'Health Savings':    ['Checking', 'Savings'],
         }
-        
+
         # Get customer's current products (keys normalized to str in __init__)
         lookup_id = str(customer_id).strip() if customer_id is not None else ''
         current_products = self.customer_products.get(lookup_id, [])
-        
+
+        product_sub = str((product or {}).get('subcategory', '') or '').strip()
+        customer_obj = customer or {}
+
         if not current_products:
-            return {
-                'score': 0.5,
-                'explanation': "No existing products to pair with",
-                'pairs_with': []
-            }
-        
-        # Check if this product pairs with any existing product
-        pairs_with = []
-        for existing_pid in current_products:
-            existing_product = self.products_df[self.products_df['product_id'] == existing_pid]
-            if len(existing_product) > 0:
-                existing_category = existing_product.iloc[0].get('category', '')
-                complementary_categories = pairing_rules.get(existing_category, [])
-                
-                if category in complementary_categories:
-                    pairs_with.append(existing_category)
-        
-        if pairs_with:
-            score = min(0.9, 0.6 + (len(pairs_with) * 0.15))
-            explanation = f"Pairs well with: {', '.join(pairs_with[:3])}"
+            score = 0.5
+            explanation = "No existing products to pair with"
+            pairs_with = []
         else:
-            score = 0.4
-            explanation = "Limited pairing with existing products"
-        
+            pairs_with = []
+            for existing_pid in current_products:
+                rows = self.products_df[self.products_df['product_id'] == existing_pid]
+                if len(rows) > 0:
+                    owned_sub = str(rows.iloc[0].get('subcategory', '') or '').strip()
+                    complementary = pairing_rules.get(owned_sub, [])
+                    if product_sub in complementary:
+                        pairs_with.append(owned_sub)
+
+            if pairs_with:
+                score = min(0.9, 0.6 + len(pairs_with) * 0.15)
+                explanation = f"Pairs well with: {', '.join(pairs_with[:3])}"
+            else:
+                score = 0.4
+                explanation = "Limited pairing with existing products"
+
+        # --- Cross-sell sequencing: reward the "right next step" product ---
+        owned_subcats = set()
+        for existing_pid in current_products:
+            rows = self.products_df[self.products_df['product_id'] == existing_pid]
+            if len(rows) > 0:
+                owned_subcats.add(str(rows.iloc[0].get('subcategory', '') or '').strip())
+
+        OPTIMAL_SEQUENCE = [
+            [],
+            ['Checking'],
+            ['Checking', 'Savings'],
+            ['Checking', 'Savings', 'Money Market', 'Cash Back', 'Travel Rewards'],
+        ]
+        step_index = min(len(owned_subcats), len(OPTIMAL_SEQUENCE) - 1)
+        expected_next = OPTIMAL_SEQUENCE[step_index]
+        if product_sub in expected_next:
+            score = min(1.0, score + 0.08)
+            explanation += " (next logical step)"
+
+        # --- Competitor card signal: favour balance-transfer over regular credit ---
+        has_competitor = str(customer_obj.get('has_competitor_credit_card', 'False')).lower() in ('true', '1', 'yes')
+        product_name_lower = str((product or {}).get('product_name', '')).lower()
+        cat_lower_pairing = str((product or {}).get('category', '') or '').strip().lower()
+        if has_competitor and cat_lower_pairing == 'credit card':
+            if 'balance transfer' in product_name_lower:
+                score = min(1.0, score + 0.15)
+                explanation += " + competitor balance-transfer opportunity"
+            else:
+                score = min(1.0, score + 0.05)
+                explanation += " + cross-sell from competitor card"
+
+        # --- High outstanding debt: boost debt-consolidation products ---
+        outstanding_debt = float(customer_obj.get('outstanding_debt_total', 0))
+        if outstanding_debt > 15000 and product_sub in ('Personal', 'Student Refinance'):
+            score = min(1.0, score + 0.12)
+            explanation += f" + debt consolidation fit (${outstanding_debt:,.0f} outstanding)"
+
         return {
             'score': score,
             'explanation': explanation,
-            'pairs_with': pairs_with
+            'pairs_with': pairs_with,
         }
     
     def _calculate_channel_fit(self, digital_engagement: float, digital_required: bool) -> Dict:

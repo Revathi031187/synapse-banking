@@ -16,6 +16,13 @@ from typing import Any, Dict, List, Optional, Set, Tuple
 
 logger = logging.getLogger(__name__)
 
+try:
+    from utils.claude_client import get_claude_client
+    CLAUDE_AVAILABLE = True
+except ImportError:
+    CLAUDE_AVAILABLE = False
+    get_claude_client = None
+
 # Shown at least this many times with zero clicks → deprioritize on next B run
 DEPRIORITIZE_MIN_SHOWS = 3
 MAX_PER_CATEGORY = 3
@@ -28,6 +35,16 @@ def _pid(x: Any) -> str:
     if x is None:
         return ""
     return str(x).strip()
+
+
+def _safe_float(v: Any, default: float = 0.0) -> float:
+    """Convert v to float, returning default on None / NaN / inf / error."""
+    import math
+    try:
+        f = float(v)
+        return default if (math.isnan(f) or math.isinf(f)) else f
+    except (TypeError, ValueError):
+        return default
 
 
 def _empty_ledger() -> Dict[str, Any]:
@@ -45,17 +62,19 @@ def _get_product_from_catalog(products_df, product_id: str) -> Optional[Dict[str
         row = products_df[products_df["product_id"].astype(str) == str(product_id)]
         if len(row) == 0:
             return None
-        r = row.iloc[0]
+        r = row.iloc[0].to_dict()  # convert Series → plain dict (avoids numpy scalar leakage)
         sub = r.get("subcategory")
         sub_s = "" if sub is None or str(sub).strip().lower() == "nan" else str(sub).strip()
         return {
             "product_id": _pid(r.get("product_id")),
-            "product_name": r.get("product_name") or "Banking product",
-            "category": r.get("category") or r.get("subcategory") or "Banking",
+            "product_name": str(r.get("product_name") or "Banking product"),
+            "category": str(r.get("category") or r.get("subcategory") or "Banking"),
             "subcategory": sub_s,
-            "annual_fee": r.get("annual_fee"),
-            "min_balance": r.get("min_balance"),
-            "interest_rate_apy": r.get("interest_rate_apy") or r.get("interest_rate"),
+            "annual_fee": _safe_float(r.get("annual_fee"), 0.0),
+            "min_balance": _safe_float(r.get("min_balance"), 0.0),
+            "interest_rate_apy": _safe_float(
+                r.get("interest_rate_apy") or r.get("interest_rate"), 0.0
+            ),
             "score": 0.55,
             "reasoning": "From your saved goals or application activity.",
         }
@@ -207,6 +226,9 @@ class AgentD_Banking:
 
         # 3) Agent C primary offer
         offer = (agent_c_result or {}).get("offer")
+        # Extract offer card details from offer_intelligence
+        _offer_intel = (agent_c_result or {}).get("offer_intelligence") or {}
+        _sel_offer = _offer_intel.get("selected_offer") or {}
         if offer and offer.get("product_id"):
             pid = _pid(offer["product_id"])
             if pid not in used:
@@ -298,6 +320,22 @@ class AgentD_Banking:
         if offer:
             offer_reason = str(offer.get("reasoning") or offer.get("reason") or "").strip()
 
+        # Build offer card snapshot to surface in Recommender when the pinned product is shown
+        _pinned_offer_card = None
+        if _sel_offer.get("offer_name") and offer and offer.get("product_id"):
+            _pinned_offer_card = {
+                "product_id": _pid(offer["product_id"]),
+                "product_name": offer.get("product_name") or "",
+                "offer_name": _sel_offer.get("offer_name") or "",
+                "offer_type": _sel_offer.get("offer_type") or "",
+                "headline_value": _sel_offer.get("headline_value") or "",
+                "content_benefit_1": _sel_offer.get("content_benefit_1") or "",
+                "content_benefit_2": _sel_offer.get("content_benefit_2") or "",
+                "content_benefit_3": _sel_offer.get("content_benefit_3") or "",
+                "days_remaining": _sel_offer.get("days_remaining"),
+                "terms_summary": _sel_offer.get("terms_summary") or "",
+            }
+
         directives = {
             "boost_product_ids": boost_ids,
             "deprioritize_product_ids": deprioritize_list,
@@ -307,6 +345,7 @@ class AgentD_Banking:
             "supervisor_story_hint": self._story_hint(
                 incomplete_applications, saved_goals, clicked_product_ids, offer
             ),
+            "pinned_offer_card": _pinned_offer_card,
         }
         ledger["last_directives"] = directives
 
@@ -378,16 +417,30 @@ class AgentD_Banking:
                     "Agent B ranks banking products by persona fit, eligibility, and 12-factor match — "
                     "not by campaign or offer strategy."
                 ),
+                # Fall back to top Agent B product if Agent C didn't select an offer
+                # (common for persona mode when the auto-selected customer has no eligible products)
                 "agent_c_primary_offer": (
-                    {
-                        "product_id": _pid(offer.get("product_id")),
-                        "product_name": offer.get("product_name"),
-                        "category": offer.get("category"),
-                        "reasoning": (offer.get("reasoning") or "")[:240],
-                        "status": "Offer ready",
-                    }
-                    if offer and offer.get("product_id")
-                    else None
+                    lambda _src, _from_c: {
+                        "product_id": _pid(_src.get("product_id")),
+                        "product_name": _src.get("product_name"),
+                        "category": _src.get("category"),
+                        "reasoning": (_src.get("reasoning") or (
+                            "Top-ranked product for this segment by 12-factor scoring."
+                            if not _from_c else ""
+                        ))[:300],
+                        "status": "Offer ready" if _from_c else "Segment recommendation",
+                        "offer_name": _sel_offer.get("offer_name") or "",
+                        "offer_type": _sel_offer.get("offer_type") or "",
+                        "headline_value": _sel_offer.get("headline_value") or "",
+                        "content_benefit_1": _sel_offer.get("content_benefit_1") or "",
+                        "content_benefit_2": _sel_offer.get("content_benefit_2") or "",
+                        "content_benefit_3": _sel_offer.get("content_benefit_3") or "",
+                        "days_remaining": _sel_offer.get("days_remaining"),
+                        "terms_summary": _sel_offer.get("terms_summary") or "",
+                    } if _src else None
+                )(
+                    offer if (offer and offer.get("product_id")) else (b_ranked[0] if b_ranked else None),
+                    bool(offer and offer.get("product_id")),
                 ),
                 "agent_c_note": (
                     "Agent C picks the one best commercial offer (retention, strategy, eligibility) — "
@@ -430,13 +483,32 @@ class AgentD_Banking:
         offer: Any,
         persona_label: str,
     ) -> Tuple[str, str]:
-        """Headline + paragraph for supervisor instruction card (banking)."""
+        """Headline + paragraph for supervisor instruction card. Tries Claude first, falls back to templates."""
         fn = (focus_product or {}).get("product_name") or "selected product"
+        churn_category = (offer or {}).get("churn_category") if isinstance(offer, dict) else ""
+
+        # Try Claude LLM for dynamic supervisor copy
+        if CLAUDE_AVAILABLE and get_claude_client:
+            try:
+                claude = get_claude_client()
+                if claude.is_available():
+                    llm_result = claude.generate_supervisor_copy(
+                        focus_source=focus_source or "standard",
+                        product_name=fn,
+                        persona_label=persona_label,
+                        churn_category=churn_category or "",
+                    )
+                    if llm_result.get("headline") and llm_result.get("detail"):
+                        return llm_result["headline"], llm_result["detail"]
+            except Exception as e:
+                logger.warning(f"Claude supervisor copy failed, using template: {e}")
+
+        # Template fallback
         if focus_source == "incomplete_application":
             return (
                 f"Recovery priority: incomplete application — {fn}",
                 (
-                    f"**Supervisor (Agent D) → Agent B:** On the **next session or outbound campaign**, lead with "
+                    f"**Supervisor (Agent D) -> Agent B:** On the **next session or outbound campaign**, lead with "
                     f"**{fn}**. The customer started but did not finish this application — recovery takes priority "
                     f"over generic **{persona_label}** product rankings. Pin this product **#1** and pair with "
                     f"branch or digital completion messaging."
@@ -446,7 +518,7 @@ class AgentD_Banking:
             return (
                 f"Reinforce saved goal: {fn}",
                 (
-                    f"**Supervisor → Agent B:** The customer saved **{fn}** (watchlist / goal). On the next visit, "
+                    f"**Supervisor -> Agent B:** The customer saved **{fn}** (watchlist / goal). On the next visit, "
                     f"surface it **first** to respect stated intent while keeping eligibility checks in Agent B."
                 ),
             )
@@ -454,7 +526,7 @@ class AgentD_Banking:
             return (
                 f"Double down on engagement: {fn}",
                 (
-                    f"**Supervisor → Agent B:** The customer recently engaged with **{fn}**. Boost and pin it **#1** "
+                    f"**Supervisor -> Agent B:** The customer recently engaged with **{fn}**. Boost and pin it **#1** "
                     f"next time instead of repeating ignored recommendations."
                 ),
             )
@@ -471,13 +543,13 @@ class AgentD_Banking:
             return (
                 f"Lead with segment fit: {fn}",
                 (
-                    f"No Agent C primary offer and no recovery signals. **Supervisor → Agent B:** pin **{fn}** (#1 "
+                    f"No Agent C primary offer and no recovery signals. **Supervisor -> Agent B:** pin **{fn}** (#1 "
                     f"segment-ranked product) until offer engine or journey signals update."
                 ),
             )
         return (
             "Supervisor routing",
-            "**Supervisor → Agent B:** Use standard persona rankings; add engagement signals when available.",
+            "**Supervisor -> Agent B:** Use standard persona rankings; add engagement signals when available.",
         )
 
     def _story_hint(
@@ -624,15 +696,12 @@ class AgentD_Banking:
             apy_f = float(apy_raw) if apy_raw is not None and str(apy_raw).strip() != "" else 0.0
         except (TypeError, ValueError):
             apy_f = 0.0
-        score = float(pr.get("score") or 0)
+        score = _safe_float(pr.get("score"), 0.0)
         compat = pr.get("compatibility")
         if compat is None:
             compat = round(score * 100, 1)
         else:
-            try:
-                compat = float(compat)
-            except (TypeError, ValueError):
-                compat = round(score * 100, 1)
+            compat = _safe_float(compat, round(score * 100, 1))
 
         baseline_pct: Optional[float] = None
         pre_raw = pr.get("_pre_supervisor_score")

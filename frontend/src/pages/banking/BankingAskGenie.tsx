@@ -1,6 +1,7 @@
 import React from 'react';
 import { useQuery, useMutation } from '@tanstack/react-query';
-import { MessageSquare, RefreshCw, Database, AlertCircle, CheckCircle2 } from 'lucide-react';
+import { MessageSquare, RefreshCw, Database, AlertCircle, CheckCircle2, BarChart2, Table2, X } from 'lucide-react';
+import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, Cell } from 'recharts';
 
 import { getBankingApiBase } from '../../utils/apiBase';
 
@@ -49,16 +50,130 @@ interface GenieVerifyResponse {
   hint?: string;
 }
 
+interface GenieTable {
+  columns: string[];
+  rows: string[][];
+}
+
 interface GenieAskResponse {
   success?: boolean;
   error?: string;
   hint?: string;
   narrative?: string;
   sql?: string | null;
-  attachments?: Array<{ type?: string; text?: string; sql?: string; title?: string }>;
+  table?: GenieTable | null;
+  attachments?: Array<{ type?: string; text?: string; sql?: string; title?: string; table?: GenieTable }>;
   conversation_id?: string | null;
   message_id?: string | null;
   raw_attachment_types?: string[];
+}
+
+const CHART_COLORS = ['#3B82F6', '#10B981', '#8B5CF6', '#F59E0B', '#EF4444', '#06B6D4', '#EC4899', '#84CC16'];
+
+function GenieResultTable({ table }: { table: { columns: string[]; rows: string[][] } }) {
+  const [view, setView] = React.useState<'table' | 'chart'>('table');
+
+  // Detect numeric columns for chart
+  const numericColIdx = table.columns.findIndex((_, ci) =>
+    table.rows.slice(0, 5).every(r => r[ci] !== '' && !isNaN(Number(r[ci])))
+  );
+  const labelColIdx = numericColIdx > 0 ? 0 : (numericColIdx === 0 ? 1 : 0);
+  const canChart = numericColIdx >= 0 && table.rows.length > 0 && table.columns.length >= 2;
+
+  const chartData = canChart
+    ? table.rows.slice(0, 50).map(r => ({
+        name: r[labelColIdx] ?? '',
+        value: Number(r[numericColIdx]),
+      }))
+    : [];
+
+  return (
+    <div className="rounded-xl border border-slate-200 overflow-hidden shadow-sm">
+      {/* Header */}
+      <div className="flex items-center gap-3 px-4 py-2.5 bg-slate-800">
+        <span className="text-xs font-bold text-slate-300 uppercase tracking-widest">
+          Results — {table.rows.length} row{table.rows.length !== 1 ? 's' : ''}
+        </span>
+        <div className="ml-auto flex gap-1">
+          <button
+            type="button"
+            onClick={() => setView('table')}
+            className={`flex items-center gap-1 px-2.5 py-1 rounded-md text-xs font-semibold transition-colors ${
+              view === 'table' ? 'bg-blue-600 text-white' : 'text-slate-400 hover:bg-slate-700 hover:text-white'
+            }`}
+          >
+            <Table2 className="w-3.5 h-3.5" /> Table
+          </button>
+          {canChart && (
+            <button
+              type="button"
+              onClick={() => setView('chart')}
+              className={`flex items-center gap-1 px-2.5 py-1 rounded-md text-xs font-semibold transition-colors ${
+                view === 'chart' ? 'bg-blue-600 text-white' : 'text-slate-400 hover:bg-slate-700 hover:text-white'
+              }`}
+            >
+              <BarChart2 className="w-3.5 h-3.5" /> Chart
+            </button>
+          )}
+        </div>
+      </div>
+
+      {view === 'table' ? (
+        <div className="overflow-x-auto max-h-96">
+          <table className="min-w-full text-sm border-collapse">
+            <thead className="sticky top-0 bg-slate-100 z-10">
+              <tr>
+                {table.columns.map((col, ci) => (
+                  <th
+                    key={ci}
+                    className="px-4 py-2.5 text-left text-xs font-bold text-slate-600 uppercase tracking-wide border-b border-slate-200 whitespace-nowrap"
+                  >
+                    {col}
+                  </th>
+                ))}
+              </tr>
+            </thead>
+            <tbody>
+              {table.rows.map((row, ri) => (
+                <tr key={ri} className={ri % 2 === 0 ? 'bg-white' : 'bg-slate-50'}>
+                  {row.map((cell, ci) => (
+                    <td key={ci} className="px-4 py-2 text-slate-800 border-b border-slate-100 whitespace-nowrap">
+                      {cell}
+                    </td>
+                  ))}
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      ) : (
+        <div className="bg-white p-4">
+          <ResponsiveContainer width="100%" height={280}>
+            <BarChart data={chartData} margin={{ top: 8, right: 16, left: 0, bottom: 40 }}>
+              <CartesianGrid strokeDasharray="3 3" stroke="#f0f0f0" />
+              <XAxis
+                dataKey="name"
+                tick={{ fontSize: 11, fill: '#64748b' }}
+                angle={chartData.length > 6 ? -35 : 0}
+                textAnchor={chartData.length > 6 ? 'end' : 'middle'}
+                interval={0}
+              />
+              <YAxis tick={{ fontSize: 11, fill: '#64748b' }} />
+              <Tooltip
+                contentStyle={{ fontSize: 12, borderRadius: 8, border: '1px solid #e2e8f0' }}
+                formatter={(v: number) => [v.toLocaleString(), table.columns[numericColIdx]]}
+              />
+              <Bar dataKey="value" radius={[4, 4, 0, 0]}>
+                {chartData.map((_, i) => (
+                  <Cell key={i} fill={CHART_COLORS[i % CHART_COLORS.length]} />
+                ))}
+              </Bar>
+            </BarChart>
+          </ResponsiveContainer>
+        </div>
+      )}
+    </div>
+  );
 }
 
 export default function BankingAskGenie() {
@@ -68,6 +183,7 @@ export default function BankingAskGenie() {
   const [spacesLoading, setSpacesLoading] = React.useState(false);
   const [verifyResult, setVerifyResult] = React.useState<GenieVerifyResponse | null>(null);
   const [verifyLoading, setVerifyLoading] = React.useState(false);
+  const [syncDismissed, setSyncDismissed] = React.useState(false);
 
   const statusQuery = useQuery({
     queryKey: ['banking-genie-status'],
@@ -138,7 +254,7 @@ export default function BankingAskGenie() {
       <div>
         <h1 className="text-xl font-semibold text-gray-900">Ask Genie</h1>
         <p className="text-gray-500 text-sm mt-1">
-          Natural-language questions against your Unity Catalog data via a Databricks Genie space. Persona context is injected from the latest Agent A run.
+          Natural-language questions against your Unity Catalog data via a Databricks Genie space. Persona context is injected from the latest Segmentation run.
         </p>
       </div>
 
@@ -210,7 +326,7 @@ export default function BankingAskGenie() {
       <div className="flex flex-wrap gap-3 mb-6">
         <button
           type="button"
-          onClick={() => syncMutation.mutate()}
+          onClick={() => { setSyncDismissed(false); syncMutation.mutate(); }}
           disabled={syncMutation.isPending}
           className="inline-flex items-center gap-2 px-4 py-2 rounded-lg bg-slate-800 text-white text-sm font-medium hover:bg-slate-900 disabled:opacity-50"
         >
@@ -306,18 +422,24 @@ export default function BankingAskGenie() {
         </div>
       )}
 
-      {syncMutation.isSuccess && (
+      {syncMutation.isSuccess && !syncDismissed && (
         <div
-          className={`mb-6 text-sm rounded-lg p-4 border ${
-            syncMutation.data?.skipped ? 'bg-amber-50 border-amber-200 text-amber-900' : 'bg-green-50 border-green-200 text-green-900'
+          className={`mb-6 text-sm rounded-lg p-4 border flex items-start gap-3 ${
+            syncMutation.data?.skipped ? 'bg-slate-50 border-slate-200 text-slate-600' : 'bg-green-50 border-green-200 text-green-900'
           }`}
         >
-          {syncMutation.data?.message || 'Sync completed.'}
+          <span className="flex-1">{syncMutation.data?.message || 'Sync completed.'}</span>
+          <button type="button" onClick={() => setSyncDismissed(true)} className="shrink-0 opacity-50 hover:opacity-100">
+            <X className="w-4 h-4" />
+          </button>
         </div>
       )}
-      {syncMutation.isError && (
-        <div className="mb-6 text-sm rounded-lg p-4 border border-red-200 bg-red-50 text-red-900">
-          {(syncMutation.error as Error)?.message}
+      {syncMutation.isError && !syncDismissed && (
+        <div className="mb-6 text-sm rounded-lg p-4 border border-red-200 bg-red-50 text-red-900 flex items-start gap-3">
+          <span className="flex-1">{(syncMutation.error as Error)?.message}</span>
+          <button type="button" onClick={() => setSyncDismissed(true)} className="shrink-0 opacity-50 hover:opacity-100">
+            <X className="w-4 h-4" />
+          </button>
         </div>
       )}
 
@@ -356,24 +478,30 @@ export default function BankingAskGenie() {
               )}
             </div>
           )}
+
+          {/* ── Answer narrative ── */}
           {askMutation.data.narrative && (
-            <div className="bg-gray-50 rounded-lg border border-gray-200 p-4">
-              <h3 className="text-xs font-semibold text-gray-500 uppercase tracking-wide mb-2">Answer</h3>
-              <div className="text-sm text-gray-900 whitespace-pre-wrap">{askMutation.data.narrative}</div>
+            <div className="bg-blue-50 rounded-xl border border-blue-200 p-4">
+              <h3 className="text-xs font-bold text-blue-700 uppercase tracking-widest mb-2">Answer</h3>
+              <div className="text-sm text-gray-900 leading-relaxed whitespace-pre-wrap">{askMutation.data.narrative}</div>
             </div>
           )}
+
+          {/* ── Result Table ── */}
+          {askMutation.data.table && askMutation.data.table.columns.length > 0 && (
+            <GenieResultTable table={askMutation.data.table} />
+          )}
+
+          {/* ── SQL ── */}
           {askMutation.data.sql && (
-            <div className="bg-slate-900 rounded-lg p-4 overflow-x-auto">
-              <h3 className="text-xs font-semibold text-slate-400 uppercase tracking-wide mb-2">SQL</h3>
-              <pre className="text-sm text-green-400 font-mono">{askMutation.data.sql}</pre>
-            </div>
-          )}
-          {askMutation.data.attachments && askMutation.data.attachments.length > 0 && (
-            <details className="text-sm">
-              <summary className="cursor-pointer text-blue-700 font-medium">Attachments ({askMutation.data.attachments.length})</summary>
-              <pre className="mt-2 p-3 bg-gray-100 rounded text-xs overflow-x-auto max-h-64">
-                {JSON.stringify(askMutation.data.attachments, null, 2)}
-              </pre>
+            <details open className="text-sm">
+              <summary className="cursor-pointer flex items-center gap-1.5 text-slate-500 font-semibold text-xs uppercase tracking-wide mb-2 select-none">
+                <span className="w-4 h-4 rounded bg-slate-700 text-white flex items-center justify-center text-[9px] font-bold">SQL</span>
+                Generated SQL
+              </summary>
+              <div className="bg-slate-900 rounded-xl p-4 overflow-x-auto">
+                <pre className="text-sm text-green-400 font-mono whitespace-pre">{askMutation.data.sql}</pre>
+              </div>
             </details>
           )}
         </div>
