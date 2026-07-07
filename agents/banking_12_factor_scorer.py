@@ -16,6 +16,15 @@ import logging
 
 logger = logging.getLogger(__name__)
 
+try:
+    from utils.banking_constants import DIGITAL_HIGH, DIGITAL_MED, DIGITAL_LOW
+    DIGITAL_REQUIRED_HIGH = DIGITAL_HIGH
+    DIGITAL_REQUIRED_LOW  = DIGITAL_LOW
+except ImportError:
+    DIGITAL_HIGH = DIGITAL_REQUIRED_HIGH = 0.65
+    DIGITAL_MED  = 0.40
+    DIGITAL_LOW  = DIGITAL_REQUIRED_LOW  = 0.20
+
 
 class Banking12FactorScorer:
     """
@@ -1068,13 +1077,13 @@ class Banking12FactorScorer:
     def _calculate_channel_fit(self, digital_engagement: float, digital_required: bool) -> Dict:
         """Match product channel requirements to customer preferences"""
         
-        if digital_required and digital_engagement > 0.7:
+        if digital_required and digital_engagement >= DIGITAL_REQUIRED_HIGH:
             score = 1.0
             explanation = "Strong digital adoption matches online-only product"
-        elif digital_required and digital_engagement < 0.3:
+        elif digital_required and digital_engagement < DIGITAL_REQUIRED_LOW:
             score = 0.3
             explanation = "Low digital adoption may challenge online-only product"
-        elif not digital_required and digital_engagement < 0.5:
+        elif not digital_required and digital_engagement < DIGITAL_MED:
             score = 0.9
             explanation = "Branch-available product suits traditional banking preference"
         else:
@@ -1092,9 +1101,9 @@ class Banking12FactorScorer:
         """Match product complexity to customer sophistication"""
         
         # Determine customer sophistication
-        if deposits > 100000 and digital_engagement > 0.7:
+        if deposits > 100000 and digital_engagement >= DIGITAL_REQUIRED_HIGH:
             customer_level = 3  # High sophistication
-        elif deposits > 50000 or digital_engagement > 0.5:
+        elif deposits > 50000 or digital_engagement >= DIGITAL_MED:
             customer_level = 2  # Medium sophistication
         else:
             customer_level = 1  # Lower sophistication

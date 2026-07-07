@@ -14,6 +14,11 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional
 
 try:
+    from utils.banking_constants import DIGITAL_HIGH, DIGITAL_MED, DIGITAL_LOW
+except ImportError:
+    DIGITAL_HIGH, DIGITAL_MED, DIGITAL_LOW = 0.65, 0.40, 0.20
+
+try:
     from utils.claude_client import get_claude_client
     CLAUDE_AVAILABLE = True
 except ImportError:
@@ -254,11 +259,8 @@ class AgentC_Banking:
                 if not pid:
                     continue
                 rc = dict(rec); rc["source"] = "segment_popular"
-                try:
-                    sc = float(rc.get("score") or 0)
-                except (TypeError, ValueError):
-                    sc = 0.0
-                if sc <= 0:
+                raw_score = rc.get("score")
+                if raw_score is None:
                     pop = float(rc.get("popularity") or 0)
                     rc["score"] = round(min(0.94, max(0.18, pop * 0.75 + 0.18)), 4)
                 if pid not in seen or float(rc.get("score") or 0) > float(seen[pid].get("score") or 0):
@@ -527,8 +529,9 @@ class AgentC_Banking:
                     channels.sort(
                         key=lambda c: (0 if c.get("channel") == override_ch else 1)
                     )
-                    # Regenerate AI insight so it reflects the new best_channel
-                    if channel_fatigue and mta_attribution:
+                    # Always regenerate AI insight to match the new best_channel,
+                    # using whatever partial data is available (both may be partial).
+                    if True:
                         _exp_data_rec = (
                             (offer_intel_result.get("offer_intelligence") or {})
                             .get("experiment_data") or {}
@@ -726,6 +729,10 @@ class AgentC_Banking:
         income: float,
         total_deposits: float,
     ) -> Dict[str, Any]:
+        import math as _math
+        income = float(income) if income and not _math.isnan(float(income)) else 0.0
+        if income <= 0:
+            income = 50_000  # safe fallback — no NaN in downstream calculations
         if credit_score >= 740:
             rate = float(product.get("rate_tier_excellent") or product.get("interest_rate") or 6.75)
             tier = "excellent"
@@ -1192,8 +1199,9 @@ class AgentC_Banking:
             f"Ready to get started? Visit your nearest branch or apply online today."
         )
         push_notification = f"{hero[:47]}…" if len(hero) > 47 else hero
+        bank_name = os.getenv("BANK_NAME", "Your Bank")
         sms_text = (
-            f"Meridian: {offer_name} on {product_name}. "
+            f"{bank_name}: {offer_name} on {product_name}. "
             f"{terms_summary[:80]}. Reply STOP to opt out."
         )
 
@@ -1346,7 +1354,7 @@ class AgentC_Banking:
             ]
             best_channel = "branch"
             best_channel_reason = "Customer channel preference: Branch — in-person interaction preferred."
-        elif digital >= 0.65:
+        elif digital >= DIGITAL_HIGH:
             channels = [
                 {"channel": "in_app", "priority": 1, "label": "In-app"},
                 {"channel": "email", "priority": 2, "label": "Email"},
@@ -1355,7 +1363,7 @@ class AgentC_Banking:
             best_channel = "in_app"
             pct = int(digital * 100)
             best_channel_reason = f"Hybrid preference with high digital engagement ({pct}%); in-app recommended."
-        elif digital >= 0.4:
+        elif digital >= DIGITAL_MED:
             channels = [
                 {"channel": "email", "priority": 1, "label": "Email"},
                 {"channel": "web", "priority": 2, "label": "Web"},

@@ -21,31 +21,22 @@ from typing import TYPE_CHECKING, Dict, List, Optional, Tuple
 if TYPE_CHECKING:
     import pandas as pd  # only used for type hints
 
+from utils.banking_constants import (
+    CHANNELS,
+    CHANNEL_LABELS,
+    MTA_JOURNEY_CHANNELS,
+    PERSONAS,
+    MTA_FALLBACK_ATTRIBUTION,
+    MTA_FALLBACK_ATTRIBUTION_DEFAULT,
+    FATIGUE_CONSECUTIVE_THRESHOLD,
+    FATIGUE_TOTAL_SENDS_MIN,
+    MTA_MIN_PERSONAL_SENDS,
+)
+
 _ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 MTA_HISTORY_PATH = os.path.join(
     _ROOT, "data", "preloaded", "meridian_bank", "mta_touchpoint_history.csv"
 )
-
-CHANNELS: List[str] = ["in_app", "email", "sms", "direct_mail", "branch"]
-
-CHANNEL_LABELS: Dict[str, str] = {
-    "in_app":      "In-App",
-    "email":       "Email",
-    "sms":         "SMS",
-    "direct_mail": "Direct Mail",
-    "branch":      "Branch",
-}
-
-PERSONAS = [
-    "Digital Native",
-    "Wealth Builder",
-    "Everyday Essential",
-    "Retiree Anchor",
-    "At-Risk Saver",
-]
-
-FATIGUE_CONSECUTIVE_THRESHOLD = 3
-FATIGUE_TOTAL_SENDS_MIN       = 3
 
 
 class MTAEngine:
@@ -61,7 +52,18 @@ class MTAEngine:
     def _data(self):  # returns pd.DataFrame
         if self._df is None:
             import pandas as pd  # deferred — avoids segfault on Python 3.14 alpha at import time
-            self._df = pd.read_csv(self._path, parse_dates=["timestamp"])
+            try:
+                self._df = pd.read_csv(self._path, parse_dates=["timestamp"])
+            except FileNotFoundError:
+                logger.warning(
+                    "[MTA] History file not found: %s — using empty DataFrame. "
+                    "Run scripts/generate_mta_history.py to create it.", self._path
+                )
+                self._df = pd.DataFrame(columns=[
+                    "journey_id", "customer_id", "persona", "channel",
+                    "offer_id", "product_id", "timestamp",
+                    "opened", "clicked", "converted", "position",
+                ])
         return self._df
 
     # ── Core: Markov chain attribution (empirical removal-effect method) ──────
@@ -122,12 +124,16 @@ class MTAEngine:
 
         removal_effects: Dict[str, float] = {}
         for ch in CHANNELS:
+            # outbound_call and web have no journey data in the CSV — skip Markov
+            # computation for them; their weight comes from the fallback defaults.
+            if ch not in MTA_JOURNEY_CHANNELS:
+                removal_effects[ch] = 0.0
+                continue
             # Journeys that never touched channel C
             without_c = journey_summary[
                 journey_summary["channels"].apply(lambda s: ch not in s)
             ]
             if len(without_c) < 5:
-                # Not enough data to estimate — assign small non-zero RE
                 removal_effects[ch] = 0.01
                 continue
             conv_without = without_c["converted"].mean()
@@ -146,19 +152,13 @@ class MTAEngine:
         return result
 
     def _fallback_attribution(self, persona: Optional[str]) -> Dict[str, float]:
-        """Persona-informed fallback when not enough journey data."""
-        defaults: Dict[str, Dict[str, float]] = {
-            "Digital Native":     {"in_app": 0.65, "email": 0.18, "sms": 0.10, "direct_mail": 0.04, "branch": 0.03},
-            "Wealth Builder":     {"in_app": 0.28, "email": 0.38, "sms": 0.08, "direct_mail": 0.16, "branch": 0.10},
-            "Everyday Essential": {"in_app": 0.35, "email": 0.35, "sms": 0.14, "direct_mail": 0.10, "branch": 0.06},
-            "Retiree Anchor":     {"in_app": 0.06, "email": 0.22, "sms": 0.07, "direct_mail": 0.30, "branch": 0.35},
-            "At-Risk Saver":      {"in_app": 0.25, "email": 0.28, "sms": 0.30, "direct_mail": 0.10, "branch": 0.07},
-        }
+        """Persona-informed fallback when not enough journey data.
+        Weights sourced from banking_constants.MTA_FALLBACK_ATTRIBUTION."""
         key = (persona or "").strip()
         for p in PERSONAS:
             if p.lower() == key.lower():
-                return defaults[p]
-        return {"in_app": 0.32, "email": 0.28, "sms": 0.16, "direct_mail": 0.14, "branch": 0.10}
+                return dict(MTA_FALLBACK_ATTRIBUTION[p])
+        return dict(MTA_FALLBACK_ATTRIBUTION_DEFAULT)
 
     # ── Channel fatigue ───────────────────────────────────────────────────────
 
@@ -170,7 +170,7 @@ class MTAEngine:
                          AND total sends >= THRESHOLD
         """
         df = self._data()
-        cust_df = df[df["customer_id"] == customer_id].sort_values("timestamp")
+        cust_df = df[df["customer_id"].astype(str) == str(customer_id)].sort_values("timestamp")
         result: Dict[str, Dict] = {}
 
         for ch in CHANNELS:
@@ -180,30 +180,36 @@ class MTAEngine:
             clicked   = int(ch_df["clicked"].sum())
             converted = int(ch_df["converted"].sum())
 
+            # Count actual consecutive no-opens from the tail of sends
             consecutive_no_open = 0
-            if sent >= FATIGUE_CONSECUTIVE_THRESHOLD:
-                tail = ch_df.tail(FATIGUE_CONSECUTIVE_THRESHOLD)
-                consecutive_no_open = int((tail["opened"] == 0).all())
+            if sent > 0:
+                for val in reversed(ch_df["opened"].tolist()):
+                    if val == 0:
+                        consecutive_no_open += 1
+                    else:
+                        break
 
+            # Fatigued = enough sends AND last N were all unopened
+            # Deliberately NOT requiring total opens == 0: a customer who opened
+            # once long ago but ignored the last 3+ sends is still fatigued.
             is_fatigued = bool(
                 sent >= FATIGUE_TOTAL_SENDS_MIN
-                and consecutive_no_open
-                and opened == 0
+                and consecutive_no_open >= FATIGUE_CONSECUTIVE_THRESHOLD
             )
 
             ts_max = ch_df["timestamp"].max() if sent > 0 else None
             last_sent = str(ts_max)[:10] if (ts_max is not None and str(ts_max) != "NaT") else None
 
             result[ch] = {
-                "sent":               sent,
-                "opened":             opened,
-                "clicked":            clicked,
-                "converted":          converted,
-                "is_fatigued":        is_fatigued,
+                "sent":                sent,
+                "opened":              opened,
+                "clicked":             clicked,
+                "converted":           converted,
+                "is_fatigued":         is_fatigued,
                 "consecutive_no_open": consecutive_no_open,
-                "open_rate":          round(opened / sent, 3) if sent > 0 else 0.0,
-                "click_rate":         round(clicked / sent, 3) if sent > 0 else 0.0,
-                "last_sent":          last_sent,
+                "open_rate":           round(opened / sent, 3) if sent > 0 else 0.0,
+                "click_rate":          round(clicked / sent, 3) if sent > 0 else 0.0,
+                "last_sent":           last_sent,
             }
 
         return result
@@ -245,7 +251,15 @@ class MTAEngine:
     def get_all_personas_heatmap(self) -> Dict[str, Dict]:
         if self._heatmap_cache:
             return self._heatmap_cache
-        result = {p: self.get_persona_channel_stats(p) for p in PERSONAS}
+        df = self._data()
+        if df.empty:
+            empty_stats = {ch: {"sent": 0, "opened": 0, "clicked": 0, "converted": 0,
+                                "open_rate": 0.0, "click_rate": 0.0,
+                                "conversion_rate": 0.0, "reach_pct": 0.0, "sample_size": 0}
+                           for ch in CHANNELS}
+            result = {p: dict(empty_stats) for p in PERSONAS}
+        else:
+            result = {p: self.get_persona_channel_stats(p) for p in PERSONAS}
         self._heatmap_cache = result
         return result
 
@@ -256,7 +270,7 @@ class MTAEngine:
     ) -> List[Dict]:
         import pandas as pd
         df = self._data()
-        cust_df = df[df["customer_id"] == customer_id].sort_values("timestamp")
+        cust_df = df[df["customer_id"].astype(str) == str(customer_id)].sort_values("timestamp")
 
         if last_n_days > 0 and len(cust_df) > 0:
             ts_max = cust_df["timestamp"].max()
@@ -280,7 +294,7 @@ class MTAEngine:
 
     # ── Two-tier channel recommendation ──────────────────────────────────────
 
-    MIN_PERSONAL_SENDS = 3  # minimum total sends to trust personal signal over segment
+    MIN_PERSONAL_SENDS = MTA_MIN_PERSONAL_SENDS  # from banking_constants
 
     def get_customer_channel_recommendation(
         self,
@@ -306,7 +320,7 @@ class MTAEngine:
           }
         """
         df = self._data()
-        cust_df = df[df["customer_id"] == customer_id]
+        cust_df = df[df["customer_id"].astype(str) == str(customer_id)]
         total_sends = len(cust_df)
         fatigue = self.get_customer_channel_fatigue(customer_id)
 

@@ -661,30 +661,40 @@ type MTAJourneyRow = {
 
 // ── MTA constants ─────────────────────────────────────────────────────────────
 
-const MTA_CHANNELS = ['in_app', 'email', 'sms', 'direct_mail', 'branch'];
+// All channels the backend may return — must match utils/banking_constants.py CHANNELS
+const MTA_CHANNELS = ['in_app', 'email', 'sms', 'direct_mail', 'branch', 'outbound_call', 'web'];
+// Channels that have journey data in the MTA CSV (used for donut/attribution charts)
+const MTA_JOURNEY_CHANNELS = ['in_app', 'email', 'sms', 'direct_mail', 'branch'];
 const MTA_CHANNEL_LABELS: Record<string, string> = {
-  in_app: 'In-App', email: 'Email', sms: 'SMS', direct_mail: 'Direct Mail', branch: 'Branch',
+  in_app: 'In-App', email: 'Email', sms: 'SMS', direct_mail: 'Direct Mail',
+  branch: 'Branch', outbound_call: 'Outbound Call', web: 'Web',
 };
 const MTA_CHANNEL_HEX: Record<string, string> = {
-  in_app:      '#8b5cf6',
-  email:       '#3b82f6',
-  sms:         '#14b8a6',
-  direct_mail: '#f59e0b',
-  branch:      '#10b981',
+  in_app:        '#8b5cf6',
+  email:         '#3b82f6',
+  sms:           '#14b8a6',
+  direct_mail:   '#f59e0b',
+  branch:        '#10b981',
+  outbound_call: '#f97316',
+  web:           '#6366f1',
 };
 const MTA_CHANNEL_COLORS: Record<string, string> = {
-  in_app:      'bg-violet-500',
-  email:       'bg-blue-500',
-  sms:         'bg-teal-500',
-  direct_mail: 'bg-amber-500',
-  branch:      'bg-emerald-600',
+  in_app:        'bg-violet-500',
+  email:         'bg-blue-500',
+  sms:           'bg-teal-500',
+  direct_mail:   'bg-amber-500',
+  branch:        'bg-emerald-600',
+  outbound_call: 'bg-orange-500',
+  web:           'bg-indigo-500',
 };
 const MTA_CHANNEL_ICONS: Record<string, React.ReactNode> = {
-  in_app:      <Smartphone className="w-3.5 h-3.5" />,
-  email:       <Mail className="w-3.5 h-3.5" />,
-  sms:         <MessageCircle className="w-3.5 h-3.5" />,
-  direct_mail: <Mail className="w-3.5 h-3.5" />,
-  branch:      <Building2 className="w-3.5 h-3.5" />,
+  in_app:        <Smartphone className="w-3.5 h-3.5" />,
+  email:         <Mail className="w-3.5 h-3.5" />,
+  sms:           <MessageCircle className="w-3.5 h-3.5" />,
+  direct_mail:   <Mail className="w-3.5 h-3.5" />,
+  branch:        <Building2 className="w-3.5 h-3.5" />,
+  outbound_call: <Phone className="w-3.5 h-3.5" />,
+  web:           <Globe className="w-3.5 h-3.5" />,
 };
 const MTA_PERSONAS = ['Digital Native', 'Wealth Builder', 'Everyday Essential', 'Retiree Anchor', 'At-Risk Saver'];
 
@@ -822,7 +832,7 @@ function MTAIntelligencePanel({
         </div>
         <div className="flex-1 min-w-0">
           <p className="text-white font-bold text-sm">Multi-Touch Attribution</p>
-          <p className="text-indigo-200 text-xs">Markov chain channel intelligence · 42K journey events</p>
+          <p className="text-indigo-200 text-xs">Markov removal-effect channel intelligence</p>
         </div>
         {experimentId && (
           <span className="text-[10px] text-indigo-200 font-mono truncate max-w-[140px]">{experimentId}</span>
@@ -1077,7 +1087,7 @@ function MTAIntelligencePanel({
             </div>
 
             <p className="text-[10px] text-slate-400 text-center pt-1">
-              Removal-effect Markov attribution · 42K journey events · 5 channels
+              Removal-effect Markov attribution · {MTA_JOURNEY_CHANNELS.length} channels
             </p>
           </div>
         )}
@@ -1109,8 +1119,19 @@ function MTAIntelligencePanel({
               const clicked = journeyQuery.data.filter(r => r.clicked).length;
               const converted = journeyQuery.data.filter(r => r.converted).length;
 
+              const numJourneys = Object.keys(journeyMap).length;
+              const convJourneys = Object.values(journeyMap).filter(rows => rows.some(r => r.converted)).length;
+              const summary = converted > 0
+                ? `Contacted ${total} time${total !== 1 ? 's' : ''} across ${numJourneys} campaign${numJourneys !== 1 ? 's' : ''} — ${convJourneys} resulted in a conversion.`
+                : `Contacted ${total} time${total !== 1 ? 's' : ''} across ${numJourneys} campaign${numJourneys !== 1 ? 's' : ''} — no conversions yet.`;
+
               return (
                 <div className="space-y-3">
+                  {/* Narrative summary */}
+                  <p className="text-[11px] text-slate-600 leading-relaxed bg-slate-50 border border-slate-200 rounded-xl px-3 py-2">
+                    {summary}
+                  </p>
+
                   {/* Funnel strip */}
                   <div className="grid grid-cols-4 gap-2">
                     {[
@@ -1142,16 +1163,22 @@ function MTAIntelligencePanel({
                     const dateRange = rows.length > 0
                       ? `${rows[0].timestamp.slice(5,10)}${rows.length > 1 ? ' → ' + rows[rows.length-1].timestamp.slice(5,10) : ''}`
                       : '';
+                    const channelPath = rows.map(r => MTA_CHANNEL_LABELS[r.channel] ?? r.channel).join(' › ');
                     return (
                       <div key={jid} className={`rounded-xl border overflow-hidden ${didConvert ? 'border-emerald-200' : 'border-slate-200'}`}>
                         {/* Card header */}
-                        <div className={`flex items-center gap-2.5 px-3 py-2 border-b ${didConvert ? 'bg-emerald-50 border-emerald-200' : 'bg-slate-50 border-slate-200'}`}>
-                          <span className={`w-5 h-5 rounded-full text-[9px] font-black flex items-center justify-center shrink-0 ${didConvert ? 'bg-emerald-500 text-white' : 'bg-slate-200 text-slate-600'}`}>{jidx + 1}</span>
-                          <span className={`text-[11px] font-bold ${didConvert ? 'text-emerald-800' : 'text-slate-700'}`}>
-                            Journey {jidx + 1}
-                            {didConvert && <span className="ml-1.5 text-[9px] font-bold text-emerald-600">✓ Converted</span>}
-                          </span>
-                          <span className="ml-auto text-[9px] text-slate-400">{dateRange} · {rows.length} touch{rows.length !== 1 ? 'es' : ''}</span>
+                        <div className={`flex items-start gap-2.5 px-3 py-2 border-b ${didConvert ? 'bg-emerald-50 border-emerald-200' : 'bg-slate-50 border-slate-200'}`}>
+                          <span className={`w-5 h-5 rounded-full text-[9px] font-black flex items-center justify-center shrink-0 mt-0.5 ${didConvert ? 'bg-emerald-500 text-white' : 'bg-slate-200 text-slate-600'}`}>{jidx + 1}</span>
+                          <div className="flex-1 min-w-0">
+                            <div className="flex items-center gap-2">
+                              <span className={`text-[11px] font-bold ${didConvert ? 'text-emerald-800' : 'text-slate-700'}`}>Campaign {jidx + 1}</span>
+                              {didConvert
+                                ? <span className="text-[9px] font-bold text-emerald-600 bg-emerald-100 px-1.5 py-0.5 rounded-full">✓ Converted</span>
+                                : <span className="text-[9px] text-slate-400 bg-slate-100 px-1.5 py-0.5 rounded-full">No conversion</span>}
+                            </div>
+                            <p className="text-[9px] text-slate-400 mt-0.5 truncate">{channelPath}</p>
+                          </div>
+                          <span className="text-[9px] text-slate-400 shrink-0">{dateRange} · {rows.length} touch{rows.length !== 1 ? 'es' : ''}</span>
                         </div>
 
                         {/* Timeline */}
@@ -1262,7 +1289,7 @@ function MTAIntelligencePanel({
                   {(aiInsight?.persona_conv_rate ?? 0) > 0 && (
                     <div className="flex-1 px-3 py-2 text-center">
                       <p className="text-[9px] text-blue-400 uppercase tracking-wide">Conv. Rate</p>
-                      <p className="text-[11px] font-bold text-emerald-700">{aiInsight!.persona_conv_rate}%</p>
+                      <p className="text-[11px] font-bold text-emerald-700">{aiInsight?.persona_conv_rate ?? 0}%</p>
                     </div>
                   )}
                 </div>
@@ -1287,15 +1314,16 @@ function MTAIntelligencePanel({
                       {isPersonal ? (
                         <div className="space-y-2">
                           <p className="text-[11px] text-slate-600 leading-relaxed">
-                            {rec!.total_personal_sends}+ sends recorded — this customer's own behaviour overrides segment averages.
+                            {rec?.total_personal_sends ?? 0}+ sends recorded — this customer's own behaviour overrides segment averages.
                             {' '}<span className="font-semibold text-slate-700">{bestLabel}</span> scored highest on personal engagement (clicks × 3 + opens × 1 ÷ sends).
                           </p>
                           {Object.keys(rec?.personal_scores ?? {}).length > 0 && (
                             <div className="space-y-1 mt-2">
-                              {Object.entries(rec!.personal_scores)
+                              {Object.entries(rec?.personal_scores ?? {})
                                 .sort(([,a],[,b]) => b - a)
                                 .map(([ch, s]) => {
-                                  const maxScore = Math.max(...Object.values(rec!.personal_scores));
+                                  const scores = Object.values(rec?.personal_scores ?? {});
+                                  const maxScore = scores.length > 0 ? Math.max(...scores) : 1;
                                   const isF = channelFatigue?.[ch]?.is_fatigued === true;
                                   const isBest = ch === bestChannel;
                                   return (
@@ -1315,8 +1343,8 @@ function MTAIntelligencePanel({
                       ) : (
                         <p className="text-[11px] text-slate-600 leading-relaxed">
                           Fewer than 3 personal sends recorded — using{' '}
-                          <span className="font-semibold text-indigo-700">42K {persona ?? 'segment'} journeys</span> for Markov attribution.
-                          {' '}<span className="font-semibold text-slate-700">{bestLabel}</span> has {bestAttrPct}% segment attribution.
+                          <span className="font-semibold text-indigo-700">{persona ?? 'segment'} Markov model</span> for attribution.
+                          {' '}<span className="font-semibold text-slate-700">{bestLabel}</span> carries {bestAttrPct}% segment-level credit.
                           Personal history builds after ≥ 3 sends.
                         </p>
                       )}
@@ -1328,7 +1356,7 @@ function MTAIntelligencePanel({
               {/* ── Evidence chips ── */}
               {(aiInsight?.reason_lines ?? []).length > 0 && (
                 <div className="space-y-1.5">
-                  {(aiInsight!.reason_lines).map((line, i) => (
+                  {(aiInsight?.reason_lines ?? []).map((line, i) => (
                     <div key={i} className={`flex items-start gap-2.5 rounded-xl px-3 py-2.5 border ${
                       line.type === 'positive' ? 'bg-blue-50 border-blue-100' :
                       line.type === 'warning'  ? 'bg-amber-50 border-amber-200' :
@@ -1347,7 +1375,7 @@ function MTAIntelligencePanel({
                 <div className="px-3.5 py-2.5 bg-slate-50 border-b border-slate-200 flex items-center gap-2">
                   <BarChart2 className="w-3.5 h-3.5 text-slate-400" />
                   <span className="text-xs font-bold text-slate-700">Markov Attribution — {persona ?? 'Segment'}</span>
-                  <span className="ml-auto text-[9px] text-slate-400 font-mono">42K journeys</span>
+                  <span className="ml-auto text-[9px] text-slate-400 font-mono">Markov model</span>
                 </div>
                 <div className="p-3 space-y-1.5">
                   {sortedAttr.slice(0, 5).map(([ch, w]) => {
@@ -1400,7 +1428,7 @@ function MTAIntelligencePanel({
                           return (
                             <span key={ch} className="inline-flex items-center gap-1 text-[9px] font-bold text-amber-700 bg-white border border-amber-200 px-2 py-1 rounded-full">
                               {MTA_CHANNEL_ICONS[ch]} {MTA_CHANNEL_LABELS[ch]}
-                              {f && <span className="text-amber-500 font-normal">· {f.sent}s 0o</span>}
+                              {f && <span className="text-amber-500 font-normal">· {f.sent} sent, {f.opened ?? 0} opened</span>}
                             </span>
                           );
                         })}
@@ -3166,7 +3194,7 @@ export default function BankingAgentC() {
                                     📍 {selectedCustomer.recent_life_event.replace(/_/g, ' ')}
                                   </span>
                                 )}
-                                {offer.churn_risk_score != null && offer.churn_category && offer.churn_category !== 'Low' && (
+                                {offer.churn_risk_score != null && !Number.isNaN(offer.churn_risk_score) && offer.churn_category && offer.churn_category !== 'Low' && offer.churn_category !== 'nan' && offer.churn_category !== 'NaN' && (
                                   <span className={`inline-flex items-center gap-1 text-xs font-semibold px-2.5 py-1 rounded-full border ${
                                     offer.churn_category === 'Critical' ? 'bg-red-50 border-red-200 text-red-700' :
                                     offer.churn_category === 'High' ? 'bg-orange-50 border-orange-200 text-orange-700' :
@@ -3273,15 +3301,18 @@ export default function BankingAgentC() {
                             )}
 
                             {/* ── Churn / Retention signals ── */}
-                            {((offer.churn_risk_score != null && offer.churn_category) ||
-                              offer.churn_risk_reason ||
-                              offer.retention_strategy) && (
+                            {(() => {
+                              const validCat = offer.churn_category && offer.churn_category !== 'nan' && offer.churn_category !== 'NaN';
+                              const validScore = offer.churn_risk_score != null && !Number.isNaN(offer.churn_risk_score);
+                              const showBlock = (validScore && validCat) || !!offer.churn_risk_reason || !!offer.retention_strategy;
+                              if (!showBlock) return null;
+                              return (
                               <div className="space-y-3">
-                                {offer.churn_risk_score != null && offer.churn_category && (
+                                {validScore && validCat && (
                                   <div className="flex items-center gap-2 text-amber-800 bg-amber-50 rounded-xl px-4 py-3 border border-amber-100">
                                     <AlertTriangle className="w-4 h-4 flex-shrink-0" />
                                     <span className="text-sm font-medium">
-                                      Churn risk: {offer.churn_category} ({offer.churn_risk_score?.toFixed(0)}/100)
+                                      Churn risk: {offer.churn_category} ({(offer.churn_risk_score as number).toFixed(0)}/100)
                                     </span>
                                   </div>
                                 )}
@@ -3315,7 +3346,8 @@ export default function BankingAgentC() {
                                   </div>
                                 )}
                               </div>
-                            )}
+                              );
+                            })()}
 
                             {offer.agent_c_vs_agent_b?.recommendations_differ && offer.agent_c_vs_agent_b?.explanation && (
                               <div className="rounded-xl border border-blue-200 bg-gradient-to-br from-blue-50/90 to-indigo-50/50 px-4 py-4 shadow-sm">

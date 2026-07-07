@@ -7,6 +7,11 @@ import pandas as pd
 import numpy as np
 from datetime import datetime, timedelta
 
+try:
+    from utils.banking_constants import DIGITAL_HIGH, DIGITAL_MED, DIGITAL_LOW
+except ImportError:
+    DIGITAL_HIGH, DIGITAL_MED, DIGITAL_LOW = 0.65, 0.40, 0.20
+
 
 def _safe_int(v, default=0):
     try:
@@ -94,15 +99,20 @@ def format_churn_risk_reason(row) -> str:
             reasons.append("Credit profile stress signals")
 
         score = _safe_float(_get("churn_risk_score", 0))
-        cat = str(_get("churn_risk_category", "") or "").strip()
+        raw_cat = str(_get("churn_risk_category", "") or "").strip()
+        # Derive category from score if stored value is missing or NaN
+        if raw_cat in ('', 'nan', 'NaN', 'None'):
+            cat = ('Critical' if score >= 75 else 'High' if score >= 50 else 'Medium' if score >= 25 else 'Low')
+        else:
+            cat = raw_cat
 
         if not reasons:
             reasons.append(
-                f"Composite model score {score:.0f}/100 ({cat or 'elevated'}): "
+                f"Composite model score {score:.0f}/100 ({cat}): "
                 "weighs days since activity, transaction trend, balances vs income, product breadth, and digital usage."
             )
         else:
-            reasons.append(f"Overall score {score:.0f}/100 ({cat})" if cat else f"Overall score {score:.0f}/100")
+            reasons.append(f"Overall score {score:.0f}/100 ({cat})")
 
         seen = set()
         out = []
@@ -238,7 +248,7 @@ def format_retention_strategy(row) -> str:
         channel_step = (
             "Start with outbound call + branch follow-up."
             if cat in ("High", "Critical")
-            else ("Lead with digital outreach first." if digital >= 0.55 else "Lead with advisor-assisted outreach.")
+            else ("Lead with digital outreach first." if digital >= DIGITAL_MED else "Lead with advisor-assisted outreach.")
         )
         evidence = (
             f"deposits ${deposits:,.0f}, income ${income:,.0f}/yr, "
@@ -441,7 +451,13 @@ def add_essential_churn_features(customers_df, transactions_df):
             lambda r: _safe_div(r.get('inflow_90d', 0.0), r.get('outflow_90d', 0.0), 0.0), axis=1
         )
     else:
-        # If no transaction data, use estimated values from customer attributes
+        # Transaction data unavailable — churn scores will use estimated defaults.
+        # Real transaction data is required for accurate churn predictions.
+        import logging as _logging
+        _logging.getLogger(__name__).warning(
+            "[ChurnFeatureGenerator] No transaction data — churn risk scores are "
+            "estimated defaults, not computed from real activity."
+        )
         df['days_since_last_txn'] = 30  # Assume average activity
         df['txn_velocity_change'] = 0
         df['recent_txn_count'] = 5
@@ -493,10 +509,7 @@ def add_essential_churn_features(customers_df, transactions_df):
     # ============================================================================
     
     if 'digital_engagement_score' in df.columns:
-        # Digital decline flag (below 30% digital usage)
-        df['digital_decline'] = (df['digital_engagement_score'] < 0.3).astype(int)
-        
-        # Branch-only users (potential digital abandonment)
+        df['digital_decline'] = (df['digital_engagement_score'] < DIGITAL_LOW).astype(int)
         df['branch_only_user'] = (df['digital_engagement_score'] < 0.1).astype(int)
     else:
         df['digital_decline'] = 0
@@ -544,7 +557,18 @@ def add_essential_churn_features(customers_df, transactions_df):
     df['churn_risk_category'] = pd.cut(
         df['churn_risk_score'],
         bins=[0, 25, 50, 75, 100],
-        labels=['Low', 'Medium', 'High', 'Critical']
+        labels=['Low', 'Medium', 'High', 'Critical'],
+        include_lowest=True,   # ensures score=0.0 maps to 'Low' not NaN
+    ).astype(str)
+    # pd.cut returns Categorical; convert and clean up any residual 'nan' strings
+    df['churn_risk_category'] = df.apply(
+        lambda r: (
+            'Critical' if r['churn_risk_score'] >= 75 else
+            'High'     if r['churn_risk_score'] >= 50 else
+            'Medium'   if r['churn_risk_score'] >= 25 else
+            'Low'
+        ) if r['churn_risk_category'] in ('nan', '', 'NaN', None) else r['churn_risk_category'],
+        axis=1
     )
     
     # ============================================================================

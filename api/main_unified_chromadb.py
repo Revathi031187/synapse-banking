@@ -2612,9 +2612,13 @@ async def load_banking_dataset(request: dict):
         products_file = data_path / "products.csv"
         transactions_file = data_path / "transactions.csv"
 
-        if not customers_file.exists():
-            raise HTTPException(status_code=404, detail="Banking dataset not found. Run scripts/generate_jpm_dataset.py first.")
-        
+        missing = [f.name for f in (customers_file, products_file, transactions_file) if not f.exists()]
+        if missing:
+            raise HTTPException(
+                status_code=404,
+                detail=f"Banking dataset files not found: {', '.join(missing)}. Run scripts/generate_meridian_dataset.py first."
+            )
+
         import pandas as pd
         customers_df = _apply_banking_column_compat(pd.read_csv(customers_file))
         products_df = pd.read_csv(products_file)
@@ -2736,6 +2740,8 @@ def _run_agent_a_background(config_dict: dict):
         results = numpy_to_python_types(results)
         system_state['banking']['agent_a_results'] = results
         system_state['banking']['customers_with_churn'] = None
+        global _churn_df_cache
+        _churn_df_cache = None  # invalidate so next call recomputes from fresh transactions
         system_state['banking']['agent_a_status'] = 'complete'
         system_state['banking']['agent_a_progress'] = 1.0
 
@@ -3984,6 +3990,31 @@ def _normalize_segment_rows_for_agent_c_merge(segment_rows: List) -> List[dict]:
     return out
 
 
+_churn_df_cache: Optional[Any] = None  # cached after first computation
+
+
+def _get_churn_df():
+    """
+    Always recompute churn features from real transaction data.
+    Cached in memory for the session — invalidated when Agent A is re-run (cache cleared on load).
+    Fixes: pre-baked churn_risk_score in customers.csv is stale; behavioral metrics (txns, mobile,
+    active products) must drive the score to stay consistent with what the UI displays.
+    """
+    global _churn_df_cache
+    if _churn_df_cache is not None:
+        return _churn_df_cache
+    try:
+        from utils.churn_feature_generator import add_essential_churn_features
+        df_churn = add_essential_churn_features(
+            banking_agent_a.customers_df,
+            banking_agent_a.transactions_df,
+        )
+        _churn_df_cache = df_churn
+        return df_churn
+    except Exception:
+        return banking_agent_a.customers_df
+
+
 def _banking_all_recs_for_agent_c(customer_id: str) -> Tuple[Optional[dict], List[dict]]:
     """
     Agent C should not use execute-only pool (that makes C #1 == B #1). Merge rule-based execute
@@ -4063,15 +4094,7 @@ async def banking_agent_d_orchestrate(body: AgentDOrchestrateBody):
         customer_details = banking_agent_a.get_customer_details(cid)
         churn_score = churn_category = None
         try:
-            from utils.churn_feature_generator import add_essential_churn_features
-            df_c = banking_agent_a.customers_df
-            if df_c is not None and hasattr(df_c, "columns") and "churn_risk_score" in df_c.columns:
-                df_churn = df_c
-            else:
-                df_churn = add_essential_churn_features(
-                    banking_agent_a.customers_df, banking_agent_a.transactions_df
-                )
-            # Match GET /agent_c/one-best-offer: string-safe customer_id join (int vs str in CSV)
+            df_churn = _get_churn_df()
             row = df_churn[df_churn["customer_id"].astype(str) == str(cid)]
             if len(row) > 0:
                 row = row.iloc[0]
@@ -4508,18 +4531,10 @@ async def get_banking_one_best_offer(customer_id: str):
         churn_extra = {}
         try:
             from utils.churn_feature_generator import (
-                add_essential_churn_features,
                 format_churn_risk_reason,
                 format_retention_strategy,
             )
-            df_c = banking_agent_a.customers_df
-            if df_c is not None and hasattr(df_c, "columns") and "churn_risk_score" in df_c.columns:
-                df_churn = df_c
-            else:
-                df_churn = add_essential_churn_features(
-                    banking_agent_a.customers_df,
-                    banking_agent_a.transactions_df
-                )
+            df_churn = _get_churn_df()
             row = df_churn[df_churn["customer_id"].astype(str) == str(customer_id)]
             if len(row) > 0:
                 r = row.iloc[0]
@@ -4643,13 +4658,8 @@ async def get_banking_persona_best_offer(persona_id: int = 0):
             churn_score = None
             churn_category = None
             try:
-                from utils.churn_feature_generator import add_essential_churn_features
-                df_c = banking_agent_a.customers_df
-                if df_c is not None and hasattr(df_c, "columns") and "churn_risk_score" in df_c.columns:
-                    df_churn = df_c
-                else:
-                    df_churn = add_essential_churn_features(banking_agent_a.customers_df, banking_agent_a.transactions_df)
-                row = df_churn[df_churn["customer_id"] == customer_id]
+                df_churn = _get_churn_df()
+                row = df_churn[df_churn["customer_id"].astype(str) == str(customer_id)]
                 if len(row) > 0:
                     row = row.iloc[0]
                     churn_score = float(row.get("churn_risk_score", 0))

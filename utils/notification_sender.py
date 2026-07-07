@@ -244,7 +244,7 @@ def send_offer_email(
     msg.attach(MIMEText(email_body, "plain", "utf-8"))
     msg.attach(MIMEText(html_body, "html", "utf-8"))
 
-    with smtplib.SMTP(SMTP_HOST, SMTP_PORT) as server:
+    with smtplib.SMTP(SMTP_HOST, SMTP_PORT, timeout=15) as server:
         server.ehlo()
         server.starttls()
         server.login(SMTP_USER, SMTP_PASS)

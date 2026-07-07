@@ -695,7 +695,7 @@ export default function BankingDataLoader() {
                     {viewingTable}
                   </h3>
                   <p className="text-blue-100 text-sm mt-1">
-                    Showing {tableData.data?.length || 0} of {tableData.total_rows?.toLocaleString() || 0} rows
+                    Showing {tableData?.data?.length ?? 0} of {tableData?.total_rows?.toLocaleString() ?? '—'} rows
                   </p>
                 </div>
                 <button

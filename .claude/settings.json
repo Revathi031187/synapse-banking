@@ -53,7 +53,9 @@
       "Bash(awk -F, 'NR==1{for\\(i=1;i<=NF;i++\\) print i, $i}' data/preloaded/meridian_bank/customers.csv)",
       "Bash(python scripts/generate_mta_history.py)",
       "Bash(awk -F',' 'NR>1{key=$3\",\"$4; conv[$3\",\"$4]+=$10; cnt[$3\",\"$4]++} END{for\\(k in cnt\\) printf \"%s: %.3f \\(%d rows\\)\\\\n\", k, conv[k]/cnt[k], cnt[k]}' d:/personalization-agent-banking/data/preloaded/meridian_bank/mta_touchpoint_history.csv)",
-      "Bash(node_modules/.bin/tsc --noEmit)"
+      "Bash(node_modules/.bin/tsc --noEmit)",
+      "Bash(python -c \"from utils.mta_engine import MTAEngine, CHANNELS, CHANNEL_LABELS; print\\('Engine CHANNELS:', CHANNELS\\); print\\('Labels:', CHANNEL_LABELS\\)\")",
+      "Bash(python -c \"import pandas as pd; df = pd.read_csv\\('d:/personalization-agent-banking/data/preloaded/meridian_bank/products.csv'\\); print\\(df[['product_id','product_name']].to_string\\(index=False\\)\\)\")"
     ]
   }
 }

@@ -170,6 +170,10 @@ class TogetherAIService:
                     logger.warning(
                         f"Together chat model={mname} status={response.status_code}: {last_detail}"
                     )
+                    if response.status_code in (429, 503):
+                        import time as _time
+                        logger.info(f"Together chat rate-limited ({response.status_code}), backing off 3s before next model…")
+                        _time.sleep(3)
                     continue
 
                 data = response.json()

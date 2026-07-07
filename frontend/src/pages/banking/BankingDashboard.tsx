@@ -3,12 +3,14 @@ import { Link } from 'react-router-dom';
 import { Users, ShoppingBag, Target, ArrowRight, Database, CheckCircle2, Clock, BarChart3, Sparkles } from 'lucide-react';
 
 export default function BankingDashboard() {
-  const { data: status } = useQuery({
+  const { data: status, isError: statusError } = useQuery({
     queryKey: ['banking-status'],
     queryFn: async () => {
       const res = await fetch('/api/banking/status');
+      if (!res.ok) throw new Error(`Status ${res.status}`);
       return res.json();
-    }
+    },
+    retry: 1,
   });
   
   return (
@@ -30,6 +32,16 @@ export default function BankingDashboard() {
           </p>
         </div>
       </div>
+
+      {/* Amber banner when backend status is unreachable */}
+      {statusError && (
+        <div className="max-w-6xl mx-auto px-8 pt-6">
+          <div className="flex items-center gap-3 bg-amber-50 border border-amber-300 text-amber-800 rounded-lg px-4 py-3 text-sm">
+            <span className="text-amber-500 text-lg">⚠</span>
+            <span>Could not reach the banking API — some navigation links may not reflect actual pipeline status. Start the backend with <code className="bg-amber-100 px-1 rounded">uvicorn api.main_unified_chromadb:app --port 8002</code> and reload.</span>
+          </div>
+        </div>
+      )}
 
       {/* Main Actions - Clean & Professional */}
       <div className="max-w-6xl mx-auto px-8 py-12">

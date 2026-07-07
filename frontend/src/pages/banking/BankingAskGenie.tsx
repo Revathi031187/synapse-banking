@@ -74,14 +74,15 @@ function GenieResultTable({ table }: { table: { columns: string[]; rows: string[
   const [view, setView] = React.useState<'table' | 'chart'>('table');
 
   // Detect numeric columns for chart
+  const safeRows = table.rows ?? [];
   const numericColIdx = table.columns.findIndex((_, ci) =>
-    table.rows.slice(0, 5).every(r => r[ci] !== '' && !isNaN(Number(r[ci])))
+    safeRows.slice(0, 5).every(r => r[ci] !== '' && !isNaN(Number(r[ci])))
   );
   const labelColIdx = numericColIdx > 0 ? 0 : (numericColIdx === 0 ? 1 : 0);
-  const canChart = numericColIdx >= 0 && table.rows.length > 0 && table.columns.length >= 2;
+  const canChart = numericColIdx >= 0 && safeRows.length > 0 && table.columns.length >= 2;
 
   const chartData = canChart
-    ? table.rows.slice(0, 50).map(r => ({
+    ? safeRows.slice(0, 50).map(r => ({
         name: r[labelColIdx] ?? '',
         value: Number(r[numericColIdx]),
       }))
