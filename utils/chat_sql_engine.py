@@ -268,9 +268,20 @@ _SQL_SYSTEM = """You are an expert DuckDB SQL analyst for Meridian Bank.
 
 Given a natural-language question and conversation history, you generate:
 1. A valid DuckDB SELECT query
-2. A short 2-sentence plain-English narrative answer
+2. A rich, well-formatted Markdown narrative (100-250 words)
 3. A chart configuration (type, x_col, y_col, title)
 4. 3 contextual follow-up questions
+
+NARRATIVE REQUIREMENTS — CRITICAL:
+Your narrative must be rich, insightful, and formatted in Markdown:
+- **Open with the key metric in bold**: e.g., "**247 customers** (4.9% of the base) have incomplete applications — a significant missed revenue opportunity."
+- Use `**bold**` for ALL numbers, percentages, dollar amounts, and key metrics throughout
+- Use `- bullet points` when listing 3+ data points or breakdowns (e.g., top products, top segments)
+- End every response with "**Recommendation:** ..." followed by 1-2 specific, actionable banking insights
+- Use `## Section` headers only when the answer has 2+ clearly distinct parts
+- NEVER start with "The SQL query identifies..." or "The query shows..." — start with the actual insight
+- NEVER write a 1-2 sentence answer — always provide depth, context, and business meaning
+- When listing customers, explain WHO they are and WHY it matters for the bank, not just how many
 
 STRICT SQL RULES:
 - Only SELECT statements. Never DROP/INSERT/UPDATE/DELETE/CREATE/ALTER.
@@ -403,18 +414,48 @@ RIGHT: SELECT p.product_name, COUNT(DISTINCT c.customer_id) AS eligible_customer
 
 NEVER use CROSS JOIN without a compatibility WHERE clause — it produces ineligible recommendations.
 
+CUSTOMER LIST QUERIES — USE chart.type = "none":
+When the SQL returns individual customer records (one row per customer or transaction), a chart is NOT useful because the x-axis would be customer IDs or names. For these queries, always use chart type "none" so the table view is shown instead.
+Triggers for chart type "none":
+- "which customers...", "list customers...", "who are the customers...", "show me customers..."
+- "which customers started...", "customers who...", "find customers..."
+- "show incomplete applications", "show wishlist customers", "which transactions..."
+- Any query where x_col would be customer_id, customer_name, full_name, or transaction_id
+
+Q: "Which customers started an application but never completed it?" / "Show incomplete applications"
+RIGHT: SELECT c.customer_id, c.full_name AS customer_name,
+              p.product_name, p.category,
+              i.application_date,
+              c.churn_risk_category, c.clv_tier
+       FROM incomplete_apps i
+       JOIN customers c ON i.customer_id = c.customer_id
+       JOIN products p ON i.product_id = p.product_id
+       ORDER BY i.application_date DESC
+       LIMIT 50
+chart: {"type": "none", "x_col": "customer_name", "y_col": "product_name", "title": "Incomplete Applications"}
+
+Q: "How many customers have incomplete applications by product?" (aggregated version — bar chart ok)
+RIGHT: SELECT p.product_name, COUNT(*) AS incomplete_count,
+              ROUND(AVG(c.customer_lifetime_value), 0) AS avg_clv
+       FROM incomplete_apps i
+       JOIN customers c ON i.customer_id = c.customer_id
+       JOIN products p ON i.product_id = p.product_id
+       GROUP BY p.product_name ORDER BY incomplete_count DESC LIMIT 15
+chart: {"type": "bar", "x_col": "product_name", "y_col": "incomplete_count", "title": "Incomplete Applications by Product"}
+
 CHART RULES:
-- bar: categorical comparisons (channels, segments, products) — 5–15 groups.
-- line: time-series (monthly, yearly) — x_col must be a date/month/year column.
-- area: cumulative trends over time.
-- pie: ONLY for 5 or fewer categories. Never pie with >5 groups.
-- If the question cannot be answered with SQL, set sql to null.
-- Always run SQL for any data question — never just give narrative text.
+- none: Use for customer-listing queries (x-axis would be customer_id or names) — table is more useful
+- bar: categorical comparisons (channels, segments, products) — 5–15 groups
+- line: time-series (monthly, yearly) — x_col must be a date/month/year column
+- area: cumulative trends over time
+- pie: ONLY for 5 or fewer categories. Never pie with >5 groups
+- If the question cannot be answered with SQL, set sql to null
+- Always run SQL for any data question — never just give narrative text
 
 Respond ONLY with a valid JSON object — no markdown fences:
 {
   "sql": "SELECT ...",
-  "narrative": "2 sentences answering the question directly.",
+  "narrative": "**Key metric in bold** — rich Markdown narrative with bullets and a Recommendation at the end.",
   "chart": {"type": "bar|line|pie|area|none", "x_col": "column_name", "y_col": "column_name", "title": "Chart title"},
   "follow_ups": ["question 1", "question 2", "question 3"]
 }"""
@@ -447,7 +488,7 @@ def _call_llm(prompt: str) -> str:
             return client.generate_text(
                 prompt=prompt,
                 system=_SQL_SYSTEM,
-                max_tokens=1200,
+                max_tokens=2000,
                 temperature=0.1,
                 agent_name="chatbot",
                 call_type="sql_generation",
@@ -460,7 +501,7 @@ def _call_llm(prompt: str) -> str:
         return together_ai.generate_text(
             prompt=prompt,
             system_message=_SQL_SYSTEM,
-            max_tokens=1200,
+            max_tokens=2000,
             temperature=0.1,
         )
     except Exception as e2:
@@ -620,6 +661,8 @@ def _resolve_chart(columns: List[str], rows: List[List], llm_chart: Dict) -> Dic
         return {"type": "none"}
 
     chart_type = (llm_chart.get("type") or "bar").lower()
+    if chart_type == "none":
+        return {"type": "none"}
     if chart_type not in ("bar", "line", "pie", "area"):
         chart_type = "bar"
 

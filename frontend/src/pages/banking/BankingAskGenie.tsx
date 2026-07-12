@@ -128,6 +128,82 @@ function fmtTooltip(v: number): string {
   return v.toLocaleString(undefined, { maximumFractionDigits: 2 });
 }
 
+// ── Markdown renderer ─────────────────────────────────────────────────────────
+
+function renderInline(text: string, key: string): React.ReactNode {
+  const parts = text.split(/(\*\*[^*]+\*\*|\*[^*]+\*|`[^`]+`)/);
+  return (
+    <React.Fragment key={key}>
+      {parts.map((part, i) => {
+        if (part.startsWith('**') && part.endsWith('**'))
+          return <strong key={i} className="font-semibold text-slate-900">{part.slice(2, -2)}</strong>;
+        if (part.startsWith('*') && part.endsWith('*'))
+          return <em key={i} className="italic text-slate-700">{part.slice(1, -1)}</em>;
+        if (part.startsWith('`') && part.endsWith('`'))
+          return <code key={i} className="bg-violet-50 text-violet-700 px-1 py-0.5 rounded text-xs font-mono">{part.slice(1, -1)}</code>;
+        return part;
+      })}
+    </React.Fragment>
+  );
+}
+
+function NarrativeMarkdown({ text }: { text: string }) {
+  const lines = text.split('\n');
+  const elements: React.ReactNode[] = [];
+  let bulletBuffer: React.ReactNode[] = [];
+  let idx = 0;
+
+  const flushBullets = () => {
+    if (bulletBuffer.length > 0) {
+      elements.push(
+        <ul key={`ul-${idx++}`} className="mt-1.5 mb-1.5 space-y-0.5 pl-1">
+          {bulletBuffer}
+        </ul>
+      );
+      bulletBuffer = [];
+    }
+  };
+
+  lines.forEach((line, i) => {
+    const isBullet = line.startsWith('- ') || line.startsWith('• ');
+    if (!isBullet) flushBullets();
+
+    if (/^## /.test(line)) {
+      elements.push(
+        <p key={i} className="font-bold text-sm text-slate-900 mt-3 mb-1">
+          {renderInline(line.slice(3), `h2-${i}`)}
+        </p>
+      );
+    } else if (/^### /.test(line)) {
+      elements.push(
+        <p key={i} className="font-semibold text-sm text-slate-800 mt-2 mb-0.5">
+          {renderInline(line.slice(4), `h3-${i}`)}
+        </p>
+      );
+    } else if (isBullet) {
+      bulletBuffer.push(
+        <li key={i} className="flex items-start gap-1.5">
+          <span className="mt-1.5 w-1 h-1 rounded-full bg-violet-400 flex-shrink-0" />
+          <span className="text-sm text-slate-700 leading-relaxed">
+            {renderInline(line.slice(2), `li-${i}`)}
+          </span>
+        </li>
+      );
+    } else if (line.trim() === '') {
+      elements.push(<div key={i} className="h-1.5" />);
+    } else {
+      elements.push(
+        <p key={i} className="text-sm text-slate-700 leading-relaxed">
+          {renderInline(line, `p-${i}`)}
+        </p>
+      );
+    }
+  });
+
+  flushBullets();
+  return <div className="space-y-0.5">{elements}</div>;
+}
+
 // ── ResultChart ───────────────────────────────────────────────────────────────
 
 const BAR_LIMIT = 15;
@@ -503,7 +579,7 @@ function ChatMessage({
                 <Sparkles className="w-3.5 h-3.5 text-violet-500 flex-shrink-0" />
                 <p className="text-[11px] font-bold text-violet-500 uppercase tracking-widest">Segment AI</p>
               </div>
-              <p className="text-sm text-slate-800 leading-relaxed">{ans.narrative}</p>
+              <NarrativeMarkdown text={ans.narrative} />
               {ans.sql_error && (
                 <p className="mt-2 text-xs text-amber-700 bg-amber-50 rounded-lg px-3 py-2">
                   Note: {ans.sql_error}

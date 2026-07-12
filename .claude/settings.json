@@ -81,7 +81,12 @@
       "Bash(\"C:/Users/jaisonsamuel.d.lv/AppData/Local/Programs/Python/Python310/python.exe\" -c \"import duckdb; print\\('duckdb', duckdb.__version__\\)\")",
       "Bash(python -c \"import ast; ast.parse\\(open\\('utils/chat_sql_engine.py'\\).read\\(\\)\\); print\\('OK'\\)\")",
       "Bash(\"C:/Users/jaisonsamuel.d.lv/AppData/Local/Programs/Python/Python310/python.exe\" _test_chatbot.py)",
-      "Bash(C:/Users/jaisonsamuel.d.lv/AppData/Local/Programs/Python/Python310/python.exe -c ' *)"
+      "Bash(C:/Users/jaisonsamuel.d.lv/AppData/Local/Programs/Python/Python310/python.exe -c ' *)",
+      "Bash(git add *)",
+      "Bash(git commit -m ' *)",
+      "Bash(git push *)",
+      "Bash(curl -s \"http://localhost:8002/api/banking/datasets\")",
+      "Bash(python -m json.tool)"
     ]
   }
 }

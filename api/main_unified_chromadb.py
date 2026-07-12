@@ -2443,16 +2443,20 @@ async def list_banking_datasets():
                     products_df = pd.read_csv(products_file)
                     product_count = len(products_df)
 
-                # transactions.csv is large (57 MB) — check /tmp/ fallback without triggering download
+                # transactions.csv may be in /tmp/ (Databricks App) — check without downloading
+                from utils.large_file_loader import _TMP_BASE as _txn_tmp_base
                 _txn_resolved = transactions_file
                 if not _txn_resolved.exists():
-                    _tmp_txn = Path('/tmp/meridian_bank/transactions.csv')
+                    _tmp_txn = _txn_tmp_base / 'transactions.csv'
                     if _tmp_txn.exists():
                         _txn_resolved = _tmp_txn
                 transaction_count = 0
                 if _txn_resolved.exists():
-                    with open(_txn_resolved, 'rb') as _f:
-                        transaction_count = sum(1 for _ in _f) - 1  # fast row count, no DataFrame load
+                    try:
+                        with open(_txn_resolved, 'rb') as _f:
+                            transaction_count = sum(1 for _ in _f) - 1
+                    except Exception:
+                        transaction_count = -1  # file exists but couldn't count rows
 
                 profile_file = data_path / "customer_profile.csv"
                 profile_count = len(pd.read_csv(profile_file)) if profile_file.exists() else 0
@@ -2725,8 +2729,6 @@ async def load_banking_dataset(request: dict):
         products_file = data_path / "products.csv"
         transactions_file = data_path / "transactions.csv"
 
-        # transactions.csv is optional — it's excluded from Databricks Apps deployments
-        # because it exceeds the 10 MB file limit; the chatbot uses its own download path.
         missing = [f.name for f in (customers_file, products_file) if not f.exists()]
         if missing:
             raise HTTPException(
@@ -2735,13 +2737,18 @@ async def load_banking_dataset(request: dict):
             )
 
         import pandas as pd
+        from utils.large_file_loader import ensure_csv
         customers_df = _apply_banking_column_compat(pd.read_csv(customers_file))
         products_df = pd.read_csv(products_file)
-        if transactions_file.exists():
-            transactions_df = pd.read_csv(transactions_file)
+
+        # Resolve transactions: local path → /tmp/ cache → download from UC Volume.
+        # ensure_csv() handles all three cases transparently.
+        resolved_txn = ensure_csv(transactions_file)
+        if resolved_txn.exists():
+            transactions_df = pd.read_csv(resolved_txn)
         else:
             transactions_df = pd.DataFrame()
-            logger.info("transactions.csv not present locally — using empty DataFrame (chatbot downloads its own copy)")
+            logger.info("transactions.csv not available (no local file and UC Volume unreachable)")
 
         # Store in system_state for Agent B
         system_state['banking']['products'] = products_df

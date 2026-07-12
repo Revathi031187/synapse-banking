@@ -116,6 +116,7 @@ export default function BankingDataLoader() {
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['banking-status'] });
+      queryClient.invalidateQueries({ queryKey: ['banking-datasets'] });
       queryClient.removeQueries({ queryKey: ['banking-agent-a-results'] });
     }
   });
