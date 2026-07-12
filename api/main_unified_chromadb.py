@@ -2443,10 +2443,16 @@ async def list_banking_datasets():
                     products_df = pd.read_csv(products_file)
                     product_count = len(products_df)
 
+                # transactions.csv is large (57 MB) — check /tmp/ fallback without triggering download
+                _txn_resolved = transactions_file
+                if not _txn_resolved.exists():
+                    _tmp_txn = Path('/tmp/meridian_bank/transactions.csv')
+                    if _tmp_txn.exists():
+                        _txn_resolved = _tmp_txn
                 transaction_count = 0
-                if transactions_file.exists():
-                    transactions_df = pd.read_csv(transactions_file)
-                    transaction_count = len(transactions_df)
+                if _txn_resolved.exists():
+                    with open(_txn_resolved, 'rb') as _f:
+                        transaction_count = sum(1 for _ in _f) - 1  # fast row count, no DataFrame load
 
                 profile_file = data_path / "customer_profile.csv"
                 profile_count = len(pd.read_csv(profile_file)) if profile_file.exists() else 0
@@ -2471,7 +2477,7 @@ async def list_banking_datasets():
                         "name": "transactions",
                         "display_name": "Transactions",
                         "row_count": transaction_count,
-                        "loaded": True
+                        "loaded": _txn_resolved.exists()
                     }
                 ]
                 if profile_count > 0:
@@ -2665,20 +2671,23 @@ async def view_banking_dataset_table(dataset_name: str, table_name: str):
         if table_name not in table_files:
             raise HTTPException(status_code=404, detail=f"Table {table_name} not found")
         
-        file_path = data_path / table_files[table_name]
-        
-        if not file_path.exists():
-            raise HTTPException(status_code=404, detail=f"File {file_path} not found")
-        
-        # Read the CSV
-        df = pd.read_csv(file_path)
-        
-        # Get first 100 rows for preview
-        preview_df = df.head(100)
+        local_path = data_path / table_files[table_name]
+        # For large files excluded from Databricks App deployments (e.g. transactions.csv),
+        # resolve via large_file_loader which checks /tmp/ cache and downloads if needed.
+        from utils.large_file_loader import ensure_csv
+        file_path = ensure_csv(local_path)
 
-        # Use pandas JSON serializer to handle NaN/Inf → null correctly.
-        # preview_df.to_dict() emits float('nan') for NaN in float64 columns even
-        # after .where(notnull, None) because pandas re-casts None back to NaN.
+        if not file_path.exists():
+            raise HTTPException(status_code=404, detail=f"File {table_name} not found. Run Agent A first to trigger the download.")
+
+        # Read only the first 100 rows for the preview — avoids loading the full file
+        # into memory for large tables like transactions.csv (876K rows / 57 MB).
+        preview_df = pd.read_csv(file_path, nrows=100)
+
+        # Count total rows efficiently without loading the full DataFrame.
+        with open(file_path, 'rb') as _f:
+            total_rows = sum(1 for _ in _f) - 1  # subtract header
+
         import json as _json
         data = _json.loads(
             preview_df.replace([np.inf, -np.inf], np.nan)
@@ -2686,9 +2695,9 @@ async def view_banking_dataset_table(dataset_name: str, table_name: str):
         )
 
         return {
-            "columns": df.columns.tolist(),
+            "columns": preview_df.columns.tolist(),
             "data": data,
-            "total_rows": len(df),
+            "total_rows": total_rows,
             "preview_rows": len(preview_df)
         }
         
