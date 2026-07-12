@@ -2777,10 +2777,19 @@ async def get_banking_status():
         }
 
 
+def _agent_a_cache_path() -> Path:
+    """Return cache path — /tmp/ on Databricks to avoid workspace 10 MB file limit."""
+    data_path = _banking_fmb_path()
+    # Databricks workspace paths start with /Workspace/; /tmp is always writable there
+    if str(data_path).startswith('/Workspace/') or os.environ.get('DATABRICKS_HOST'):
+        return Path('/tmp/.agent_a_cache.json')
+    return data_path / '.agent_a_cache.json'
+
+
 def _persist_agent_a_cache(results: dict):
     """Save Agent A personas to JSON file so they survive server restarts."""
     try:
-        cache_path = _banking_fmb_path() / '.agent_a_cache.json'
+        cache_path = _agent_a_cache_path()
         serializable = {k: v for k, v in results.items() if k not in ('customers_df', 'customers_with_clusters_df')}
         # Also persist customer->cluster map
         customers = results.get('customers_with_clusters') or []
@@ -2799,7 +2808,7 @@ def _persist_agent_a_cache(results: dict):
 def _load_agent_a_cache():
     """Load Agent A cache from JSON file on startup."""
     try:
-        cache_path = _banking_fmb_path() / '.agent_a_cache.json'
+        cache_path = _agent_a_cache_path()
         print(f"[CACHE] looking for Agent A cache at: {cache_path}", flush=True)
         print(f"[CACHE] cache exists: {cache_path.exists()}", flush=True)
         if cache_path.exists():
