@@ -1,0 +1,47 @@
+# ─── Databricks App deployment exclusions ────────────────────────────────────
+# Files listed here are NOT copied into the app deployment bundle.
+# Syntax identical to .gitignore.
+
+# Agent A cache (can exceed 10 MB after clustering 5K customers)
+data/preloaded/meridian_bank/.agent_a_cache.json
+data/preloaded/jpm_bank/.agent_a_cache.json
+*_cache.json
+
+# Large CSV files that exceed Databricks' 10 MB per-file deployment limit.
+# These must be read from DBFS / Unity Catalog at runtime, not bundled here.
+data/preloaded/meridian_bank/transactions.csv
+data/preloaded/jpm_bank/transactions.csv
+
+# ChromaDB persistent store — rebuilt at runtime, not deployed
+chroma_db/
+
+# Python bytecode
+__pycache__/
+*.py[cod]
+*.pyo
+
+# Node / frontend build artefacts
+frontend/node_modules/
+frontend/dist/
+frontend/build/
+node_modules/
+
+# Local dev / IDE
+.env
+.env.*
+.vscode/
+.idea/
+.DS_Store
+
+# Claude Code session data
+.claude/
+
+# Test cache
+.pytest_cache/
+.coverage
+htmlcov/
+
+# Logs & temp
+*.log
+*.tmp
+*.temp
