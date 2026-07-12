@@ -87,12 +87,21 @@ from agents.agent_director_banking import DirectorAgent
 meridian_data_path = project_root / 'data' / 'preloaded' / 'meridian_bank'
 jpm_data_path      = project_root / 'data' / 'preloaded' / 'jpm_bank'
 fmb_data_path      = project_root / 'data' / 'preloaded' / 'fmb_bank'  # legacy fallback
-# Priority: Meridian → JPM → FMB
-banking_data_path = (
-    meridian_data_path if meridian_data_path.exists()
-    else jpm_data_path if jpm_data_path.exists()
-    else fmb_data_path
-)
+
+# BANKING_DATA_PATH env var lets Databricks App deployments store large CSV files
+# outside the Repos folder (e.g. on DBFS) without changing any other code.
+# Set it in the app's environment config:  BANKING_DATA_PATH=/dbfs/meridian_bank
+_banking_data_env = os.environ.get('BANKING_DATA_PATH')
+if _banking_data_env:
+    banking_data_path = Path(_banking_data_env)
+    print(f"[INIT] BANKING_DATA_PATH override: {banking_data_path}", flush=True)
+else:
+    # Priority: Meridian → JPM → FMB
+    banking_data_path = (
+        meridian_data_path if meridian_data_path.exists()
+        else jpm_data_path if jpm_data_path.exists()
+        else fmb_data_path
+    )
 banking_agent_a = AgentA_Banking_Enhanced(data_path=str(banking_data_path))
 banking_agent_b = None  # Lazy init after Agent A runs
 _offers_cfg = project_root / 'data' / 'config' / 'product_offers.json'
