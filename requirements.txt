@@ -44,3 +44,6 @@ faker==20.1.0
 
 # Notifications
 twilio>=8.0.0
+
+# Advanced chatbot SQL engine
+duckdb>=0.10.0

@@ -1,5 +1,5 @@
 import { Outlet, NavLink, useNavigate } from 'react-router-dom';
-import { Home, Database, Users, Target, BarChart3, Search, Crosshair, Star, Activity, Sparkles } from 'lucide-react';
+import { Home, Database, Users, Target, BarChart3, Search, Crosshair, Star, Activity, Sparkles, Globe, TrendingUp } from 'lucide-react';
 import latentviewLogo from '../assets/latentview-logo.svg';
 import { useQuery } from '@tanstack/react-query';
 
@@ -69,10 +69,10 @@ export default function UnifiedLayout({ industry }: UnifiedLayoutProps) {
   const navLinks = industry === 'banking' ? [
     { path: `/${industry}/data-loader`, label: 'Data Loader', icon: Database },
     { path: `/${industry}/macro-dashboard`, label: 'Segments', icon: Search },
+    { path: `/${industry}/ask-genie`, label: 'Segment AI', icon: Sparkles, highlight: true },
     { path: `/${industry}/agent-b`, label: 'Recommender', icon: Crosshair },
-    { path: `/${industry}/agent-c`, label: 'Best Offer', icon: Star },
+    { path: `/${industry}/agent-c`, label: 'Offer & Ad Spend', icon: Star },
     { path: `/${industry}/agent-d`, label: 'Director', icon: Activity },
-    { path: `/${industry}/ask-genie`, label: 'Ask Genie', icon: Sparkles, highlight: true }
   ] : industry === 'academy' ? [
     { path: `/${industry}`, label: 'Dashboard', icon: Home },
     { path: `/${industry}/macro-dashboard`, label: 'Visual Dashboard', icon: BarChart3 },
@@ -106,6 +106,17 @@ export default function UnifiedLayout({ industry }: UnifiedLayoutProps) {
                 </div>
               </button>
             </div>
+
+            {/* Right-side actions */}
+            {industry === 'banking' && (
+              <button
+                onClick={() => navigate('/landing')}
+                className="flex items-center gap-2 px-4 py-2 rounded-lg border-2 border-blue-700 text-blue-700 hover:bg-blue-700 hover:text-white font-semibold text-sm transition-all"
+              >
+                <Globe className="w-4 h-4" />
+                Landing Page
+              </button>
+            )}
           </div>
         </div>
       </div>

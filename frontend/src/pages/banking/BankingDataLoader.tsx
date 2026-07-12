@@ -28,7 +28,12 @@ const BANKING_COLORS = ['#1e40af', '#0891b2', '#059669', '#f59e0b', '#dc2626'];
 
 const DATA_LOADER_UI_KEY = 'banking-data-loader-v1';
 const AGENT_A_UI_KEY = 'banking-agent-a-v1';
-const DEFAULT_AGENT_A_UI = { nClusters: 5, gamma: 0.5, resultsEnabled: false };
+const DEFAULT_AGENT_A_UI = {
+  nClusters: 5,
+  gamma: 0.5,
+  resultsEnabled: false,
+  pollingStatus: 'idle' as 'idle' | 'running' | 'complete' | 'failed',
+};
 
 export default function BankingDataLoader() {
   const API_BASE_URL = getBankingApiBase();
@@ -43,15 +48,49 @@ export default function BankingDataLoader() {
 
   // ── Agent A state ──────────────────────────────────────────────────────────
   const [agentAUi, setAgentAUi] = useSessionStorageState(AGENT_A_UI_KEY, DEFAULT_AGENT_A_UI);
-  const { nClusters, gamma, resultsEnabled } = agentAUi;
+  const { nClusters, gamma, resultsEnabled, pollingStatus } = agentAUi;
+  const setPollingStatus = (s: typeof DEFAULT_AGENT_A_UI['pollingStatus']) =>
+    setAgentAUi(prev => ({ ...prev, pollingStatus: s }));
   const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
-  const [pollingStatus, setPollingStatus] = useState<'idle' | 'running' | 'complete' | 'failed'>('idle');
   const [pollingProgress, setPollingProgress] = useState(0);
 
-  // Reset on every mount — never replay stale session data without an explicit user action.
+  // startPolling lives in a ref so both the mutation callback and the resume-on-mount
+  // effect share the same logic without creating circular hook dependencies.
+  const startPollingRef = useRef<() => void>(() => {});
+  startPollingRef.current = () => {
+    if (pollRef.current) clearInterval(pollRef.current);
+    setPollingProgress(0);
+    setPollingStatus('running');
+    pollRef.current = setInterval(async () => {
+      try {
+        const statusRes = await fetch(`${API_BASE_URL}/api/banking/agent_a/status`);
+        if (!statusRes.ok) return;
+        const statusData = await statusRes.json();
+        setPollingProgress(Math.round((statusData.progress ?? 0) * 100));
+        if (statusData.status === 'complete') {
+          clearInterval(pollRef.current!);
+          pollRef.current = null;
+          const resultsRes = await fetch(`${API_BASE_URL}/api/banking/agent_a/results`);
+          if (resultsRes.ok) {
+            const resultsData = await resultsRes.json();
+            queryClient.setQueryData(['banking-agent-a-results'], resultsData.results || resultsData);
+            setAgentAUi(prev => ({ ...prev, resultsEnabled: true, pollingStatus: 'complete' }));
+          } else {
+            setPollingStatus('complete');
+          }
+        } else if (statusData.status === 'failed') {
+          clearInterval(pollRef.current!);
+          pollRef.current = null;
+          setPollingStatus('failed');
+        }
+      } catch { /* network blip — keep polling */ }
+    }, 2000);
+  };
+
+  // On mount: resume polling if the user navigated away mid-run; otherwise leave
+  // existing results intact so navigating back doesn't re-trigger segmentation.
   useEffect(() => {
-    setAgentAUi((prev) => ({ ...prev, resultsEnabled: false }));
-    queryClient.removeQueries({ queryKey: ['banking-agent-a-results'] });
+    if (pollingStatus === 'running') startPollingRef.current();
     return () => { if (pollRef.current) clearInterval(pollRef.current); };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
@@ -112,37 +151,7 @@ export default function BankingDataLoader() {
       return response.json();
     },
     onSuccess: () => {
-      // Poll until the background task completes — never fetch results immediately on execute
-      // because the task hasn't finished yet and would return old cached data.
-      setPollingStatus('running');
-      setPollingProgress(0);
-      if (pollRef.current) clearInterval(pollRef.current);
-      pollRef.current = setInterval(async () => {
-        try {
-          const statusRes = await fetch(`${API_BASE_URL}/api/banking/agent_a/status`);
-          if (!statusRes.ok) return;
-          const statusData = await statusRes.json();
-          setPollingProgress(Math.round((statusData.progress ?? 0) * 100));
-          if (statusData.status === 'complete') {
-            clearInterval(pollRef.current!);
-            pollRef.current = null;
-            // Fetch and commit results BEFORE clearing the loading state so there
-            // is no flash of the empty "Ready to Segment" panel between the spinner
-            // disappearing and the results appearing.
-            const resultsRes = await fetch(`${API_BASE_URL}/api/banking/agent_a/results`);
-            if (resultsRes.ok) {
-              const resultsData = await resultsRes.json();
-              queryClient.setQueryData(['banking-agent-a-results'], resultsData.results || resultsData);
-              setAgentAUi((prev) => ({ ...prev, resultsEnabled: true }));
-            }
-            setPollingStatus('complete');
-          } else if (statusData.status === 'failed') {
-            clearInterval(pollRef.current!);
-            pollRef.current = null;
-            setPollingStatus('failed');
-          }
-        } catch { /* network blip — keep polling */ }
-      }, 2000);
+      startPollingRef.current();
     }
   });
 
@@ -445,6 +454,23 @@ export default function BankingDataLoader() {
         {/* Results Section */}
         {results && (
           <>
+            {/* Results header with Re-run option */}
+            <div className="flex items-center justify-between">
+              <div className="flex items-center gap-2">
+                <CheckCircle2 className="w-5 h-5 text-green-600" />
+                <span className="text-sm font-semibold text-green-700">Segmentation complete</span>
+              </div>
+              <button
+                onClick={() => {
+                  setAgentAUi(prev => ({ ...prev, resultsEnabled: false, pollingStatus: 'idle' }));
+                  queryClient.removeQueries({ queryKey: ['banking-agent-a-results'] });
+                }}
+                className="text-xs text-gray-500 hover:text-gray-700 border border-gray-200 hover:border-gray-400 px-3 py-1 rounded-full transition-colors"
+              >
+                Re-run segmentation
+              </button>
+            </div>
+
             {/* Summary Stats */}
             <div className="grid md:grid-cols-4 gap-4">
               <div className="bg-white rounded-xl shadow-sm border border-blue-200 p-6">
@@ -726,11 +752,17 @@ export default function BankingDataLoader() {
                         <tr key={idx} className="hover:bg-gray-50">
                           {tableData.columns?.map((col: string) => (
                             <td key={col} className="px-4 py-3 text-sm text-gray-900 whitespace-nowrap">
-                              {typeof row[col] === 'number'
-                                ? row[col].toLocaleString()
-                                : row[col] !== null && row[col] !== undefined
-                                  ? String(row[col])
-                                  : '-'}
+                              {(() => {
+                                const val = row[col];
+                                if (val === null || val === undefined) return '-';
+                                if (typeof val === 'number') {
+                                  // Don't add thousands-commas to years, months, IDs, or small integers used as codes
+                                  const lc = col.toLowerCase();
+                                  const isCode = lc === 'year' || lc === 'month' || lc.endsWith('_id') || lc === 'id' || lc === 'cluster_id';
+                                  return isCode ? String(val) : val.toLocaleString();
+                                }
+                                return String(val);
+                              })()}
                             </td>
                           ))}
                         </tr>

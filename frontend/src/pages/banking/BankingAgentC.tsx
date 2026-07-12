@@ -1,4 +1,5 @@
 import React, { useState, useMemo, useRef, useEffect } from 'react';
+import BankingAdSpend from './BankingAdSpend';
 import { useQuery } from '@tanstack/react-query';
 import { motion, AnimatePresence } from 'framer-motion';
 import {
@@ -370,6 +371,8 @@ type OfferIntelligenceSection = {
   experiment_data?: ExperimentData;
   channel_attribution?: Record<string, number>;
   persona_match?: 'exact' | 'cross_persona';
+  // Why this offer was chosen for this customer
+  persona_offer_reason?: string;
 };
 
 type PersonalizedCommunication = {
@@ -570,7 +573,7 @@ function ChannelDeliveryCard({
       {/* Channel name + label */}
       <div className="flex-1 min-w-0">
         <p className={`text-sm font-black leading-none ${bestFatigued ? 'text-amber-700' : meta.color}`}>{meta.label}</p>
-        <p className="text-[10px] text-slate-400 mt-0.5">MTA recommended channel</p>
+        <p className="text-[10px] text-slate-400 mt-0.5">AI recommended channel</p>
       </div>
 
       {/* Status badges */}
@@ -1089,6 +1092,72 @@ function MTAIntelligencePanel({
             <p className="text-[10px] text-slate-400 text-center pt-1">
               Removal-effect Markov attribution · {MTA_JOURNEY_CHANNELS.length} channels
             </p>
+
+            {/* ── Why recommended ≠ top attribution ── */}
+            {bestChannel && topChannel && bestChannel !== topChannel && (() => {
+              const topPct  = Math.round((mtaAttribution?.[topChannel]  ?? 0) * 100);
+              const bestPct = Math.round((mtaAttribution?.[bestChannel] ?? 0) * 100);
+              const topLabel  = MTA_CHANNEL_LABELS[topChannel]  ?? topChannel;
+              const bestLabel = MTA_CHANNEL_LABELS[bestChannel] ?? bestChannel;
+              const suppressed = Object.entries(channelFatigue ?? {})
+                .filter(([, f]) => f.is_fatigued)
+                .map(([ch]) => MTA_CHANNEL_LABELS[ch] ?? ch);
+              return (
+                <div className="rounded-xl border border-violet-200 bg-violet-50 p-3.5 space-y-2.5 mt-1">
+                  <div className="flex items-start gap-2">
+                    <Info className="w-3.5 h-3.5 text-violet-600 flex-shrink-0 mt-0.5" />
+                    <p className="text-[11px] font-bold text-violet-800">
+                      Why {bestLabel} ({bestPct}%) is recommended over {topLabel} ({topPct}%)
+                    </p>
+                  </div>
+
+                  <div className="space-y-2 pl-5">
+                    {/* Row 1 — what Markov % actually measures */}
+                    <div className="flex gap-2 items-start">
+                      <span className="text-[10px] font-bold text-violet-600 shrink-0 mt-0.5">①</span>
+                      <p className="text-[10px] text-violet-700 leading-relaxed">
+                        <span className="font-semibold">Markov % = historical credit, not reach probability.</span>{' '}
+                        {topLabel} gets {topPct}% because it was used in many past journeys across this segment and removing it causes a large drop in conversion probability.
+                        It does not mean {topLabel} is the best channel to send next for every customer in that segment.
+                      </p>
+                    </div>
+
+                    {/* Row 2 — persona reach reality */}
+                    <div className="flex gap-2 items-start">
+                      <span className="text-[10px] font-bold text-violet-600 shrink-0 mt-0.5">②</span>
+                      <p className="text-[10px] text-violet-700 leading-relaxed">
+                        <span className="font-semibold">Persona reach matters more than attribution rank.</span>{' '}
+                        For the <span className="font-semibold">{persona ?? 'this'}</span> persona, {topLabel} has a low reach probability —
+                        most customers in this segment won't open or engage with it.
+                        High attribution for {topLabel} is partly because other personas (e.g. Digital Native) dominate that channel's journey data, inflating its segment-wide score.
+                      </p>
+                    </div>
+
+                    {/* Row 3 — suppressed channels */}
+                    {suppressed.length > 0 && (
+                      <div className="flex gap-2 items-start">
+                        <span className="text-[10px] font-bold text-amber-600 shrink-0 mt-0.5">③</span>
+                        <p className="text-[10px] text-amber-800 leading-relaxed">
+                          <span className="font-semibold">{suppressed.join(', ')} suppressed due to fatigue</span> — too many sends with low engagement.
+                          The system removed {suppressed.length > 1 ? 'these channels' : 'this channel'} from contention even if {suppressed.length > 1 ? 'their' : 'its'} attribution score would otherwise qualify.
+                        </p>
+                      </div>
+                    )}
+
+                    {/* Row 4 — final decision logic */}
+                    <div className="flex gap-2 items-start">
+                      <span className="text-[10px] font-bold text-violet-600 shrink-0 mt-0.5">{suppressed.length > 0 ? '④' : '③'}</span>
+                      <p className="text-[10px] text-violet-700 leading-relaxed">
+                        <span className="font-semibold">Final pick = best non-fatigued channel aligned to persona preference.</span>{' '}
+                        {bestLabel} is the channel this persona is most likely to respond to in person.
+                        Its {bestPct}% attribution reflects fewer historical touchpoints in the data — not lower effectiveness when used.
+                      </p>
+                    </div>
+                  </div>
+                </div>
+              );
+            })()}
+
           </div>
         )}
 
@@ -1454,13 +1523,31 @@ function MTAIntelligencePanel({
 
 // ── ExperimentLiftPanel ───────────────────────────────────────────────────────
 
-function ExperimentLiftPanel({ expData, channelAttribution }: {
+function ExperimentLiftPanel({ expData }: {
   expData: ExperimentData;
-  channelAttribution?: Record<string, number>;
 }) {
   const holdoutRate = expData.holdout_conversion_rate ?? 0;
   const variants = expData.all_variants ?? [];
   const winningId = expData.winning_variant_id;
+
+  // Build prose explanation from experiment data
+  const winnerVariant = variants.find(v => v.variant_id === winningId);
+  const winnerName = winnerVariant?.offer_name ?? 'winning offer';
+  const winnerRate = expData.winning_conversion_rate ?? winnerVariant?.conversion_rate ?? 0;
+  const liftAbs = expData.lift_abs ?? winnerVariant?.lift_abs ?? 0;
+  const pVal = expData.p_value ?? winnerVariant?.p_value ?? 1;
+  const sigVariants = variants.filter(v => v.is_significant).length;
+  const pLabel = pVal < 0.001 ? 'p<0.001' : `p=${pVal.toFixed(3)}`;
+  const decisionExplanation = winnerVariant
+    ? `"${winnerName}" converted ${(winnerRate * 100).toFixed(1)}% of exposed customers vs ` +
+      `${(holdoutRate * 100).toFixed(1)}% in the holdout — ` +
+      `an absolute lift of +${(liftAbs * 100).toFixed(1)}pp (${pLabel}). ` +
+      (sigVariants > 1
+        ? `${sigVariants} of ${variants.length} variants were significant; this had the highest lift.`
+        : sigVariants === 1
+          ? `It was the only variant to reach statistical significance out of ${variants.length} tested.`
+          : `No variants reached significance — this offer was selected as best available.`)
+    : null;
 
   const channelColors: Record<string, string> = {
     in_app: 'bg-violet-500',
@@ -1477,19 +1564,34 @@ function ExperimentLiftPanel({ expData, channelAttribution }: {
 
   return (
     <div className="px-4 pb-4 space-y-3">
-      {/* Header */}
-      <div className="flex items-center gap-2">
-        <span className="inline-flex items-center gap-1.5 text-[11px] font-bold text-violet-700 bg-violet-50 border border-violet-200 rounded-full px-3 py-1">
-          <FlaskConical className="w-3 h-3" />
-          Selected via A/B Experiment
-        </span>
-        {expData.p_value != null && (
-          <span className="text-[11px] text-slate-500 font-mono">p = {expData.p_value < 0.001 ? '<0.001' : expData.p_value.toFixed(4)}</span>
-        )}
-        {expData.experiment_id && (
-          <span className="text-[10px] text-slate-400 ml-auto font-mono">{expData.experiment_id}</span>
-        )}
+      {/* Key metrics strip */}
+      <div className="grid grid-cols-3 gap-2 pt-1">
+        <div className="rounded-xl bg-violet-50 border border-violet-100 px-3 py-2.5 text-center">
+          <p className="text-[9px] font-bold uppercase tracking-wider text-violet-500 mb-0.5">Holdout rate</p>
+          <p className="text-base font-black text-violet-900">{(expData.holdout_conversion_rate * 100).toFixed(1)}%</p>
+          <p className="text-[9px] text-violet-400">no offer shown</p>
+        </div>
+        <div className="rounded-xl bg-emerald-50 border border-emerald-200 px-3 py-2.5 text-center">
+          <p className="text-[9px] font-bold uppercase tracking-wider text-emerald-600 mb-0.5">Winner rate</p>
+          <p className="text-base font-black text-emerald-800">{((expData.winning_conversion_rate ?? 0) * 100).toFixed(1)}%</p>
+          <p className="text-[9px] text-emerald-500">with offer shown</p>
+        </div>
+        <div className="rounded-xl bg-indigo-50 border border-indigo-100 px-3 py-2.5 text-center">
+          <p className="text-[9px] font-bold uppercase tracking-wider text-indigo-500 mb-0.5">Lift</p>
+          <p className="text-base font-black text-indigo-800">+{((expData.lift_abs ?? 0) * 100).toFixed(1)}pp</p>
+          <p className="text-[9px] text-indigo-400">
+            {expData.p_value != null ? (expData.p_value < 0.001 ? 'p<0.001' : `p=${expData.p_value.toFixed(3)}`) : ''}
+          </p>
+        </div>
       </div>
+
+      {/* Plain-English decision explanation */}
+      {decisionExplanation && (
+        <div className="rounded-lg bg-emerald-50 border border-emerald-200 px-3 py-2.5 flex items-start gap-2">
+          <CheckCircle2 className="w-3.5 h-3.5 text-emerald-600 flex-shrink-0 mt-0.5" />
+          <p className="text-[11px] text-emerald-800 leading-relaxed">{decisionExplanation}</p>
+        </div>
+      )}
 
       {/* Variants table */}
       <div className="rounded-lg border border-slate-200 overflow-hidden text-[11px]">
@@ -1543,27 +1645,6 @@ function ExperimentLiftPanel({ expData, channelAttribution }: {
         </table>
       </div>
 
-      {/* Channel attribution */}
-      {channelAttribution && Object.keys(channelAttribution).length > 0 && (
-        <div className="space-y-1.5">
-          <p className="text-[10px] font-bold uppercase tracking-wider text-slate-400">Channel Attribution</p>
-          {Object.entries(channelAttribution)
-            .filter(([, pct]) => pct > 0)
-            .sort(([, a], [, b]) => b - a)
-            .map(([ch, pct]) => (
-              <div key={ch} className="flex items-center gap-2">
-                <span className="text-[11px] text-slate-600 w-20 shrink-0">{channelLabels[ch] ?? ch}</span>
-                <div className="flex-1 h-2 bg-slate-100 rounded-full overflow-hidden">
-                  <div
-                    className={`h-full rounded-full ${channelColors[ch] ?? 'bg-slate-400'}`}
-                    style={{ width: `${Math.round(pct * 100)}%` }}
-                  />
-                </div>
-                <span className="text-[11px] font-mono text-slate-500 w-8 text-right">{Math.round(pct * 100)}%</span>
-              </div>
-            ))}
-        </div>
-      )}
     </div>
   );
 }
@@ -1774,34 +1855,55 @@ function OfferHeroCard({
         )}
       </div>
 
-      {/* ── Experiment panel (primary) or formula score accordion (fallback) ── */}
+      {/* ── Why this offer? (persona_offer_reason) ── */}
+      {offerIntel.persona_offer_reason && (
+        <div className="px-6 py-3.5 bg-indigo-50 border-t border-indigo-100 flex items-start gap-2.5">
+          <Sparkles className="w-3.5 h-3.5 text-indigo-500 flex-shrink-0 mt-0.5" />
+          <div>
+            <p className="text-[10px] font-bold uppercase tracking-wider text-indigo-500 mb-0.5">Why this offer</p>
+            <p className="text-[12px] text-indigo-800 leading-relaxed">{offerIntel.persona_offer_reason}</p>
+          </div>
+        </div>
+      )}
+
+      {/* ── A/B Experiment Results (always visible) or Formula Score Breakdown ── */}
       {isExperimentDriven && offerIntel.experiment_data ? (
-        <div className="border-t border-slate-100 bg-slate-50/60">
-          <button
-            type="button"
-            onClick={onToggleScore}
-            className="w-full flex items-center gap-2 px-6 py-3 text-xs font-semibold text-slate-600 hover:text-slate-900 hover:bg-slate-50 transition-colors text-left"
-          >
-            <FlaskConical className="w-3.5 h-3.5 text-violet-500" />
-            A/B Experiment Results
-            {offerScoreOpen ? <ChevronUp className="w-3.5 h-3.5 ml-auto" /> : <ChevronDown className="w-3.5 h-3.5 ml-auto" />}
-          </button>
-          <AnimatePresence>
-            {offerScoreOpen && (
-              <motion.div
-                initial={{ height: 0, opacity: 0 }}
-                animate={{ height: 'auto', opacity: 1 }}
-                exit={{ height: 0, opacity: 0 }}
-                transition={{ duration: 0.2 }}
-                className="overflow-hidden"
-              >
-                <ExperimentLiftPanel
-                  expData={offerIntel.experiment_data}
-                  channelAttribution={offerIntel.channel_attribution}
-                />
-              </motion.div>
+        <div className="border-t border-slate-100">
+          {/* Explanation header — always visible */}
+          <div className="px-6 py-3.5 bg-gradient-to-r from-violet-50 to-indigo-50 border-b border-violet-100 flex items-center gap-2.5">
+            <div className="w-7 h-7 rounded-lg bg-violet-600 flex items-center justify-center shrink-0">
+              <FlaskConical className="w-3.5 h-3.5 text-white" />
+            </div>
+            <div className="flex-1 min-w-0">
+              <p className="text-xs font-bold text-violet-900">How this offer was selected — A/B Experiment</p>
+              <p className="text-[10px] text-violet-500 mt-0.5">
+                Offer chosen because it outperformed the holdout group with statistical significance
+              </p>
+            </div>
+            {offerIntel.experiment_data.experiment_id && (
+              <span className="text-[9px] text-violet-400 font-mono shrink-0 hidden sm:block truncate max-w-[120px]">
+                {offerIntel.experiment_data.experiment_id}
+              </span>
             )}
-          </AnimatePresence>
+          </div>
+          {/* Methodology pills */}
+          <div className="px-6 py-3 flex flex-wrap gap-2 border-b border-slate-100 bg-white">
+            <span className="inline-flex items-center gap-1.5 text-[10px] font-semibold px-2.5 py-1 rounded-full bg-violet-50 border border-violet-200 text-violet-700">
+              <FlaskConical className="w-3 h-3" /> Randomized A/B test
+            </span>
+            <span className="inline-flex items-center gap-1.5 text-[10px] font-semibold px-2.5 py-1 rounded-full bg-emerald-50 border border-emerald-200 text-emerald-700">
+              <CheckCircle2 className="w-3 h-3" /> Statistically significant (p &lt; 0.05)
+            </span>
+            <span className="inline-flex items-center gap-1.5 text-[10px] font-semibold px-2.5 py-1 rounded-full bg-slate-50 border border-slate-200 text-slate-600">
+              <Users className="w-3 h-3" /> {offerIntel.experiment_data.all_variants?.reduce((s, v) => s + v.n_exposed, 0).toLocaleString() ?? '—'} customers tested
+            </span>
+          </div>
+          {/* Always-expanded experiment panel */}
+          <div className="bg-white">
+            <ExperimentLiftPanel
+              expData={offerIntel.experiment_data}
+            />
+          </div>
         </div>
       ) : breakdownEntries.length > 0 && (
         <div className="border-t border-slate-100 bg-slate-50/60">
@@ -1811,7 +1913,7 @@ function OfferHeroCard({
             className="w-full flex items-center gap-2 px-6 py-3 text-xs font-semibold text-slate-600 hover:text-slate-900 hover:bg-slate-50 transition-colors text-left"
           >
             <Zap className="w-3.5 h-3.5 text-emerald-500" />
-            Why this offer scored highest
+            How this offer fit score was calculated
             {offerScoreOpen ? <ChevronUp className="w-3.5 h-3.5 ml-auto" /> : <ChevronDown className="w-3.5 h-3.5 ml-auto" />}
           </button>
           <AnimatePresence>
@@ -1823,7 +1925,16 @@ function OfferHeroCard({
                 transition={{ duration: 0.2 }}
                 className="overflow-hidden"
               >
-                <div className="px-4 pb-4 space-y-1.5">
+                {/* Score explanation context */}
+                <div className="px-4 py-3 bg-emerald-50 border-b border-emerald-100 flex items-start gap-2">
+                  <Info className="w-3.5 h-3.5 text-emerald-600 shrink-0 mt-0.5" />
+                  <p className="text-[11px] text-emerald-800 leading-relaxed">
+                    <span className="font-semibold">Offer fit score = weighted match</span> across {breakdownEntries.length} factors
+                    comparing this customer's profile to the offer's requirements. Each factor is scored 0–100%, then
+                    multiplied by its weight. A score above 65% signals a strong match.
+                  </p>
+                </div>
+                <div className="px-4 pb-4 pt-3 space-y-1.5">
                   {breakdownEntries.map(([key, val]) => {
                     const factorPct = Math.round(val.score * 100);
                     const factorLabel = key.replace(/_/g, ' ').replace(/\b\w/g, (c) => c.toUpperCase());
@@ -2059,34 +2170,23 @@ function OfferIntelligencePanel({
           </div>
         </div>
 
-        {/* Experiment panel or formula breakdown */}
+        {/* Experiment panel (always visible) or formula breakdown */}
         {isExperimentDriven && offerIntel.experiment_data ? (
-          <div className="mt-4 border-t border-emerald-100 pt-3">
-            <button
-              type="button"
-              onClick={onToggleScore}
-              className="flex items-center gap-2 text-sm font-semibold text-violet-700 hover:text-violet-900 transition-colors w-full text-left"
-            >
-              <FlaskConical className="w-4 h-4" />
-              A/B Experiment Results
-              {offerScoreOpen ? <ChevronUp className="w-4 h-4 ml-auto" /> : <ChevronDown className="w-4 h-4 ml-auto" />}
-            </button>
-            <AnimatePresence>
-              {offerScoreOpen && (
-                <motion.div
-                  initial={{ height: 0, opacity: 0 }}
-                  animate={{ height: 'auto', opacity: 1 }}
-                  exit={{ height: 0, opacity: 0 }}
-                  transition={{ duration: 0.2 }}
-                  className="overflow-hidden mt-2"
-                >
-                  <ExperimentLiftPanel
-                    expData={offerIntel.experiment_data}
-                    channelAttribution={offerIntel.channel_attribution}
-                  />
-                </motion.div>
-              )}
-            </AnimatePresence>
+          <div className="mt-4 border-t border-emerald-100 pt-0 -mx-5 -mb-5 overflow-hidden rounded-b-2xl">
+            <div className="px-5 py-3 bg-gradient-to-r from-violet-50 to-indigo-50 border-b border-violet-100 flex items-center gap-2.5">
+              <div className="w-6 h-6 rounded-lg bg-violet-600 flex items-center justify-center shrink-0">
+                <FlaskConical className="w-3 h-3 text-white" />
+              </div>
+              <div className="flex-1 min-w-0">
+                <p className="text-xs font-bold text-violet-900">How this offer was selected — A/B Experiment</p>
+                <p className="text-[10px] text-violet-500 mt-0.5">Outperformed holdout group with statistical significance</p>
+              </div>
+            </div>
+            <div className="bg-white">
+              <ExperimentLiftPanel
+                expData={offerIntel.experiment_data}
+                />
+            </div>
           </div>
         ) : breakdownEntries.length > 0 && (
           <div className="mt-4 border-t border-emerald-100 pt-3">
@@ -2096,7 +2196,7 @@ function OfferIntelligencePanel({
               className="flex items-center gap-2 text-sm font-semibold text-emerald-800 hover:text-emerald-900 transition-colors w-full text-left"
             >
               <Zap className="w-4 h-4" />
-              Why this offer was selected
+              How this offer fit score was calculated
               {offerScoreOpen ? <ChevronUp className="w-4 h-4 ml-auto" /> : <ChevronDown className="w-4 h-4 ml-auto" />}
             </button>
             <AnimatePresence>
@@ -2565,9 +2665,9 @@ function CommunicationPreviewPanel({
       {/* Header */}
       <div className="flex items-center gap-2 mb-4">
         <div className="w-7 h-7 rounded-lg bg-blue-600 flex items-center justify-center shrink-0">
-          <MessageSquare className="w-3.5 h-3.5 text-white" />
+          <Send className="w-3.5 h-3.5 text-white" />
         </div>
-        <span className="text-sm font-bold text-slate-800">Personalized Communication</span>
+        <span className="text-sm font-bold text-slate-800">Email &amp; SMS Outreach</span>
         <span className={`ml-auto text-[10px] uppercase tracking-wide font-semibold px-2 py-0.5 rounded-full border ${
           isLlm
             ? 'text-blue-700 bg-blue-50 border-blue-200'
@@ -2593,59 +2693,6 @@ function CommunicationPreviewPanel({
               <X className="w-3.5 h-3.5 opacity-60 hover:opacity-100" />
             </button>
           </div>
-        )}
-
-        {/* ── Preview tabs: Push / Flyer only ── */}
-        {(comm.push_notification || comm.flyer_content) && (
-          <>
-            <div className="flex gap-1 mb-3 bg-white/60 rounded-xl p-1 border border-slate-200 w-fit">
-              {(['push','flyer'] as const).filter(t => t === 'push' ? !!comm.push_notification : !!comm.flyer_content).map((tab) => (
-                <button
-                  key={tab}
-                  type="button"
-                  onClick={() => onTabChange(tab)}
-                  className={`px-3 py-1.5 text-xs font-semibold rounded-lg transition-all ${
-                    activeTab === tab
-                      ? 'bg-white shadow-sm text-blue-700 border border-blue-100'
-                      : 'text-slate-500 hover:text-slate-700'
-                  }`}
-                >
-                  {tab === 'push' ? 'Push Preview' : 'Flyer Preview'}
-                </button>
-              ))}
-            </div>
-
-            {/* Push notification phone mockup */}
-            {(activeTab === 'push' || activeTab === 'email') && comm.push_notification && (
-              <div className="bg-gray-900 rounded-2xl p-4 max-w-xs mx-auto shadow-lg mb-4">
-                <div className="flex items-center gap-2 mb-3">
-                  <div className="w-2 h-2 rounded-full bg-gray-600" />
-                  <div className="text-[10px] text-gray-400 font-medium">Meridian Bank · now</div>
-                </div>
-                <p className="text-white text-sm font-medium leading-snug">
-                  {comm.push_notification}
-                </p>
-              </div>
-            )}
-
-            {/* Flyer card */}
-            {activeTab === 'flyer' && comm.flyer_content && (
-              <div className={`rounded-2xl bg-gradient-to-br ${gradient} text-white p-5 shadow-md mb-4`}>
-                <div className="mb-3">
-                  <span className="text-xs font-semibold uppercase tracking-widest opacity-75">
-                    Meridian Community Bank
-                  </span>
-                </div>
-                <h3 className="text-xl font-bold leading-tight mb-3">{comm.flyer_content.headline}</h3>
-                <p className="text-sm leading-relaxed opacity-90">{comm.flyer_content.body}</p>
-                <div className="mt-4">
-                  <span className="bg-white/20 text-white text-xs font-bold px-3 py-1.5 rounded-full cursor-pointer">
-                    Apply Now →
-                  </span>
-                </div>
-              </div>
-            )}
-          </>
         )}
 
         {/* ── Email ── */}
@@ -3058,14 +3105,8 @@ export default function BankingAgentC() {
           transition={{ delay: 0.08, duration: 0.35 }}
           className="mb-10 rounded-2xl border border-slate-200 bg-white shadow-sm overflow-hidden"
         >
-          <div className="border-b border-slate-100 bg-gradient-to-r from-slate-50 via-white to-violet-50/40 px-6 py-5">
-            <h2 className="text-lg font-bold text-slate-900 tracking-tight">One best offer</h2>
-            <p className="text-sm text-slate-600 mt-1 max-w-2xl">
-              Choose <strong className="text-slate-800">Customer</strong> for a 1:1 recommendation, or{' '}
-              <strong className="text-slate-800">Persona</strong> for a representative segment offer. Use{' '}
-              <strong className="text-slate-800">Churn risk intelligence</strong> below for at-risk customers vs persona rollup.
-            </p>
-            <div className="mt-4 inline-flex rounded-full border border-slate-200 p-1 bg-white/90 shadow-inner">
+          <div className="px-6 py-5">
+            <div className="inline-flex rounded-full border border-slate-200 p-1 bg-white/90 shadow-inner">
               <button
                 type="button"
                 onClick={() => setUi((p) => ({ ...p, offerScope: 'customer' }))}
@@ -3194,16 +3235,6 @@ export default function BankingAgentC() {
                                     📍 {selectedCustomer.recent_life_event.replace(/_/g, ' ')}
                                   </span>
                                 )}
-                                {offer.churn_risk_score != null && !Number.isNaN(offer.churn_risk_score) && offer.churn_category && offer.churn_category !== 'Low' && offer.churn_category !== 'nan' && offer.churn_category !== 'NaN' && (
-                                  <span className={`inline-flex items-center gap-1 text-xs font-semibold px-2.5 py-1 rounded-full border ${
-                                    offer.churn_category === 'Critical' ? 'bg-red-50 border-red-200 text-red-700' :
-                                    offer.churn_category === 'High' ? 'bg-orange-50 border-orange-200 text-orange-700' :
-                                    'bg-amber-50 border-amber-200 text-amber-700'
-                                  }`}>
-                                    <AlertTriangle className="w-3 h-3" />
-                                    {offer.churn_category} churn ({offer.churn_risk_score?.toFixed(0)})
-                                  </span>
-                                )}
                               </div>
                             </div>
                           </div>
@@ -3279,75 +3310,12 @@ export default function BankingAgentC() {
                               />
                             )}
 
-                            {/* ── MTA Intelligence Panel ── */}
-                            {(offer as Record<string, unknown>).mta_attribution != null && (
-                              <MTAIntelligencePanel
-                                mtaAttribution={(offer as Record<string, unknown>).mta_attribution as Record<string, number>}
-                                channelFatigue={(offer as Record<string, unknown>).channel_fatigue as Record<string, MTAChannelFatigueEntry>}
-                                personaChannelStats={(offer as Record<string, unknown>).persona_channel_stats as Record<string, MTAPersonaChannelStat>}
-                                aiInsight={(offer as Record<string, unknown>).mta_ai_insight as MTAAiInsight}
-                                bestChannel={offer.best_channel}
-                                persona={offer.persona}
-                                customerId={selectedCustomer?.customer_id}
-                                experimentId={offer.offer_intelligence?.experiment_data?.experiment_id}
-                                pValue={offer.offer_intelligence?.experiment_data?.p_value}
-                                channelRecommendation={(offer as Record<string, unknown>).mta_channel_recommendation as MTAChannelRecommendation | undefined}
-                              />
-                            )}
 
                             {/* ── Agentic Customer Analysis Panel ── */}
                             {Boolean(offer.customer_analysis) && (
                               <CustomerAnalysisPanel analysis={offer.customer_analysis!} />
                             )}
 
-                            {/* ── Churn / Retention signals ── */}
-                            {(() => {
-                              const validCat = offer.churn_category && offer.churn_category !== 'nan' && offer.churn_category !== 'NaN';
-                              const validScore = offer.churn_risk_score != null && !Number.isNaN(offer.churn_risk_score);
-                              const showBlock = (validScore && validCat) || !!offer.churn_risk_reason || !!offer.retention_strategy;
-                              if (!showBlock) return null;
-                              return (
-                              <div className="space-y-3">
-                                {validScore && validCat && (
-                                  <div className="flex items-center gap-2 text-amber-800 bg-amber-50 rounded-xl px-4 py-3 border border-amber-100">
-                                    <AlertTriangle className="w-4 h-4 flex-shrink-0" />
-                                    <span className="text-sm font-medium">
-                                      Churn risk: {offer.churn_category} ({(offer.churn_risk_score as number).toFixed(0)}/100)
-                                    </span>
-                                  </div>
-                                )}
-                                {offer.churn_risk_reason && (
-                                  <div className="rounded-xl bg-slate-50 border border-slate-100 px-4 py-3">
-                                    <p className="text-xs font-semibold uppercase tracking-wider text-slate-500 mb-1">Why this risk</p>
-                                    <p className="text-sm text-slate-700 leading-relaxed">{offer.churn_risk_reason}</p>
-                                  </div>
-                                )}
-                                {offer.retention_strategy && (
-                                  <div className="rounded-xl bg-emerald-50/80 border border-emerald-100 px-4 py-3">
-                                    <p className="text-xs font-semibold uppercase tracking-wider text-emerald-800 mb-1">Retention strategy</p>
-                                    <p className="text-sm text-emerald-900 leading-relaxed whitespace-pre-line">
-                                      {formatRetentionStrategy(offer.retention_strategy)}
-                                    </p>
-                                    {offer.customer_metrics && (
-                                      <div className="mt-3 grid grid-cols-2 gap-2 text-[11px] text-emerald-900">
-                                        <span className="rounded bg-white/70 px-2 py-1 border border-emerald-100">90d txns: {offer.customer_metrics.txn_count_90d ?? '—'}</span>
-                                        <span className="rounded bg-white/70 px-2 py-1 border border-emerald-100">
-                                          Avg tx: ${offer.customer_metrics.avg_txn_amount_90d != null ? Number(offer.customer_metrics.avg_txn_amount_90d).toLocaleString() : '—'}
-                                        </span>
-                                        <span className="rounded bg-white/70 px-2 py-1 border border-emerald-100">Mobile: {pct(offer.customer_metrics.mobile_share_90d)}</span>
-                                        <span className="rounded bg-white/70 px-2 py-1 border border-emerald-100">Active products: {offer.customer_metrics.active_products_180d ?? '—'}</span>
-                                      </div>
-                                    )}
-                                    {offer.suggested_retention_offer && (
-                                      <p className="text-xs text-emerald-800 mt-2">
-                                        Suggested offer angle: <span className="font-medium">{offer.suggested_retention_offer.replace(/_/g, ' ')}</span>
-                                      </p>
-                                    )}
-                                  </div>
-                                )}
-                              </div>
-                              );
-                            })()}
 
                             {offer.agent_c_vs_agent_b?.recommendations_differ && offer.agent_c_vs_agent_b?.explanation && (
                               <div className="rounded-xl border border-blue-200 bg-gradient-to-br from-blue-50/90 to-indigo-50/50 px-4 py-4 shadow-sm">
@@ -3392,20 +3360,13 @@ export default function BankingAgentC() {
                             </div>
                           )}
 
-
-                          {/* ── Communication Preview Panel ── */}
-                          {offer.personalized_communication && (
+                          {/* ── Email & SMS Outreach ── */}
+                          {offer.personalized_communication && (offer.personalized_communication.email_content || offer.personalized_communication.sms_text) && (
                             <div className="px-6 py-4 border-t border-slate-100">
                               <CommunicationPreviewPanel
                                 comm={offer.personalized_communication}
                                 subcategory={offer.offer?.subcategory ?? offer.offer?.category}
-                                activeTab={(() => {
-                                  const fmt = offer.personalized_communication?.recommended_format;
-                                  if (fmt === 'push_notification') return 'push';
-                                  if (fmt === 'email_content') return 'email';
-                                  if (fmt === 'flyer_content') return 'flyer';
-                                  return activeCommTab;
-                                })()}
+                                activeTab="email"
                                 onTabChange={(t) => setUi((p) => ({ ...p, activeCommTab: t }))}
                                 customerId={selectedCustomerId ?? undefined}
                                 customerName={selectedCustomer?.customer_name}
@@ -3415,58 +3376,6 @@ export default function BankingAgentC() {
                             </div>
                           )}
 
-                          <div className="border-t border-slate-100">
-                            <button
-                              type="button"
-                              onClick={() => setUi((p) => ({ ...p, explainOpen: !p.explainOpen }))}
-                              className="w-full flex items-center justify-between px-6 py-4 text-left hover:bg-slate-50 transition-colors"
-                            >
-                              <span className="font-semibold text-slate-800">How the AI got here</span>
-                              {explainOpen ? <ChevronUp className="w-5 h-5" /> : <ChevronDown className="w-5 h-5" />}
-                            </button>
-                            <AnimatePresence>
-                              {explainOpen && (
-                                <motion.div
-                                  initial={{ height: 0, opacity: 0 }}
-                                  animate={{ height: 'auto', opacity: 1 }}
-                                  exit={{ height: 0, opacity: 0 }}
-                                  transition={{ duration: 0.25 }}
-                                  className="overflow-hidden"
-                                >
-                                  <div className="px-6 pb-6 space-y-4">
-                                    <div className="rounded-xl bg-indigo-50/80 p-4 border border-indigo-100">
-                                      <p className="text-sm font-semibold text-indigo-900 mb-2 flex items-center gap-2">
-                                        <TrendingUp className="w-4 h-4" /> Why this offer
-                                      </p>
-                                      <ul className="list-disc list-inside space-y-1 text-slate-700 text-sm leading-relaxed">
-                                        {formatExplanation(offer.explainability?.why_this_offer).length > 0
-                                          ? formatExplanation(offer.explainability?.why_this_offer).map((line, i) => (
-                                              <li key={i}>{line.replace(/^•\s*/, '')}</li>
-                                            ))
-                                          : (
-                                            <li>—</li>
-                                          )}
-                                      </ul>
-                                    </div>
-                                    <div className="rounded-xl bg-emerald-50/80 p-4 border border-emerald-100">
-                                      <p className="text-sm font-semibold text-emerald-900 mb-2 flex items-center gap-2">
-                                        <Shield className="w-4 h-4" /> Why our AI
-                                      </p>
-                                      <ul className="list-disc list-inside space-y-1 text-slate-700 text-sm leading-relaxed">
-                                        {formatExplanation(offer.explainability?.why_our_ai).length > 0
-                                          ? formatExplanation(offer.explainability?.why_our_ai).map((line, i) => (
-                                              <li key={i}>{line.replace(/^•\s*/, '')}</li>
-                                            ))
-                                          : (
-                                            <li>—</li>
-                                          )}
-                                      </ul>
-                                    </div>
-                                  </div>
-                                </motion.div>
-                              )}
-                            </AnimatePresence>
-                          </div>
                         </div>
                       </motion.div>
                     ) : (
@@ -3497,26 +3406,6 @@ export default function BankingAgentC() {
                               customerChannelPref={selectedCustomer?.channel_preference}
                               channelFatigue={(offer as Record<string, unknown>).channel_fatigue as Record<string, { is_fatigued: boolean; sent?: number; consecutive_no_open?: number }> | undefined}
                             />
-                          )}
-                          {(offer?.churn_category === 'High' || offer?.churn_category === 'Critical') && (
-                            <div className="rounded-xl bg-red-50 border border-red-200 px-4 py-3 flex items-start gap-3">
-                              <AlertTriangle className="w-4 h-4 text-red-600 flex-shrink-0 mt-0.5" />
-                              <p className="text-sm text-red-800 font-medium">
-                                High churn risk ({offer.churn_category} · {offer.churn_risk_score?.toFixed(0)}/100) — escalate to relationship banker immediately.
-                              </p>
-                            </div>
-                          )}
-                          {offer?.churn_risk_reason && (
-                            <div className="rounded-xl bg-slate-50 border border-slate-100 px-4 py-3">
-                              <p className="text-xs font-semibold uppercase tracking-wider text-slate-500 mb-1">Why this risk</p>
-                              <p className="text-sm text-slate-700 leading-relaxed">{offer.churn_risk_reason}</p>
-                            </div>
-                          )}
-                          {offer?.retention_strategy && (
-                            <div className="rounded-xl bg-emerald-50 border border-emerald-100 px-4 py-3">
-                              <p className="text-xs font-semibold uppercase tracking-wider text-emerald-800 mb-1">Retention strategy</p>
-                              <p className="text-sm text-emerald-900 leading-relaxed whitespace-pre-line">{formatRetentionStrategy(offer.retention_strategy)}</p>
-                            </div>
                           )}
                         </div>
                       </motion.div>
@@ -3613,86 +3502,32 @@ export default function BankingAgentC() {
                             />
                           )}
 
-                          {/* ── MTA Intelligence Panel (persona view) ── */}
-                          {(personaOffer as Record<string, unknown>).mta_attribution != null ? (
-                            <MTAIntelligencePanel
-                              mtaAttribution={(personaOffer as Record<string, unknown>).mta_attribution as Record<string, number>}
-                              channelFatigue={undefined}
-                              personaChannelStats={(personaOffer as Record<string, unknown>).persona_channel_stats as Record<string, MTAPersonaChannelStat>}
-                              aiInsight={(personaOffer as Record<string, unknown>).mta_ai_insight as MTAAiInsight}
-                              bestChannel={personaOffer.best_channel}
-                              persona={personaOffer.persona}
-                              customerId={personaOffer.representative_customer_id}
-                              experimentId={personaOffer.offer_intelligence?.experiment_data?.experiment_id}
-                              pValue={personaOffer.offer_intelligence?.experiment_data?.p_value}
-                              channelRecommendation={undefined}
-                            />
-                          ) : (
-                            /* Fallback: old static channel distribution */
-                            personaOffer.channel_distribution && Object.keys(personaOffer.channel_distribution).length > 0 && (
-                              <div className="rounded-2xl border border-slate-200 bg-white shadow-sm overflow-hidden">
-                                <div className="px-5 py-3 border-b border-slate-100 bg-slate-50 flex items-center gap-2">
-                                  <Users className="w-4 h-4 text-slate-500 flex-shrink-0" />
-                                  <span className="text-sm font-bold text-slate-700">Segment channel mix</span>
-                                </div>
-                                <div className="p-5 space-y-2.5">
-                                  {Object.entries(personaOffer.channel_distribution).sort((a, b) => b[1] - a[1]).map(([ch, pctVal]) => {
-                                    const cm = CHANNEL_META[ch] ?? { label: ch.replace(/_/g, ' '), color: 'text-indigo-600', bg: 'bg-indigo-400', border: '', activeBg: '' };
-                                    return (
-                                      <div key={ch} className="flex items-center gap-3">
-                                        <span className="w-4 h-4 flex-shrink-0">{channelIcons[ch] ?? <Mail className="w-4 h-4 text-slate-400" />}</span>
-                                        <span className="text-xs text-slate-600 w-28 shrink-0 capitalize">{cm.label}</span>
-                                        <div className="flex-1 h-2.5 bg-slate-100 rounded-full overflow-hidden">
-                                          <div className={`h-full rounded-full ${cm.bg}`} style={{ width: `${pctVal}%` }} />
-                                        </div>
-                                        <span className="text-xs font-bold text-slate-700 w-9 text-right tabular-nums">{pctVal}%</span>
-                                      </div>
-                                    );
-                                  })}
-                                </div>
+                          {/* ── Segment channel mix ── */}
+                          {personaOffer.channel_distribution && Object.keys(personaOffer.channel_distribution).length > 0 && (
+                            <div className="rounded-2xl border border-slate-200 bg-white shadow-sm overflow-hidden">
+                              <div className="px-5 py-3 border-b border-slate-100 bg-slate-50 flex items-center gap-2">
+                                <Users className="w-4 h-4 text-slate-500 flex-shrink-0" />
+                                <span className="text-sm font-bold text-slate-700">Segment channel mix</span>
                               </div>
-                            )
-                          )}
-
-                          {/* ── Segment churn summary ── */}
-                          {personaOffer.segment_churn_summary && (
-                            <div className="rounded-xl border border-amber-200 bg-amber-50/60 px-4 py-3.5">
-                              <p className="text-xs font-semibold uppercase tracking-wider text-amber-900 mb-1 flex items-center gap-1.5">
-                                <AlertTriangle className="w-3.5 h-3.5" />
-                                Segment churn risk
-                              </p>
-                              <p className="text-xs text-amber-950 leading-relaxed">{personaOffer.segment_churn_summary}</p>
-                              {personaOffer.segment_churn && (
-                                <p className="text-[11px] text-amber-800 mt-2 font-mono tabular-nums">
-                                  {personaOffer.segment_churn.at_risk_high_critical_count} at High/Critical of{' '}
-                                  {personaOffer.segment_churn.segment_size} · avg score {personaOffer.segment_churn.avg_churn_score_segment}
-                                  {personaOffer.segment_churn.avg_churn_score_at_risk != null
-                                    ? ` · at-risk avg ${personaOffer.segment_churn.avg_churn_score_at_risk}`
-                                    : ''}
-                                </p>
-                              )}
+                              <div className="p-5 space-y-2.5">
+                                {Object.entries(personaOffer.channel_distribution).sort((a, b) => b[1] - a[1]).map(([ch, pctVal]) => {
+                                  const cm = CHANNEL_META[ch] ?? { label: ch.replace(/_/g, ' '), color: 'text-indigo-600', bg: 'bg-indigo-400', border: '', activeBg: '' };
+                                  return (
+                                    <div key={ch} className="flex items-center gap-3">
+                                      <span className="w-4 h-4 flex-shrink-0">{channelIcons[ch] ?? <Mail className="w-4 h-4 text-slate-400" />}</span>
+                                      <span className="text-xs text-slate-600 w-28 shrink-0 capitalize">{cm.label}</span>
+                                      <div className="flex-1 h-2.5 bg-slate-100 rounded-full overflow-hidden">
+                                        <div className={`h-full rounded-full ${cm.bg}`} style={{ width: `${pctVal}%` }} />
+                                      </div>
+                                      <span className="text-xs font-bold text-slate-700 w-9 text-right tabular-nums">{pctVal}%</span>
+                                    </div>
+                                  );
+                                })}
+                              </div>
                             </div>
                           )}
 
-                          {/* ── Communication Preview ── */}
-                          {personaOffer.personalized_communication && (
-                            <CommunicationPreviewPanel
-                              comm={personaOffer.personalized_communication}
-                              subcategory={personaOffer.offer?.subcategory ?? personaOffer.offer?.category}
-                              activeTab={(() => {
-                                const fmt = personaOffer.personalized_communication?.recommended_format;
-                                if (fmt === 'push_notification') return 'push';
-                                if (fmt === 'email_content') return 'email';
-                                if (fmt === 'flyer_content') return 'flyer';
-                                return personaCommTab;
-                              })()}
-                              onTabChange={(t) => setUi((p) => ({ ...p, personaCommTab: t }))}
-                              customerId={personaOffer.representative_customer_id}
-                              customerName={personaOffer.representative_customer_name}
-                              offerIntelligence={personaOffer.offer_intelligence as Record<string, unknown>}
-                              personaName={personaOffer.persona}
-                            />
-                          )}
+
 
                           {personaOffer.agent_c_vs_agent_b?.recommendations_differ && personaOffer.agent_c_vs_agent_b?.explanation && (
                             <div className="rounded-xl border border-blue-200 bg-gradient-to-br from-blue-50/90 to-indigo-50/50 px-4 py-4 shadow-sm">
@@ -3727,6 +3562,20 @@ export default function BankingAgentC() {
                               )}
                               <p className="text-sm text-slate-800 leading-relaxed">{personaOffer.agent_c_vs_agent_b.explanation}</p>
                             </div>
+                          )}
+
+                          {/* ── Email & SMS Outreach ── */}
+                          {personaOffer.personalized_communication && (personaOffer.personalized_communication.email_content || personaOffer.personalized_communication.sms_text) && (
+                            <CommunicationPreviewPanel
+                              comm={personaOffer.personalized_communication}
+                              subcategory={personaOffer.offer?.subcategory ?? personaOffer.offer?.category}
+                              activeTab="email"
+                              onTabChange={(t) => setUi((p) => ({ ...p, personaCommTab: t }))}
+                              customerId={personaOffer.representative_customer_id}
+                              customerName={personaOffer.representative_customer_name}
+                              offerIntelligence={personaOffer.offer_intelligence as Record<string, unknown>}
+                              personaName={personaOffer.persona}
+                            />
                           )}
                         </div>
                       </motion.div>
@@ -3974,6 +3823,11 @@ export default function BankingAgentC() {
             )}
           </div>
         </motion.section>}
+      </div>
+
+      {/* Ad Spend ROI — embedded below Best Offer content */}
+      <div className="mt-12">
+        <BankingAdSpend />
       </div>
     </div>
   );

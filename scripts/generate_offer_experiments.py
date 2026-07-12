@@ -47,6 +47,17 @@ PRODUCT_NAMES = {
     "MRD_B001": "Meridian Business Essential Checking",
     "MRD_B004": "Meridian Business Line of Credit",
     "MRD_A001": "Meridian Farm Operating Line",
+    "MRD_P006": "Meridian Money Market",
+    "MRD_P008": "Meridian 24-Month CD",
+    "MRD_P012": "Meridian Credit Builder Card",
+    "MRD_P015": "Meridian Home Equity Loan",
+    "MRD_P016": "Meridian HELOC",
+    "MRD_P018": "Meridian FHA Mortgage",
+    "MRD_B002": "Meridian Business Plus Checking",
+    "MRD_B003": "Meridian Business Premium Savings",
+    "MRD_B005": "Meridian Business Basic Checking",
+    "MRD_A002": "Meridian Agricultural Equipment Loan",
+    "MRD_A003": "Meridian Agricultural Land Improvement Loan",
 }
 
 # ── Experiment definitions ────────────────────────────────────────────────────
@@ -241,6 +252,110 @@ EXPERIMENT_CONFIGS = [
     ]),
     ("MRD_A001", "At-Risk Borrower",    0.050, [
         ("MRD_OFF_034", 0.100, "branch"),
+    ]),
+    # ── Money Market (MRD_P006) ───────────────────────────────────────────────
+    ("MRD_P006", "Wealth Builder",      0.090, [
+        ("MRD_OFF_038", 0.175, "email"),
+        ("MRD_OFF_039", 0.205, "email"),
+    ]),
+    ("MRD_P006", "Retiree Anchor",      0.085, [
+        ("MRD_OFF_038", 0.168, "email"),
+        ("MRD_OFF_039", 0.140, "branch"),
+    ]),
+    ("MRD_P006", "Everyday Essential",  0.070, [
+        ("MRD_OFF_038", 0.132, "email"),
+        ("MRD_OFF_039", 0.108, "in_app"),
+    ]),
+    # ── 24-Month CD (MRD_P008) ────────────────────────────────────────────────
+    ("MRD_P008", "Retiree Anchor",      0.095, [
+        ("MRD_OFF_040", 0.182, "email"),
+        ("MRD_OFF_041", 0.155, "branch"),
+    ]),
+    ("MRD_P008", "Wealth Builder",      0.080, [
+        ("MRD_OFF_040", 0.162, "email"),
+        ("MRD_OFF_041", 0.132, "email"),
+    ]),
+    ("MRD_P008", "Digital Native",      0.070, [   # NO_OFFER — CD less appealing to digital natives
+        ("MRD_OFF_040", 0.075, "in_app"),
+        ("MRD_OFF_041", 0.073, "email"),
+    ]),
+    # ── Credit Builder Card (MRD_P012) ────────────────────────────────────────
+    ("MRD_P012", "At-Risk Borrower",    0.080, [
+        ("MRD_OFF_042", 0.168, "in_app"),
+        ("MRD_OFF_043", 0.148, "email"),
+    ]),
+    ("MRD_P012", "Everyday Essential",  0.070, [
+        ("MRD_OFF_042", 0.148, "in_app"),
+        ("MRD_OFF_043", 0.125, "email"),
+    ]),
+    # ── Home Equity Loan (MRD_P015) ───────────────────────────────────────────
+    ("MRD_P015", "Wealth Builder",      0.065, [
+        ("MRD_OFF_023", 0.138, "email"),
+        ("MRD_OFF_024", 0.118, "branch"),
+    ]),
+    ("MRD_P015", "Everyday Essential",  0.060, [
+        ("MRD_OFF_023", 0.122, "email"),
+        ("MRD_OFF_024", 0.098, "branch"),
+    ]),
+    ("MRD_P015", "Retiree Anchor",      0.055, [   # NO_OFFER — retirees cautious about home equity debt
+        ("MRD_OFF_023", 0.060, "email"),
+        ("MRD_OFF_024", 0.059, "branch"),
+    ]),
+    # ── HELOC (MRD_P016) ──────────────────────────────────────────────────────
+    ("MRD_P016", "Wealth Builder",      0.070, [
+        ("MRD_OFF_044", 0.148, "email"),
+        ("MRD_OFF_045", 0.168, "branch"),
+    ]),
+    ("MRD_P016", "Everyday Essential",  0.065, [
+        ("MRD_OFF_044", 0.132, "email"),
+        ("MRD_OFF_045", 0.112, "in_app"),
+    ]),
+    ("MRD_P016", "Digital Native",      0.060, [
+        ("MRD_OFF_044", 0.122, "in_app"),
+        ("MRD_OFF_045", 0.102, "email"),
+    ]),
+    # ── FHA Mortgage / First-Time Buyer (MRD_P018) ────────────────────────────
+    ("MRD_P018", "Everyday Essential",  0.055, [
+        ("MRD_OFF_046", 0.122, "email"),
+        ("MRD_OFF_047", 0.098, "branch"),
+    ]),
+    ("MRD_P018", "Digital Native",      0.050, [
+        ("MRD_OFF_046", 0.112, "in_app"),
+        ("MRD_OFF_047", 0.088, "email"),
+    ]),
+    ("MRD_P018", "At-Risk Borrower",    0.045, [
+        ("MRD_OFF_046", 0.098, "email"),
+        ("MRD_OFF_047", 0.082, "branch"),
+    ]),
+    ("MRD_P018", "Wealth Builder",      0.050, [   # NO_OFFER — wealth builders use conventional mortgages
+        ("MRD_OFF_046", 0.054, "email"),
+        ("MRD_OFF_047", 0.052, "branch"),
+    ]),
+    # ── Business Plus Checking (MRD_B002) ─────────────────────────────────────
+    ("MRD_B002", "Wealth Builder",      0.085, [
+        ("MRD_OFF_048", 0.172, "branch"),
+    ]),
+    ("MRD_B002", "Everyday Essential",  0.075, [
+        ("MRD_OFF_048", 0.148, "branch"),
+    ]),
+    # ── Business Premium Savings (MRD_B003) ───────────────────────────────────
+    ("MRD_B003", "Wealth Builder",      0.080, [
+        ("MRD_OFF_049", 0.162, "email"),
+    ]),
+    # ── Business Basic Checking (MRD_B005) ────────────────────────────────────
+    ("MRD_B005", "Wealth Builder",      0.080, [
+        ("MRD_OFF_033", 0.168, "branch"),
+    ]),
+    ("MRD_B005", "Everyday Essential",  0.070, [
+        ("MRD_OFF_033", 0.142, "branch"),
+    ]),
+    # ── Agricultural Equipment Loan (MRD_A002) ────────────────────────────────
+    ("MRD_A002", "Everyday Essential",  0.050, [
+        ("MRD_OFF_035", 0.108, "branch"),
+    ]),
+    # ── Agricultural Land Improvement (MRD_A003) ──────────────────────────────
+    ("MRD_A003", "Everyday Essential",  0.050, [
+        ("MRD_OFF_051", 0.102, "branch"),
     ]),
 ]
 

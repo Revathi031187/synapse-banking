@@ -1746,7 +1746,15 @@ class AgentA_Banking_Enhanced:
             raise ValueError(f"Customer {customer_id} not found")
         
         customer = customer.iloc[0]
-        cluster_id = customer['cluster']
+
+        # 'cluster' is added in-memory when Agent A runs segmentation.
+        # The API endpoint rebuilds it from agent_a_results before calling here,
+        # but guard defensively in case it's still missing.
+        if 'cluster' in customer.index:
+            cluster_id = int(customer['cluster'])
+        else:
+            cluster_id = 0
+
         persona = self.personas.get(cluster_id, {})
         
         def _safe_str(val, default=''):

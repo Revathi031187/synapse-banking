@@ -625,6 +625,11 @@ def build_genie_persona_context(
 
     return (
         f"You are answering questions about our personalization domain in Unity Catalog.\n\n"
+        f"IMPORTANT RESPONSE RULES:\n"
+        f"1. ALWAYS run a SQL query and return tabular data when the question is about customers, segments, products, revenue, churn, or any metric. Never answer data questions with text only.\n"
+        f"2. Do NOT ask clarifying questions. Make a reasonable assumption and run the query immediately. If the question has multiple interpretations, pick the most useful one and show the data.\n"
+        f"3. When the user says 'Yes', 'Yes please', or similar, execute the action you most recently proposed — run the SQL and return the table.\n"
+        f"4. Keep narrative text brief (2-3 sentences max). The table IS the answer.\n\n"
         f"For persona or segment questions, join `{customers_tbl}` to `{pa}` ON `customer_id`. "
         f"Use `{pa}.persona_name` and `{pa}.cluster_id` as the source of truth for current segments.\n"
         f"Do NOT use legacy persona or segment columns on the customers table if those exist "
@@ -635,6 +640,25 @@ def build_genie_persona_context(
         f"Current persona names from the latest segmentation run: {', '.join(names) if names else '(none — run segmentation and sync)'}\n\n"
         f"---\nUser question:\n"
     )
+
+
+def _fetch_external_link_rows(link_obj: dict) -> list:
+    """Fetch result rows from a Databricks presigned external-link chunk."""
+    try:
+        import httpx
+        url = link_obj.get("external_link") or link_obj.get("url") or ""
+        if not url:
+            return []
+        http_headers = {k: v for k, v in (link_obj.get("http_headers") or {}).items()}
+        with httpx.Client(timeout=30.0) as c:
+            r = c.get(url, headers=http_headers)
+            r.raise_for_status()
+            data = r.json()
+            if isinstance(data, list):
+                return data
+    except Exception as e:
+        logger.warning("Could not fetch external link rows: %s", e)
+    return []
 
 
 def _extract_table_from_statement_response(stmt: Any) -> Dict[str, Any] | None:
@@ -649,6 +673,14 @@ def _extract_table_from_statement_response(stmt: Any) -> Dict[str, Any] | None:
             columns = [c.get("name") or c.get("type_name", f"col_{i}") for i, c in enumerate(cols_raw)]
             result = stmt.get("result") or {}
             rows = result.get("data_array") or []
+            # Fallback: fetch from presigned external links (Databricks uses these for larger results)
+            if not rows:
+                for link in (result.get("external_links") or []):
+                    if isinstance(link, dict):
+                        fetched = _fetch_external_link_rows(link)
+                        if fetched:
+                            rows = fetched
+                            break
         else:
             manifest = getattr(stmt, "manifest", None)
             schema = getattr(manifest, "schema", None) if manifest else None
@@ -656,6 +688,15 @@ def _extract_table_from_statement_response(stmt: Any) -> Dict[str, Any] | None:
             columns = [getattr(c, "name", None) or f"col_{i}" for i, c in enumerate(cols_raw)]
             result = getattr(stmt, "result", None)
             rows = getattr(result, "data_array", None) or [] if result else []
+            # Fallback: external links on SDK objects
+            if not rows and result is not None:
+                ext_links = getattr(result, "external_links", None) or []
+                for link in ext_links:
+                    link_dict = link if isinstance(link, dict) else vars(link) if hasattr(link, "__dict__") else {}
+                    fetched = _fetch_external_link_rows(link_dict)
+                    if fetched:
+                        rows = fetched
+                        break
         if not columns and not rows:
             return None
         # Normalize rows to list-of-lists of strings
@@ -839,6 +880,18 @@ def _genie_rest_get_query_result(
     return api.do(
         "GET",
         f"/api/2.0/genie/spaces/{space_id}/conversations/{conversation_id}/messages/{message_id}/query-result",
+        headers=headers,
+    )
+
+
+def _genie_rest_create_message(w: Any, space_id: str, conversation_id: str, content: str) -> Dict[str, Any]:
+    """Add a follow-up message to an existing Genie conversation."""
+    api = _workspace_api_client(w)
+    headers = {"Accept": "application/json", "Content-Type": "application/json"}
+    return api.do(
+        "POST",
+        f"/api/2.0/genie/spaces/{space_id}/conversations/{conversation_id}/messages",
+        body={"content": content},
         headers=headers,
     )
 
@@ -1029,7 +1082,7 @@ def _genie_client_has_credentials() -> bool:
     return bool(token or m2m or az)
 
 
-def ask_genie(question: str, context_prefix: str) -> Dict[str, Any]:
+def ask_genie(question: str, context_prefix: str, conversation_id: Optional[str] = None) -> Dict[str, Any]:
     try:
         from databricks.sdk.errors.platform import Unauthenticated
     except ImportError:
@@ -1064,27 +1117,59 @@ def ask_genie(question: str, context_prefix: str) -> Dict[str, Any]:
         }
 
     space_id = os.getenv("GENIE_SPACE_ID", "").strip()
-    content = (context_prefix or "").strip() + "\n" + (question or "").strip()
+    # When continuing a conversation, send only the question (Genie already has context).
+    # When starting fresh, prepend the persona/catalog context.
+    if conversation_id:
+        content = (question or "").strip()
+    else:
+        content = (context_prefix or "").strip() + "\n" + (question or "").strip()
 
     try:
         w = build_workspace_client()
         genie = w.genie
-        if hasattr(genie, "start_conversation_and_wait"):
-            msg = genie.start_conversation_and_wait(space_id=space_id, content=content)
-        else:
-            op = _genie_rest_start_conversation(w, space_id, content)
-            conv_id = op.get("conversation_id")
-            msg_id = op.get("message_id")
-            if not conv_id or not msg_id:
-                raise RuntimeError(f"Unexpected Genie start-conversation response: {op}")
-            if hasattr(genie, "wait_get_message_genie_completed"):
-                msg = genie.wait_get_message_genie_completed(
-                    conversation_id=conv_id,
-                    message_id=msg_id,
+
+        if conversation_id:
+            # ── Continue existing Genie conversation ────────────────────────
+            if hasattr(genie, "create_message_and_wait"):
+                msg = genie.create_message_and_wait(
                     space_id=space_id,
+                    conversation_id=conversation_id,
+                    content=content,
                 )
             else:
-                msg = _genie_rest_wait_message_completed(w, space_id, conv_id, msg_id)
+                op = _genie_rest_create_message(w, space_id, conversation_id, content)
+                msg_id = op.get("message_id")
+                if not msg_id:
+                    raise RuntimeError(f"Unexpected Genie create-message response: {op}")
+                if hasattr(genie, "wait_get_message_genie_completed"):
+                    msg = genie.wait_get_message_genie_completed(
+                        conversation_id=conversation_id,
+                        message_id=msg_id,
+                        space_id=space_id,
+                    )
+                else:
+                    msg = _genie_rest_wait_message_completed(w, space_id, conversation_id, msg_id)
+            # Ensure conversation_id is preserved in dict responses
+            if isinstance(msg, dict) and not msg.get("conversation_id"):
+                msg["conversation_id"] = conversation_id
+        else:
+            # ── Start a new Genie conversation ──────────────────────────────
+            if hasattr(genie, "start_conversation_and_wait"):
+                msg = genie.start_conversation_and_wait(space_id=space_id, content=content)
+            else:
+                op = _genie_rest_start_conversation(w, space_id, content)
+                conv_id = op.get("conversation_id")
+                msg_id = op.get("message_id")
+                if not conv_id or not msg_id:
+                    raise RuntimeError(f"Unexpected Genie start-conversation response: {op}")
+                if hasattr(genie, "wait_get_message_genie_completed"):
+                    msg = genie.wait_get_message_genie_completed(
+                        conversation_id=conv_id,
+                        message_id=msg_id,
+                        space_id=space_id,
+                    )
+                else:
+                    msg = _genie_rest_wait_message_completed(w, space_id, conv_id, msg_id)
     except Unauthenticated as e:
         hint = (
             "The Genie API rejected this credential type. On Azure Databricks use OAuth: "
@@ -1114,6 +1199,23 @@ def ask_genie(question: str, context_prefix: str) -> Dict[str, Any]:
                 "success": False,
                 "error": err,
                 "hint": _GENIE_SPACE_NOT_FOUND_HINT,
+                "config": cfg,
+            }
+        if (
+            "messagestatus.failed" in el
+            or "message failed" in el
+            or "genie message failed" in el
+            or "failed to reach completed" in el
+        ):
+            return {
+                "success": False,
+                "error": "The AI could not generate an answer for this question.",
+                "hint": (
+                    "This usually means: (1) the question references data not connected to this AI space — "
+                    "make sure all meridian_* tables and persona_assignments are added as data sources in your space settings; "
+                    "(2) the question is too ambiguous — try rephrasing it with a specific metric, table, or segment name; "
+                    "(3) the AI space instructions don't cover this topic — check your space instructions include the table reference."
+                ),
                 "config": cfg,
             }
         raise

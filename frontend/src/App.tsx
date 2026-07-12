@@ -7,6 +7,7 @@ import BankingMacroDashboard from './pages/banking/BankingMacroDashboard';
 import BankingAgentC from './pages/banking/BankingAgentC';
 import BankingAgentD from './pages/banking/BankingAgentD';
 import BankingAskGenie from './pages/banking/BankingAskGenie';
+import BankingLanding from './pages/banking/BankingLanding';
 
 // Academy Sports pages (Keep for reference)
 import AcademyDashboard from './pages/academy/AcademyDashboard';
@@ -37,8 +38,11 @@ function App() {
     <QueryClientProvider client={queryClient}>
       <Router basename={basename}>
         <Routes>
-          {/* Redirect root to Banking (primary demo) */}
-          <Route path="/" element={<Navigate to="/banking" replace />} />
+          {/* Public landing page — personalized on return visits */}
+          <Route path="/landing" element={<BankingLanding />} />
+
+          {/* Redirect root to landing page */}
+          <Route path="/" element={<Navigate to="/landing" replace />} />
           
           {/* Banking Routes (NEW - Primary Demo) */}
           <Route path="/banking" element={<UnifiedLayout industry="banking" />}>
@@ -64,8 +68,8 @@ function App() {
             <Route path="customer/:customerId/recommendations" element={<AcademyRecommendations />} />
           </Route>
 
-          {/* Catch all - redirect to Banking */}
-          <Route path="*" element={<Navigate to="/banking" replace />} />
+          {/* Catch all - redirect to landing */}
+          <Route path="*" element={<Navigate to="/landing" replace />} />
         </Routes>
       </Router>
     </QueryClientProvider>
