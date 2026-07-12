@@ -14,6 +14,7 @@ import os
 import re
 import json
 import logging
+import shutil
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
@@ -34,6 +35,44 @@ def _meridian_dir() -> Path:
         if candidate.is_dir():
             return candidate
     return root / "data" / "preloaded" / "meridian_bank"
+
+
+# /tmp fallback path for large CSVs excluded from Databricks Apps deployment bundle
+_TMP_TXN = Path('/tmp/meridian_bank/transactions.csv')
+
+
+def _ensure_transactions_csv(local_path: Path) -> Path:
+    """Return a valid path to transactions.csv; downloads from UC Volume when missing."""
+    if local_path.exists():
+        return local_path
+    if _TMP_TXN.exists():
+        return _TMP_TXN
+    vol_path = os.environ.get(
+        'TRANSACTIONS_VOLUME_PATH',
+        '/Volumes/dev/banking/meridian_preloaded/transactions.csv',
+    )
+    try:
+        from databricks.sdk import WorkspaceClient  # noqa: PLC0415
+        w = WorkspaceClient()
+        _TMP_TXN.parent.mkdir(parents=True, exist_ok=True)
+        logger.info("Downloading transactions.csv from UC Volume %s ...", vol_path)
+        with w.files.download(vol_path) as resp:
+            with open(_TMP_TXN, 'wb') as fp:
+                shutil.copyfileobj(resp.contents, fp)
+        logger.info("Downloaded transactions.csv → %s (%d bytes)",
+                    _TMP_TXN, _TMP_TXN.stat().st_size)
+        return _TMP_TXN
+    except Exception as e:
+        logger.warning("Could not download transactions.csv from %s: %s", vol_path, e)
+        return local_path  # caller's is_file() check will skip it gracefully
+
+
+def _resolve_csv_path(d: Path, fname: str) -> Path:
+    """Return the best available path for a CSV file (checks /tmp fallback after download)."""
+    local = d / fname
+    if fname == 'transactions.csv' and not local.exists() and _TMP_TXN.exists():
+        return _TMP_TXN
+    return local
 
 
 # ── DuckDB connection + view registration ─────────────────────────────────────
@@ -71,6 +110,8 @@ def _register_views(con: duckdb.DuckDBPyConnection) -> None:
     d = _meridian_dir()
     for table, fname in TABLE_FILES:
         p = d / fname
+        if fname == 'transactions.csv':
+            p = _ensure_transactions_csv(p)
         if p.is_file():
             safe = p.as_posix()
             try:
@@ -198,7 +239,7 @@ def build_schema_context() -> str:
     }
 
     for table, fname in TABLE_FILES:
-        p = d / fname
+        p = _resolve_csv_path(d, fname)
         if not p.is_file():
             continue
         cols = _columns_for(table)
@@ -748,7 +789,7 @@ def available_tables() -> List[Dict[str, Any]]:
     d = _meridian_dir()
     result = []
     for table, fname in TABLE_FILES:
-        p = d / fname
+        p = _resolve_csv_path(d, fname)
         if not p.is_file():
             continue
         cols = _columns_for(table)

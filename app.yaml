@@ -7,6 +7,3 @@ command:
   - python
   - run_app.py
 
-env:
-  - name: BANKING_DATA_PATH
-    value: /Volumes/dev/banking/meridian_preloaded
