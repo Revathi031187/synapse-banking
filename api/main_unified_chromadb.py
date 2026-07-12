@@ -2716,7 +2716,9 @@ async def load_banking_dataset(request: dict):
         products_file = data_path / "products.csv"
         transactions_file = data_path / "transactions.csv"
 
-        missing = [f.name for f in (customers_file, products_file, transactions_file) if not f.exists()]
+        # transactions.csv is optional — it's excluded from Databricks Apps deployments
+        # because it exceeds the 10 MB file limit; the chatbot uses its own download path.
+        missing = [f.name for f in (customers_file, products_file) if not f.exists()]
         if missing:
             raise HTTPException(
                 status_code=404,
@@ -2726,7 +2728,11 @@ async def load_banking_dataset(request: dict):
         import pandas as pd
         customers_df = _apply_banking_column_compat(pd.read_csv(customers_file))
         products_df = pd.read_csv(products_file)
-        transactions_df = pd.read_csv(transactions_file)
+        if transactions_file.exists():
+            transactions_df = pd.read_csv(transactions_file)
+        else:
+            transactions_df = pd.DataFrame()
+            logger.info("transactions.csv not present locally — using empty DataFrame (chatbot downloads its own copy)")
 
         # Store in system_state for Agent B
         system_state['banking']['products'] = products_df

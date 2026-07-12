@@ -77,7 +77,12 @@ class AgentA_Banking_Enhanced:
                 
                 # Use engine='python' for robust CSV parsing (handles various line endings)
                 self.customers_df = pd.read_csv(customers_path, engine='python')
-                self.transactions_df = pd.read_csv(transactions_path, engine='python')
+                # transactions.csv is optional — absent from Databricks App deployments (57 MB)
+                if transactions_path.exists():
+                    self.transactions_df = pd.read_csv(transactions_path, engine='python')
+                else:
+                    self.transactions_df = pd.DataFrame()
+                    logger.warning(f"⚠️ transactions.csv not found — proceeding without it (monthly_transaction_volume already in customers.csv)")
                 self.products_df = pd.read_csv(products_path, engine='python')
                 
                 # DEBUG: Log column info BEFORE derived columns
@@ -207,8 +212,9 @@ class AgentA_Banking_Enhanced:
                 txn_counts = self.transactions_df.groupby('customer_id').size()
                 self.customers_df['monthly_transaction_volume'] = self.customers_df['customer_id'].map(txn_counts).fillna(0)
             else:
-                # NO FALLBACK - require real data
-                raise ValueError("Cannot calculate monthly_transaction_volume: transactions.csv is required")
+                # Column not in CSV and no transactions available — use median as safe default
+                logger.warning("monthly_transaction_volume not in CSV and no transactions loaded — defaulting to 15")
+                self.customers_df['monthly_transaction_volume'] = 15
         
         # Avg daily balance (from estimated_savings)
         if 'estimated_savings' in self.customers_df.columns:
