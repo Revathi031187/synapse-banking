@@ -14,7 +14,6 @@ import os
 import re
 import json
 import logging
-import shutil
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
@@ -42,41 +41,9 @@ _TMP_TXN = Path('/tmp/meridian_bank/transactions.csv')
 
 
 def _ensure_transactions_csv(local_path: Path) -> Path:
-    """Return a valid path to transactions.csv; downloads from UC Volume when missing."""
-    if local_path.exists():
-        return local_path
-    if _TMP_TXN.exists():
-        print(f"[chat_sql] Using cached transactions.csv from {_TMP_TXN}", flush=True)
-        return _TMP_TXN
-
-    vol_path = os.environ.get(
-        'TRANSACTIONS_VOLUME_PATH',
-        '/Volumes/dev/banking/meridian_preloaded/transactions.csv',
-    )
-    host = os.environ.get('DATABRICKS_HOST', '').rstrip('/')
-    token = os.environ.get('DATABRICKS_TOKEN', '')
-
-    if not host or not token:
-        print("[chat_sql] DATABRICKS_HOST/TOKEN not set — cannot download transactions.csv", flush=True)
-        return local_path
-
-    try:
-        import urllib.request
-        _TMP_TXN.parent.mkdir(parents=True, exist_ok=True)
-        # UC Files API: GET /api/2.0/fs/files/Volumes/<catalog>/<schema>/<vol>/...
-        # vol_path starts with /Volumes/... so strip leading slash for URL construction
-        url = f"{host}/api/2.0/fs/files{vol_path}"
-        print(f"[chat_sql] Downloading transactions.csv from {url} ...", flush=True)
-        req = urllib.request.Request(url, headers={"Authorization": f"Bearer {token}"})
-        with urllib.request.urlopen(req) as resp, open(_TMP_TXN, 'wb') as fp:
-            shutil.copyfileobj(resp, fp)
-        size_mb = _TMP_TXN.stat().st_size / 1_048_576
-        print(f"[chat_sql] Downloaded transactions.csv → {_TMP_TXN} ({size_mb:.1f} MB)", flush=True)
-        return _TMP_TXN
-    except Exception as e:
-        print(f"[chat_sql] ERROR downloading transactions.csv: {e}", flush=True)
-        logger.warning("Could not download transactions.csv from %s: %s", vol_path, e)
-        return local_path  # caller's is_file() check will skip it gracefully
+    """Return a valid path to transactions.csv; delegates to large_file_loader."""
+    from utils.large_file_loader import ensure_csv
+    return ensure_csv(local_path)
 
 
 def _resolve_csv_path(d: Path, fname: str) -> Path:

@@ -77,12 +77,10 @@ class AgentA_Banking_Enhanced:
                 
                 # Use engine='python' for robust CSV parsing (handles various line endings)
                 self.customers_df = pd.read_csv(customers_path, engine='python')
-                # transactions.csv is optional — absent from Databricks App deployments (57 MB)
-                if transactions_path.exists():
-                    self.transactions_df = pd.read_csv(transactions_path, engine='python')
-                else:
-                    self.transactions_df = pd.DataFrame()
-                    logger.warning(f"⚠️ transactions.csv not found — proceeding without it (monthly_transaction_volume already in customers.csv)")
+                # Resolve transactions.csv — downloads from UC Volume to /tmp/ when absent from Repos
+                from utils.large_file_loader import ensure_csv
+                transactions_path = ensure_csv(transactions_path)
+                self.transactions_df = pd.read_csv(transactions_path, engine='python') if transactions_path.exists() else pd.DataFrame()
                 self.products_df = pd.read_csv(products_path, engine='python')
                 
                 # DEBUG: Log column info BEFORE derived columns

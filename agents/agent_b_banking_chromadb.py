@@ -91,11 +91,13 @@ class AgentB_Banking:
                         self.customers_df[old_col] = self.customers_df[new_col]
                 logger.info(f"Loaded {len(self.customers_df)} customers from {customers_path.name}")
 
+            from utils.large_file_loader import ensure_csv
+            transactions_path = ensure_csv(transactions_path)
             if transactions_path.exists():
                 self.transactions_df = pd.read_csv(transactions_path)
                 logger.info(f"Loaded {len(self.transactions_df)} transactions from {transactions_path.name}")
             else:
-                logger.info("No transactions.csv found")
+                logger.info("No transactions.csv found — 12-factor scorer will use monthly_transaction_volume from customers.csv")
             
             # Initialize Banking 12-Factor Scorer
             logger.info("Initializing Banking 12-Factor Scorer ...")
