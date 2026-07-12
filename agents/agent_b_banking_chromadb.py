@@ -101,11 +101,14 @@ class AgentB_Banking:
             logger.info("Initializing Banking 12-Factor Scorer ...")
             logger.info(f"  customers_df: {len(self.customers_df)} rows" if self.customers_df is not None else "  customers_df: None")
             logger.info(f"  transactions_df: {len(self.transactions_df)} rows" if self.transactions_df is not None else "  transactions_df: None")
-            if self.customers_df is not None and self.transactions_df is not None:
+            if self.customers_df is not None:
                 try:
                     # Prefer Agent A's clustered customers + transactions so segment popularity / pairing match the live session
                     scorer_customers = self.customers_df
-                    scorer_txn = self.transactions_df
+                    # transactions_df is optional (excluded from Databricks App deployments due to 57 MB size)
+                    # Banking12FactorScorer handles None/empty transactions gracefully — transaction_pattern
+                    # factor (weight 0.01) reads monthly_transaction_volume from customers.csv instead.
+                    scorer_txn = self.transactions_df if self.transactions_df is not None else pd.DataFrame()
                     if self.agent_a and getattr(self.agent_a, 'customers_df', None) is not None:
                         ca = self.agent_a.customers_df
                         if ca is not None and len(ca) > 0:
@@ -131,7 +134,7 @@ class AgentB_Banking:
                     self.enhanced_scorer = None
             else:
                 self.enhanced_scorer = None
-                logger.warning("Cannot initialize 12-factor scorer: missing customer/transaction data")
+                logger.warning("Cannot initialize 12-factor scorer: no customer data")
             
             print(f"[Agent B] load_data() SUCCESS", flush=True)
             return True
