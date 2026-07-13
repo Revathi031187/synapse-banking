@@ -86,7 +86,23 @@
       "Bash(git commit -m ' *)",
       "Bash(git push *)",
       "Bash(curl -s \"http://localhost:8002/api/banking/datasets\")",
-      "Bash(python -m json.tool)"
+      "Bash(python -m json.tool)",
+      "Bash(python -c \"import sys; sys.path.insert\\(0, 'd:/personalization-agent-banking'\\); import re; from utils.chat_sql_engine import _SQL_SYSTEM, ask_chatbot; print\\('Import OK'\\); print\\('AD_SPEND rule present:', 'AD_SPEND PERSONA RULE' in _SQL_SYSTEM\\); print\\('Narrative JSON line breaks rule present:', 'JSON LINE BREAKS' in _SQL_SYSTEM\\); print\\('Never join persona_assignments rule:', 'NEVER join persona_assignments' in _SQL_SYSTEM\\)\")",
+      "Bash(python -c \"import pandas as pd; p = pd.read_csv\\('data/preloaded/meridian_bank/products.csv'\\); print\\('CATEGORIES:', p['category'].unique\\(\\)\\); print\\('SUBCATEGORIES:', p['subcategory'].unique\\(\\)\\)\")",
+      "Bash(python \"C:/Users/JAISON~1.LV/AppData/Local/Temp/claude/d--personalization-agent-banking/300d159f-ea2f-4de7-9881-fe62e83debbe/scratchpad/test_features.py\")",
+      "Bash(python \"/c/Users/JAISON~1.LV/AppData/Local/Temp/claude/d--personalization-agent-banking/300d159f-ea2f-4de7-9881-fe62e83debbe/scratchpad/test_duckdb.py\")",
+      "Bash(cd /d d:\\\\personalization-agent-banking)",
+      "Bash(python scripts/_check_dates.py)",
+      "Bash(python3 -c \"import sys, csv; r=list\\(csv.reader\\(sys.stdin\\)\\); print\\(r[0][-5:]\\)\")",
+      "Bash(awk -F, 'NR<=5 {for\\(i=1;i<=NF;i++\\) if\\($i~/channel_preference/ || $i~/Digital/ || $i~/Branch/ || $i~/Phone/ || $i~/Online/\\) print NR, i, $i}' d:/personalization-agent-banking/data/preloaded/meridian_bank/customers.csv)",
+      "Bash(awk -F',' 'NR>1 {print $74}' \"d:/personalization-agent-banking/data/preloaded/meridian_bank/customers.csv\")",
+      "Bash(awk -F',' 'NR==1{print; next} tolower\\($3\\) ~ /credit/ || tolower\\($4\\) ~ /credit/ || tolower\\($2\\) ~ /credit card/ || tolower\\($4\\) ~ /home/')",
+      "Bash(python3)",
+      "Bash(pip list *)",
+      "Bash(python \"C:\\\\Users\\\\JAISON~1.LV\\\\AppData\\\\Local\\\\Temp\\\\claude\\\\d--personalization-agent-banking\\\\300d159f-ea2f-4de7-9881-fe62e83debbe\\\\scratchpad\\\\duckdb_query.py\")",
+      "Bash(python \"C:\\\\Users\\\\JAISON~1.LV\\\\AppData\\\\Local\\\\Temp\\\\claude\\\\d--personalization-agent-banking\\\\300d159f-ea2f-4de7-9881-fe62e83debbe\\\\scratchpad\\\\credit_card_mortgage_queries.py\")",
+      "Bash(python \"C:\\\\Users\\\\JAISON~1.LV\\\\AppData\\\\Local\\\\Temp\\\\claude\\\\d--personalization-agent-banking\\\\300d159f-ea2f-4de7-9881-fe62e83debbe\\\\scratchpad\\\\advanced_analysis.py\")",
+      "Bash(python \"C:\\\\Users\\\\JAISON~1.LV\\\\AppData\\\\Local\\\\Temp\\\\claude\\\\d--personalization-agent-banking\\\\300d159f-ea2f-4de7-9881-fe62e83debbe\\\\scratchpad\\\\final_summary.py\")"
     ]
   }
 }

@@ -2100,37 +2100,93 @@ export default function BankingLanding() {
           ? 'bg-gradient-to-br from-[#0F2744] via-[#1E40AF] to-teal-700'
           : 'bg-gradient-to-br from-[#0F2744] via-[#1B4ED8] to-blue-600'
       } text-white`}>
-        <div className="max-w-6xl mx-auto px-6 py-20 md:py-28">
-          <div className="max-w-2xl">
-            {firstName && personalized && (
-              <div className="inline-flex items-center gap-2 bg-emerald-500/20 border border-emerald-400/40 text-emerald-300 text-xs font-bold px-3 py-1.5 rounded-full mb-6 tracking-wide">
-                <span>👋</span> Welcome back, {firstName}!
-              </div>
-            )}
-            <p className="text-blue-300/70 text-[11px] uppercase tracking-[3px] mb-3 font-semibold">
-              {firstName && personalized && persona ? `Personalized for · ${persona}` : 'Est. 2001 · Member FDIC · $12B Assets'}
-            </p>
-            <h1
-              className="text-4xl md:text-5xl lg:text-6xl font-bold leading-[1.1] mb-5"
-              style={{ fontFamily: "'Inter', system-ui, sans-serif" }}
-            >
-              <span className="bg-gradient-to-r from-amber-300 via-yellow-200 to-white bg-clip-text text-transparent">
-                {hero.headline}
-              </span>
-            </h1>
-            <p className="text-blue-100 text-lg leading-relaxed mb-8 max-w-xl" style={{ fontWeight: 300 }}>
-              {hero.subhead}
-            </p>
-            <div className="flex flex-wrap gap-3 items-center">
-              <button
-                onClick={onCTA}
-                className={`flex items-center gap-2 font-bold px-7 py-3.5 rounded-xl text-sm shadow-lg transition-all hover:scale-105 active:scale-95 ${
-                  personalized ? 'bg-emerald-500 hover:bg-emerald-400 text-white' : 'bg-amber-500 hover:bg-amber-400 text-amber-950'
-                }`}
+        <div className="max-w-6xl mx-auto px-6 py-16 md:py-20">
+          <div className="flex flex-col lg:flex-row items-center gap-12">
+
+            {/* Left — headline + CTA */}
+            <div className="flex-1 min-w-0">
+              {firstName && personalized && (
+                <div className="inline-flex items-center gap-2 bg-emerald-500/20 border border-emerald-400/40 text-emerald-300 text-xs font-bold px-3 py-1.5 rounded-full mb-6 tracking-wide">
+                  <span>👋</span> Welcome back, {firstName}!
+                </div>
+              )}
+              <p className="text-blue-300/70 text-[11px] uppercase tracking-[3px] mb-3 font-semibold">
+                {firstName && personalized && persona ? `Personalized for · ${persona}` : 'Est. 2001 · Member FDIC · $12B Assets'}
+              </p>
+              <h1
+                className="text-4xl md:text-5xl lg:text-6xl font-bold leading-[1.1] mb-5"
+                style={{ fontFamily: "'Inter', system-ui, sans-serif" }}
               >
-                {hero.cta_label} <ArrowRight className="w-4 h-4" />
-              </button>
+                <span className="bg-gradient-to-r from-amber-300 via-yellow-200 to-white bg-clip-text text-transparent">
+                  {hero.headline}
+                </span>
+              </h1>
+              <p className="text-blue-100 text-lg leading-relaxed mb-8 max-w-xl" style={{ fontWeight: 300 }}>
+                {hero.subhead}
+              </p>
+              <div className="flex flex-wrap gap-3 items-center">
+                <button
+                  onClick={onCTA}
+                  className={`flex items-center gap-2 font-bold px-7 py-3.5 rounded-xl text-sm shadow-lg transition-all hover:scale-105 active:scale-95 ${
+                    personalized ? 'bg-emerald-500 hover:bg-emerald-400 text-white' : 'bg-amber-500 hover:bg-amber-400 text-amber-950'
+                  }`}
+                >
+                  {hero.cta_label} <ArrowRight className="w-4 h-4" />
+                </button>
+              </div>
             </div>
+
+            {/* Right — 3 featured products (shown when not signed in) */}
+            {!personalized && (() => {
+              const heropicks = (allProducts.length > 0 ? allProducts : FALLBACK)
+                .filter(p =>
+                  (p.credit_tier_required === 'any' || !p.credit_tier_required) &&
+                  (!p.min_income || p.min_income === 0) &&
+                  (!p.min_credit_score || p.min_credit_score === 0) &&
+                  p.category === 'Personal'
+                )
+                .sort((a, b) => (b.avg_rating ?? 0) - (a.avg_rating ?? 0))
+                .slice(0, 3);
+              if (!heropicks.length) return null;
+              return (
+                <div className="lg:w-[380px] w-full flex-shrink-0 space-y-3">
+                  <p className="text-[10px] uppercase tracking-widest font-bold text-amber-400 mb-3">
+                    Most Popular · No Credit Check
+                  </p>
+                  {heropicks.map((p, i) => (
+                    <div
+                      key={p.product_id}
+                      onClick={() => { onCardClick(p); openProductDetail(p); }}
+                      className="flex items-center gap-4 bg-white/10 hover:bg-white/15 backdrop-blur-sm border border-white/20 rounded-2xl px-4 py-3.5 cursor-pointer transition-all group"
+                    >
+                      <span className="text-2xl flex-shrink-0">{SUBCAT_ICONS[p.subcategory] ?? '🏦'}</span>
+                      <div className="flex-1 min-w-0">
+                        <div className="flex items-center gap-2 mb-0.5">
+                          <p className="text-white font-semibold text-sm truncate">{p.product_name}</p>
+                          {i === 0 && (
+                            <span className="flex-shrink-0 text-[9px] font-bold bg-amber-400 text-amber-950 px-1.5 py-0.5 rounded-full">
+                              #1
+                            </span>
+                          )}
+                        </div>
+                        {rateLabel(p) && (
+                          <p className={`text-sm font-extrabold leading-none ${rateColor(p)}`}>{rateLabel(p)}</p>
+                        )}
+                        <p className="text-blue-200 text-[11px] mt-0.5 line-clamp-1">{p.description}</p>
+                      </div>
+                      <ArrowRight className="w-4 h-4 text-white/40 group-hover:text-white/70 flex-shrink-0 transition-colors" />
+                    </div>
+                  ))}
+                  <button
+                    onClick={() => setShowSignIn(true)}
+                    className="w-full mt-1 text-[11px] text-blue-300 hover:text-white text-center py-2 transition-colors"
+                  >
+                    Sign in for personalized picks →
+                  </button>
+                </div>
+              );
+            })()}
+
           </div>
         </div>
       </section>
@@ -2160,17 +2216,17 @@ export default function BankingLanding() {
         if (picks.length === 0) return null;
 
         return (
-          <section className="bg-gradient-to-br from-[#0F2744] via-[#163256] to-[#1a3d6b] border-b border-blue-900">
-            <div className="max-w-6xl mx-auto px-6 py-12">
-              <div className="flex items-start justify-between mb-8 gap-4 flex-wrap">
+          <section className="bg-white border-b border-slate-200">
+            <div className="max-w-6xl mx-auto px-6 py-10">
+              <div className="flex items-center justify-between mb-6 gap-4 flex-wrap">
                 <div>
-                  <p className="text-xs uppercase tracking-widest font-bold text-amber-400 mb-1.5">Most Popular</p>
-                  <h2 className="text-2xl font-bold text-white">Where most customers start</h2>
-                  <p className="text-blue-200 text-sm mt-1">No credit check required · Open in minutes · FDIC insured</p>
+                  <p className="text-xs uppercase tracking-widest font-bold text-blue-600 mb-1">Most Popular</p>
+                  <h2 className="text-xl font-bold text-slate-900">Where most customers start</h2>
+                  <p className="text-slate-500 text-sm mt-0.5">No credit check · Open in minutes · FDIC insured</p>
                 </div>
                 <button
                   onClick={() => setShowSignIn(true)}
-                  className="flex-shrink-0 px-5 py-2.5 rounded-xl bg-amber-500 hover:bg-amber-400 text-amber-950 font-bold text-sm transition-colors"
+                  className="flex-shrink-0 px-5 py-2.5 rounded-xl bg-[#0F2744] hover:bg-blue-900 text-white font-bold text-sm transition-colors"
                 >
                   Sign in for personalized picks →
                 </button>

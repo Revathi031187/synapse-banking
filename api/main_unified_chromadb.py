@@ -241,6 +241,14 @@ system_state = {
     }
 }
 
+# Session-level funnel tracking: unique customer IDs seen by each pipeline stage
+_FUNNEL_CUSTOMER_IDS: dict = {
+    "agent_a": set(),
+    "agent_b": set(),
+    "agent_c": set(),
+    "agent_d": set(),
+}
+
 
 def _banking_fmb_path() -> Path:
     meridian = project_root / 'data' / 'preloaded' / 'meridian_bank'
@@ -2884,6 +2892,15 @@ def _run_agent_a_background(config_dict: dict):
         results = numpy_to_python_types(results)
         system_state['banking']['agent_a_results'] = results
         system_state['banking']['customers_with_churn'] = None
+
+        # Track funnel: capture all segmented customer IDs
+        try:
+            cwc = results.get('customers_with_clusters', [])
+            _FUNNEL_CUSTOMER_IDS["agent_a"] = {
+                str(c.get('customer_id', '')) for c in cwc if isinstance(c, dict)
+            }
+        except Exception:
+            pass
         global _churn_df_cache
         _churn_df_cache = None  # invalidate so next call recomputes from fresh transactions
         system_state['banking']['agent_a_status'] = 'complete'
@@ -3131,6 +3148,96 @@ async def chat_tables():
     except Exception as e:
         logger.exception("chat_tables failed")
         raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/api/banking/chat/status")
+async def chat_status():
+    """Return whether Agent A personas are registered in DuckDB."""
+    from utils.chat_sql_engine import is_personas_registered
+    return {"success": True, "personas_registered": is_personas_registered()}
+
+
+@app.get("/api/banking/chat/anomalies")
+async def chat_anomalies():
+    """Run all anomaly detection queries and return structured results."""
+    from utils.chat_sql_engine import detect_anomalies
+    try:
+        results = detect_anomalies()
+        return {"success": True, "anomalies": results}
+    except Exception as e:
+        logger.exception("anomaly detection failed")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/api/banking/chat/trends")
+async def chat_trends():
+    """Return month-over-month trend data for key metrics."""
+    from utils.chat_sql_engine import get_trend_summary
+    try:
+        results = get_trend_summary()
+        return {"success": True, "trends": results}
+    except Exception as e:
+        logger.exception("trend summary failed")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/api/banking/chat/product-pulse")
+async def chat_product_pulse():
+    """Return per-product momentum data: 6-month sparkline, new customers, volume, momentum label."""
+    from utils.chat_sql_engine import get_product_pulse
+    try:
+        results = get_product_pulse()
+        return {"success": True, "products": results}
+    except Exception as e:
+        logger.exception("product pulse failed")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/api/banking/chat/funnel")
+async def chat_funnel():
+    """Return pipeline funnel counts from session-level tracking."""
+    a_results = system_state['banking'].get('agent_a_results')
+    # Agent A count: prefer runtime-tracked set; fall back to customers_with_clusters length
+    a_count = len(_FUNNEL_CUSTOMER_IDS["agent_a"])
+    if a_count == 0 and a_results:
+        try:
+            cwc = a_results.get('customers_with_clusters', [])
+            a_count = len(cwc)
+        except Exception:
+            pass
+
+    stages = [
+        {
+            "id": "agent_a",
+            "label": "Segmented",
+            "sublabel": "Agent A · K-Prototypes clustering",
+            "count": a_count or None,
+            "color": "#6366f1",
+        },
+        {
+            "id": "agent_b",
+            "label": "Recommended",
+            "sublabel": "Agent B · 12-factor scoring",
+            "count": len(_FUNNEL_CUSTOMER_IDS["agent_b"]) or None,
+            "color": "#3b82f6",
+        },
+        {
+            "id": "agent_c",
+            "label": "Offered",
+            "sublabel": "Agent C · Best-offer selection",
+            "count": len(_FUNNEL_CUSTOMER_IDS["agent_c"]) or None,
+            "color": "#10b981",
+        },
+        {
+            "id": "agent_d",
+            "label": "Behavioral Loop",
+            "sublabel": "Agent D · Impression & feedback",
+            "count": len(_FUNNEL_CUSTOMER_IDS["agent_d"]) or None,
+            "color": "#f59e0b",
+        },
+    ]
+    has_data = any(s["count"] for s in stages)
+    return {"success": True, "stages": stages, "has_data": has_data}
 
 
 @app.post("/api/banking/chat/ask")
@@ -3775,12 +3882,12 @@ async def execute_banking_agent_b(request: dict = Body(...)):
         result = numpy_to_python_types(result)
         
         # Return in frontend-compatible format
+        _FUNNEL_CUSTOMER_IDS["agent_b"].add(str(customer_id))
         return {
             'success': True,
             'customer_id': customer_id,
             'results': result  # Wrap in 'results' key for frontend
         }
-        
     except HTTPException:
         raise
     except Exception as e:
@@ -4349,6 +4456,7 @@ async def banking_agent_d_orchestrate(body: AgentDOrchestrateBody):
             agent_c_result=agent_c_result,
             persona_name=str(pname),
         )
+        _FUNNEL_CUSTOMER_IDS["agent_d"].add(str(cid))
         return {'success': True, 'data': numpy_to_python_types(out)}
     except HTTPException:
         raise
@@ -5119,6 +5227,7 @@ async def get_banking_one_best_offer(customer_id: str):
         data = numpy_to_python_types(result)
         if churn_extra:
             data.update(churn_extra)
+        _FUNNEL_CUSTOMER_IDS["agent_c"].add(str(customer_id))
         return {"success": True, "data": data}
     except HTTPException:
         raise

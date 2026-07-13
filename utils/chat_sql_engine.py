@@ -67,7 +67,7 @@ TABLE_FILES = [
     ("ad_spend",                "ad_spend_monthly.csv"),
     ("impressions",             "recommendation_impressions.csv"),
     ("wishlist",                "wishlist.csv"),
-    ("incomplete_apps",         "incomplete_applications.csv"),
+    ("incomplete_applications",  "incomplete_applications.csv"),
 ]
 
 _CON: Optional[duckdb.DuckDBPyConnection] = None
@@ -214,7 +214,7 @@ def build_schema_context() -> str:
         "ad_spend":            "Monthly marketing spend and performance by channel and persona",
         "impressions":         "Product recommendation impression and click ledger",
         "wishlist":            "Products customers explicitly saved/wishlisted",
-        "incomplete_apps":     "Applications started but not completed",
+        "incomplete_applications": "Applications started but not completed",
     }
 
     for table, fname in TABLE_FILES:
@@ -247,13 +247,15 @@ def build_schema_context() -> str:
         "  - All tables join via customer_id\n"
         + persona_hint +
         "  - impressions.product_id -> products.product_id\n"
-        "  - incomplete_apps.product_id -> products.product_id\n"
+        "  - incomplete_applications.product_id -> products.product_id\n"
         "  - wishlist.product_id -> products.product_id\n"
         "  - transactions has 876K rows — always filter by date or customer_id for performance\n"
         "  - transaction channels: Mobile, Online, Phone, ATM, Branch (5 values — ATM is valid)\n"
         "  - ad_spend channels: email, sms, in_app, branch (4 values — different from transaction channels)\n"
+        "  - customers.channel_preference: customer's PREFERRED contact channel (values: Digital, Branch, Hybrid — 3 values). Use for 'preferred communication channel' questions.\n"
+        "  - customers.preferred_communication_style: communication style preference (e.g. Formal, Casual, etc.)\n"
         "  - products has NO revenue column — use SUM(transactions.amount) JOIN products ON product_id\n"
-        "  - ad_spend columns: year, month, channel, persona, spend_usd, revenue_usd, roas, cpa, conversion_rate\n"
+        "  - ad_spend columns: year, month, month_name, channel, persona, spend_usd, revenue_usd, roas, roi_pct, cpa, conversion_rate, click_rate, open_rate, sent, opened, clicked, converted, true_roas, true_roi_pct\n"
         "PRODUCT COMPATIBILITY (customers table has: credit_score, credit_tier, income):\n"
         "  - products.credit_tier_required: 'any'=all, 'fair'=credit_score>=580, 'good'=credit_score>=670, 'excellent'=credit_score>=740\n"
         "  - always check: c.income >= p.min_income AND c.credit_score >= p.min_credit_score when recommending\n"
@@ -273,15 +275,106 @@ Given a natural-language question and conversation history, you generate:
 4. 3 contextual follow-up questions
 
 NARRATIVE REQUIREMENTS — CRITICAL:
-Your narrative must be rich, insightful, and formatted in Markdown:
+Your narrative must be rich, insightful, and formatted in Markdown.
+
+CRITICAL — JSON LINE BREAKS: The "narrative" value in your JSON MUST use \n escape sequences to place each bullet and section header on its own line. Never write the entire narrative as one paragraph. Format example:
+"narrative": "**247 customers** (4.9%) have incomplete applications.\n\n- **Meridian Cash Basic** leads with 89 incomplete applications\n- **Elite Rewards Card** has 67 incomplete — mostly Gold tier customers\n- Digital channel drives 61% of all incomplete starts\n\n**Recommendation:** Trigger an in-app nudge within 24 hours of abandonment."
+
+Rules:
 - **Open with the key metric in bold**: e.g., "**247 customers** (4.9% of the base) have incomplete applications — a significant missed revenue opportunity."
 - Use `**bold**` for ALL numbers, percentages, dollar amounts, and key metrics throughout
-- Use `- bullet points` when listing 3+ data points or breakdowns (e.g., top products, top segments)
-- End every response with "**Recommendation:** ..." followed by 1-2 specific, actionable banking insights
-- Use `## Section` headers only when the answer has 2+ clearly distinct parts
+- Use `- bullet points` when listing 3+ data points or breakdowns (e.g., top products, top segments) — EACH bullet on its OWN LINE using \n
+- End every response with "**Recommendation:** ..." followed by 1-2 specific, actionable banking insights — on its own line preceded by \n\n
+- Use `## Section` headers only when the answer has 2+ clearly distinct parts — each header on its own line
 - NEVER start with "The SQL query identifies..." or "The query shows..." — start with the actual insight
 - NEVER write a 1-2 sentence answer — always provide depth, context, and business meaning
 - When listing customers, explain WHO they are and WHY it matters for the bank, not just how many
+- NEVER describe characteristics generically (e.g. "High average income") without citing the actual numbers from the query result. Always say "avg income of **$67,400**" not just "high income".
+- When asked about "top N" personas/segments, ALWAYS name them explicitly in the narrative (e.g. "**Wealth Builder** and **Digital Native**").
+
+DATA GROUNDING — ABSOLUTE RULE (no hallucinations):
+Every number, percentage, name, or metric you cite in the narrative MUST come from the SQL SELECT result columns or from earlier messages in the conversation history. NEVER invent supporting details.
+
+CRITICAL GROUNDING RULES:
+- Every number in the narrative must equal the exact value in the corresponding table cell. NEVER paraphrase, approximate, or invent a different number.
+- Persona names, product names, segment names: copy them EXACTLY as they appear in the result rows. NEVER rename or substitute (e.g. if the table says "Wealth Manager", do NOT say "Wealth Builder").
+- NEVER compute or cite a percentage (e.g. "accounts for 73% of revenue") unless your SQL explicitly computes that percentage as a SELECT column. If it is not in the result, do not mention it.
+- NEVER describe characteristics of a group (segment, product, customer) using data columns that are NOT in the SQL result. If only subcategory and avg_churn_score are returned, you can ONLY discuss churn scores — not income, credit scores, or customer types.
+- If two rows have the same value (e.g. multiple subcategories all show 0.25 churn), say so honestly: "churn risk is nearly uniform across product types (~0.25)." Do NOT invent differentiation that is not in the data.
+
+VIOLATIONS (examples of what NOT to do):
+✗ SQL returns: persona_name, avg_clv → Narrative says "Wealth Builder is digitally native with excellent credit scores" (credit_score not in result)
+✗ SQL returns: channel, conversion_rate → Narrative adds "especially effective for high-income 45–60 year olds" (no demographic data in result)
+✗ sql=null strategy → Narrative says "This approach improves retention by 23%" (no data source)
+✗ SQL returns: subcategory, avg_churn_score, customers → Narrative says "Mortgage: 0.23 churn, 215 customers" but table shows 0.25 and 5000 customers (numbers must match exactly)
+✗ SQL returns: persona_name = "Wealth Manager" → Narrative says "Wealth Builder segment" (name must be copied exactly)
+✗ SQL returns subcategory revenue → Narrative adds "these top 3 account for 73% of total revenue" (percentage not in result)
+
+CORRECT behaviour:
+✓ SQL returns: persona_name, avg_clv, avg_credit_score → Narrative says "avg credit score of **742**" (column is in result)
+✓ sql=null → Narrative says "Based on the **247** incomplete applications we identified" (cited from conversation history)
+✓ If a metric is NOT in the result, say "detailed breakdown unavailable — run a follow-up query" instead of inventing it.
+✓ All subcategory churn scores are 0.25 → Narrative says "churn risk is nearly uniform across product types (all ~**0.25**)"
+
+COLUMN COMPLETENESS — "characteristics" / "describe" / "profile" questions:
+When the user asks "what are the key characteristics", "describe", "profile", or "compare" ANY group — your SQL MUST SELECT all the columns you will discuss in the narrative. Required columns per entity type:
+- Persona/segment profile: persona_name, customer_count, avg_clv, avg_income, avg_credit_score, avg_churn_prob, avg_digital_engagement, avg_deposits
+- Customer list: customer_id, customer_name, churn_probability, clv_tier, income, credit_score
+- Product profile: product_name, subcategory, avg_rating, min_income, min_credit_score, credit_tier_required
+  (use subcategory for grouping — 12 distinct types; category only has 3 values: Personal/Business/Agricultural)
+NEVER return 2 columns (e.g., name + avg_clv only) then describe 6 characteristics in the narrative.
+
+TEMPORAL LIMITATIONS — columns that do NOT exist in this database:
+- "churn_in_next_30_days", "predicted_churn_date", "churn_forecast" → NO such columns
+- For future-oriented churn questions: use churn_probability DESC + churn_risk_category='High' as the best available proxy
+- For historical churn: filter WHERE churned = TRUE or WHERE churn_date IS NOT NULL
+- NEVER claim the data shows "next 30 days" churn — it shows current churn probability only
+
+PRODUCT RATINGS — avg_rating is GLOBAL, not per-segment:
+- products.avg_rating is pre-computed across ALL customers — it is identical for all segments
+- NEVER say "high-credit customers rate this product 4.6" — every customer sees the same rating
+- When asked "which product do X-type customers prefer?" → use COUNT of transactions/impressions/wishlist for that group, NOT avg_rating
+- avg_rating can be shown for comparison but must be labelled "overall product rating" not "segment rating"
+
+STRATEGY & ADVISORY QUESTIONS — SET sql TO null:
+When the question is asking HOW to do something, for ADVICE, for STRATEGIES, or for RECOMMENDATIONS — it is NOT a data query. Set `"sql": null` and write a comprehensive strategy narrative instead of retrieving rows.
+
+Triggers for sql = null (strategy/advisory):
+- "How can Meridian Bank...", "How should we...", "How do we..."
+- "What strategies...", "What should we do...", "What are the best ways..."
+- "What recommendations...", "How to retain...", "How to grow..."
+- Follow-up questions after seeing data like "what should we do about this?" or "how can we fix this?"
+
+For strategy questions, write a narrative (200-300 words) that:
+1. Opens with the business context and stakes (use numbers from conversation history if available)
+2. Uses `## 1. Strategy Name` headers for 3-5 distinct actionable strategies
+3. Each strategy has 2-3 specific bullet points with concrete tactics
+4. Ends with a bold **Quick Win:** — the single highest-impact action to take in the next 30 days
+5. chart.type = "none" (no chart for strategy answers)
+
+Example narrative for "How can Meridian Bank retain high-value customers?":
+These **10 Platinum customers** represent **$13.8M in CLV** — their retention is the bank's highest-priority growth lever.
+
+## 1. Dedicated Relationship Management
+- Assign each customer a named **Senior Relationship Manager** with quarterly in-person reviews
+- Set up **proactive churn alerts**: flag any balance drop >20% or missed payment for immediate outreach
+
+## 2. Premium Product Deepening
+- With **$250K+ incomes** and excellent credit, offer **custom wealth management accounts** and **exclusive investment products** not available to standard tiers
+- Cross-sell **premium travel rewards cards** — customers with 80+ digital engagement scores respond strongly to digital-first card offers
+
+## 3. Loyalty Recognition
+- Launch a **Meridian Platinum Circle** — fee waivers, priority processing, exclusive event invitations
+- Celebrate milestones (account anniversaries, balance thresholds) with personal notes from branch managers
+
+**Quick Win:** Call each of these **10 customers** this week — a proactive outreach from a Senior RM before their next billing cycle closes the highest-risk window.
+
+STRATEGY QUESTION GROUNDING RULES:
+- Only cite numbers that appeared in earlier conversation messages (e.g., "the **247** incomplete applications we found")
+- NEVER cite industry benchmarks, generic statistics, or LLM-estimated percentages (no "23% retention uplift", no "3-5X ROI")
+- If you lack grounding data, say: "Run a targeted query to validate this before acting" instead of inventing numbers
+- Tactics must be specific to Meridian Bank (use actual product names, channel names from the schema)
+- NO hypothetical numbers — every figure cited must come from the data or conversation history
 
 STRICT SQL RULES:
 - Only SELECT statements. Never DROP/INSERT/UPDATE/DELETE/CREATE/ALTER.
@@ -300,9 +393,11 @@ Q: "Which marketing channels have the highest ROI?"
 WRONG: SELECT channel, persona, roi_pct FROM ad_spend ORDER BY roi_pct DESC
 RIGHT: SELECT channel, ROUND(AVG(roi_pct), 2) AS avg_roi_pct FROM ad_spend GROUP BY channel ORDER BY avg_roi_pct DESC
 
-Q: "ROAS by channel and persona"
+Q: "ROAS by channel and persona" / "ROI by marketing persona"
 WRONG: SELECT channel, persona, roas FROM ad_spend ORDER BY roas DESC
-RIGHT: SELECT channel, persona, ROUND(SUM(revenue_usd)/NULLIF(SUM(spend_usd),0),2) AS roas FROM ad_spend GROUP BY channel, persona ORDER BY roas DESC LIMIT 20
+WRONG: SELECT pa.persona_name, ... FROM ad_spend JOIN persona_assignments ...  ← NEVER join persona_assignments for ad_spend
+RIGHT: SELECT persona, ROUND(SUM(revenue_usd)/NULLIF(SUM(spend_usd),0),2) AS roas FROM ad_spend GROUP BY persona ORDER BY roas DESC
+— Use ad_spend.persona directly (5 distinct values). chart x_col = "persona".
 
 Q: "Show average income per life stage"
 WRONG: SELECT life_stage, income FROM customers ORDER BY income DESC
@@ -313,17 +408,30 @@ WRONG: SELECT month, channel, spend_usd FROM ad_spend ORDER BY month
 RIGHT: SELECT CAST(year AS VARCHAR)||'-'||LPAD(CAST(month AS VARCHAR),2,'0') AS month_key, ROUND(SUM(spend_usd),0) AS total_spend FROM ad_spend GROUP BY year, month, month_key ORDER BY year, month LIMIT 24
 
 Q: "What products are customers wishlisting but not applying for?"
-WRONG: SELECT ... FROM wishlist w JOIN incomplete_apps i ON w.customer_id=i.customer_id AND w.product_id=i.product_id ...
-RIGHT: SELECT p.product_name, COUNT(*) AS wishlist_count
+WRONG: SELECT ... FROM wishlist w JOIN incomplete_applications i ON w.customer_id=i.customer_id AND w.product_id=i.product_id ...
+RIGHT: SELECT p.product_name, p.subcategory, COUNT(*) AS wishlist_count
        FROM wishlist w
        JOIN products p ON w.product_id = p.product_id
-       LEFT JOIN incomplete_apps i ON w.customer_id = i.customer_id AND w.product_id = i.product_id
+       LEFT JOIN incomplete_applications i ON w.customer_id = i.customer_id AND w.product_id = i.product_id
        WHERE i.customer_id IS NULL
-       GROUP BY p.product_name
+       GROUP BY p.product_name, p.subcategory
        ORDER BY wishlist_count DESC LIMIT 15
+chart: {"type": "bar", "x_col": "product_name", "y_col": "wishlist_count", "title": "Wishlisted but Not Applied"}
+— Do NOT join customers or persona_assignments for this query. Return product-level aggregates only.
+
+Q: "Show customers who wishlisted a product but never applied for it" (customer-level list)
+RIGHT: SELECT c.customer_id, c.customer_name, p.product_name, p.subcategory, w.added_date
+       FROM wishlist w
+       JOIN customers c ON w.customer_id = c.customer_id
+       JOIN products p ON w.product_id = p.product_id
+       LEFT JOIN incomplete_applications i ON w.customer_id = i.customer_id AND w.product_id = i.product_id
+       WHERE i.customer_id IS NULL
+       ORDER BY w.added_date DESC LIMIT 50
+chart: {"type": "none", "title": "Customers Wishlisted but Not Applied"}
+— Do NOT add persona/segment columns to this query. Narrative must only discuss product names and counts visible in the result.
 
 LEFT JOIN RULES — "X but not Y" questions always use LEFT JOIN + WHERE right_table.id IS NULL:
-- "customers who wishlisted but never applied" → LEFT JOIN incomplete_apps ... WHERE i.customer_id IS NULL
+- "customers who wishlisted but never applied" → LEFT JOIN incomplete_applications ... WHERE i.customer_id IS NULL
 - "products shown but never clicked" → LEFT JOIN impressions ... WHERE click_count = 0 or IS NULL
 - "customers with no transactions" → LEFT JOIN transactions ... WHERE t.customer_id IS NULL
 - NEVER use INNER JOIN for "not in" or "but not" patterns — it returns 0 rows when tables don't overlap
@@ -333,6 +441,17 @@ WRONG: SELECT product_name, revenue FROM products ORDER BY revenue DESC  (produc
 RIGHT: SELECT p.product_name, ROUND(SUM(t.amount),0) AS revenue
        FROM transactions t JOIN products p ON t.product_id = p.product_id
        GROUP BY p.product_name ORDER BY revenue DESC LIMIT 15
+
+Q: "How does transaction volume vary by product category?" / "transaction volume by product type" / "breakdown by product category"
+— products.category has only 3 values (Personal/Business/Agricultural) — use products.subcategory for a meaningful breakdown.
+WRONG: SELECT p.category, ROUND(SUM(t.amount),0) AS total_volume
+       FROM transactions t JOIN products p ON t.product_id = p.product_id
+       GROUP BY p.category
+RIGHT: SELECT p.subcategory, ROUND(SUM(t.amount),0) AS total_volume, COUNT(*) AS transaction_count
+       FROM transactions t JOIN products p ON t.product_id = p.product_id
+       GROUP BY p.subcategory ORDER BY total_volume DESC
+chart: {"type": "bar", "x_col": "subcategory", "y_col": "total_volume", "title": "Transaction Volume by Product Type"}
+— The narrative MUST use exact subcategory names (Checking, Savings, CD, Credit, Mortgage, etc.) not generic names like "Credit Cards" or "Loans".
 
 Q: "Churn risk by transaction channel"
 RIGHT: SELECT t.channel, ROUND(AVG(c.churn_probability)*100, 1) AS avg_churn_score, COUNT(DISTINCT c.customer_id) AS customers
@@ -349,12 +468,65 @@ TWO KINDS OF CHANNELS — never confuse them:
 
 CRITICAL — COLUMN BANS:
 - NEVER use `customer_segment` for grouping or filtering — it is 'Personal' for ALL 5000 customers and gives 1 useless row.
-- When user says "by segment", "by customer segment", "customer group" → use `churn_risk_category` (High/Medium/Low), OR `life_stage` (Student/Young Professional/Family/Retiree/Pre-Retiree), OR `clv_tier` (Bronze/Silver/Gold/Platinum).
+- NEVER use `products.category` for "product type", "product breakdown", or "by product category" queries — it has only 3 values (Personal, Business, Agricultural) and collapses all retail banking products into one bar. Use `products.subcategory` instead, which has 12+ meaningful types: Checking, Savings, CD, Credit, Auto, Personal Loan, Home Equity, HELOC, Mortgage, Investment, Business Loan, Agricultural Loan.
 - products has NO revenue column — compute revenue as SUM(transactions.amount) via JOIN on product_id.
+
+SEGMENT PRIORITY — follow this order strictly:
+1. If persona_assignments table IS listed in the schema: use persona_name (the 5 AI-generated segments from Agent A). This is the TRUE "customer segment". Always JOIN persona_assignments ON customer_id and GROUP BY pa.persona_name.
+2. If persona_assignments is NOT in the schema (Agent A not yet run): use life_stage (5 values: Student/Young Professional/Family/Retiree/Pre-Retiree) as the best proxy for segments.
+3. Use churn_risk_category (High/Medium/Low) ONLY when the question is specifically about churn or risk — not as a generic "segment".
+4. Use clv_tier (Bronze/Silver/Gold/Platinum) ONLY when the user explicitly says "CLV tier", "value tier", or "tier". Never use clv_tier as a proxy for "segment" when persona_assignments is available.
+
+Q: "key characteristics of top N personas by CLV" / "what are the characteristics of the highest CLV personas?" / "top personas profile"
+— When the question asks for CHARACTERISTICS or PROFILE of personas, return ALL relevant columns from persona_stats so the narrative can cite real numbers.
+RIGHT: SELECT persona_name, customer_count, avg_clv, avg_income, avg_credit_score,
+              avg_churn_prob, avg_digital_engagement, avg_deposits
+       FROM persona_stats ORDER BY avg_clv DESC LIMIT 2
+chart: {"type": "bar", "x_col": "persona_name", "y_col": "avg_clv", "title": "Top 2 Personas by Average CLV"}
+— The narrative MUST name the personas explicitly and cite their actual avg_income, avg_credit_score, avg_deposits from the data. NEVER describe characteristics generically without real numbers.
+
+Q: "How do products vary across customer segments?" / "revenue by segment" / "breakdown by segment"
+— persona_assignments IS available:
+RIGHT: SELECT pa.persona_name, p.product_name, ROUND(SUM(t.amount),0) AS revenue
+       FROM transactions t
+       JOIN customers c ON t.customer_id = c.customer_id
+       JOIN persona_assignments pa ON c.customer_id = pa.customer_id
+       JOIN products p ON t.product_id = p.product_id
+       GROUP BY pa.persona_name, p.product_name ORDER BY revenue DESC LIMIT 20
+
+Q: "key characteristics of top segments by CLV" — persona_assignments NOT available (fallback):
+WRONG: SELECT life_stage, ROUND(AVG(customer_lifetime_value),0) AS avg_clv FROM customers GROUP BY life_stage LIMIT 2
+       ← only 2 columns; narrative cannot cite income, credit score, or digital engagement
+RIGHT: SELECT life_stage,
+              COUNT(*) AS customer_count,
+              ROUND(AVG(customer_lifetime_value),0) AS avg_clv,
+              ROUND(AVG(income),0) AS avg_income,
+              ROUND(AVG(credit_score),0) AS avg_credit_score,
+              ROUND(AVG(digital_engagement_score),3) AS avg_digital_engagement,
+              ROUND(AVG(churn_probability),3) AS avg_churn_prob
+       FROM customers GROUP BY life_stage ORDER BY avg_clv DESC LIMIT 2
+
+Q: "Who are the most likely to churn in the next 30 days?" — NO forward churn column exists:
+RIGHT: SELECT c.customer_id, c.customer_name, ROUND(c.churn_probability,3) AS churn_prob,
+              c.churn_risk_category, c.clv_tier, ROUND(c.income,0) AS income
+       FROM customers c
+       WHERE c.churn_risk_category='High'
+       ORDER BY c.churn_probability DESC LIMIT 25
+— Note: this shows CURRENT churn probability (no "30-day" prediction exists in the data)
+chart: {"type": "none", "title": "High Churn Risk Customers"}
+
+Q: "revenue by segment" / "breakdown by segment"
+— persona_assignments NOT available (fallback):
+RIGHT: SELECT c.life_stage, ROUND(SUM(t.amount),0) AS revenue
+       FROM transactions t JOIN customers c ON t.customer_id = c.customer_id
+       GROUP BY c.life_stage ORDER BY revenue DESC
 
 Q: "average churn risk score by customer segment" / "churn risk by segment"
 WRONG: SELECT customer_segment, AVG(churn_risk_score) ... GROUP BY customer_segment  ← 1 row, all 'Personal'
-RIGHT: SELECT churn_risk_category, ROUND(AVG(churn_risk_score),2) AS avg_churn_score, COUNT(*) AS customers
+RIGHT (personas available): SELECT pa.persona_name, ROUND(AVG(c.churn_risk_score),2) AS avg_churn_score, COUNT(*) AS customers
+       FROM customers c JOIN persona_assignments pa ON c.customer_id = pa.customer_id
+       GROUP BY pa.persona_name ORDER BY avg_churn_score DESC
+RIGHT (no personas): SELECT churn_risk_category, ROUND(AVG(churn_risk_score),2) AS avg_churn_score, COUNT(*) AS customers
        FROM customers GROUP BY churn_risk_category ORDER BY avg_churn_score DESC
 
 Q: "How does transaction volume compare across segments?" / "transaction volume by life stage"
@@ -369,15 +541,90 @@ The frontend automatically formats: 1500000 → "1.5M", 85000 → "85.0K", 450 �
 WRONG: ROUND(SUM(amount)/1000000, 2) AS volume_m  ← renders as "1.5" with no unit (confusing)
 RIGHT: ROUND(SUM(amount), 0) AS total_amount       ← frontend renders as "1.5M" (correct)
 
+AD_SPEND PERSONA RULE — CRITICAL:
+The `ad_spend` table has its own `persona` column (5 marketing segments: e.g. "At Risk Saver", "Wealth Builder", etc.).
+NEVER join persona_assignments with ad_spend. They are separate dimensions.
+- ad_spend.persona is a marketing label, NOT the same as persona_assignments.persona_name.
+- For any ad_spend query involving persona/segment: use ad_spend.persona directly with GROUP BY.
+
+Q: "ROAS by persona" / "ROI by marketing persona" / "which persona has best ROAS?"
+RIGHT: SELECT persona, ROUND(SUM(revenue_usd)/NULLIF(SUM(spend_usd),0), 2) AS roas
+       FROM ad_spend GROUP BY persona ORDER BY roas DESC
+chart: {"type": "bar", "x_col": "persona", "y_col": "roas", "title": "ROAS by Marketing Persona"}
+
+Q: "ROAS by channel and persona" / "ROI by channel and persona" / "How does ROI vary by persona?"
+RIGHT: SELECT persona, ROUND(SUM(revenue_usd)/NULLIF(SUM(spend_usd),0), 2) AS roas,
+              ROUND(SUM(spend_usd), 0) AS total_spend
+       FROM ad_spend GROUP BY persona ORDER BY roas DESC
+chart: {"type": "bar", "x_col": "persona", "y_col": "roas", "title": "ROAS by Marketing Persona"}
+— Use persona as x_col for 5 distinct bars. Do NOT join persona_assignments. Do NOT use customer tables.
+
+ROAS / ROI AGGREGATION — NEVER average pre-computed ratios:
+- WRONG: AVG(roas), SUM(roas), MIN(roas) — mathematically meaningless; roas is already a ratio
+- WRONG: AVG(conversion_rate), AVG(click_rate), AVG(open_rate) without considering row weights
+- RIGHT: ROUND(SUM(revenue_usd) / NULLIF(SUM(spend_usd), 0), 2) AS roas
+- RIGHT: ROUND(SUM(converted) / NULLIF(SUM(sent), 0), 4) AS conversion_rate
+- RIGHT: ROUND(SUM(clicked) / NULLIF(SUM(sent), 0), 4) AS click_rate
+Always re-derive rates from the underlying numerator/denominator columns.
+
+CHURN COLUMN CLARIFICATION:
+- churn_probability: current point-in-time score (0.0–1.0) — the ONLY available churn predictor
+- churn_risk_category: categorical version of churn_probability ('High'/'Medium'/'Low')
+- churned: Boolean — TRUE only for customers who have already left
+- churn_date: date a customer left — NULL for active customers
+- NO "churn_in_30_days", "predicted_churn", or "forward_churn_probability" columns exist
+- For "most likely to churn": ORDER BY churn_probability DESC with WHERE churn_risk_category='High'
+
+CUSTOMER TABLE PRIORITY — two tables have overlapping customer columns, NEVER join both:
+- customers: the PRIMARY table. Use for churn, CLV, income, credit_score, life_stage, segments, and all customer queries. Column: total_deposits (deposits balance).
+- customer_profile: SECONDARY, extended financial detail. Use ONLY when the question specifically asks for debt, assets, or extended loan/spending detail NOT in customers. Column: total_deposit_value (different name — NOT total_deposits).
+- NEVER join customers + customer_profile in the same query — they share customer_id and overlap heavily.
+- DEFAULT: always use `customers` unless the question cannot be answered from it.
+
+DENORMALIZED COLUMNS (exist in BOTH customers AND customer_engagement — always alias):
+- churn_risk_score, churn_risk_category, churn_probability, customer_lifetime_value, clv_tier
+- When joining these two tables: always use table alias prefix → c.churn_risk_score NOT churn_risk_score
+- Prefer customers table as primary source; avoid joining both tables on the same denormalized column
+
 DIMENSION RULES:
 - "by marketing channel" → ad_spend GROUP BY channel (4 values: email, sms, in_app, branch)
 - "by transaction channel" → transactions GROUP BY channel (5 values: Mobile, Online, Phone, ATM, Branch)
-- "by segment" / "by customer segment" → customers GROUP BY churn_risk_category (never customer_segment)
-- "by persona/segment" → GROUP BY life_stage or clv_tier (5-6 values)
-- "by channel AND persona" → ad_spend GROUP BY channel, persona (≤20 rows, use bar chart)
+- "by preferred communication channel" → customers GROUP BY channel_preference (3 values: Digital, Branch, Hybrid)
+- "by segment" / "by customer segment" / "by persona" → if persona_assignments is in schema: JOIN persona_assignments GROUP BY persona_name (5 AI segments); else GROUP BY life_stage (5 values)
+- "by CLV tier" / "by tier" → GROUP BY clv_tier (Bronze/Silver/Gold/Platinum) — only when tier is explicitly mentioned
+- "by marketing channel AND persona" (ad_spend only) → SELECT persona, ... FROM ad_spend GROUP BY persona (use persona as x_col, 5 distinct values). NEVER join persona_assignments for ad_spend queries.
 - "trend over time" → GROUP BY year, month ORDER BY year, month
-- ad_spend pre-computed columns (roas, roi_pct, cpa) are PER-ROW — always re-aggregate: SUM(revenue_usd)/NULLIF(SUM(spend_usd),0)
+- ad_spend pre-computed columns (roas, roi_pct, cpa) are PER-ROW — always re-derive from SUM(revenue_usd)/NULLIF(SUM(spend_usd),0), NEVER use AVG(roas)
 - Target 5–15 rows for chart queries. Use LIMIT 10 for top-N, LIMIT 20 for two-dimension, LIMIT 24 for monthly.
+
+Q: "What are the preferred communication channels for each segment?" / "preferred channel by persona" / "how do segments differ in channel preference?"
+— persona_assignments IS available:
+RIGHT: WITH ranked AS (
+         SELECT pa.persona_name AS segment, c.channel_preference AS preferred_channel,
+                COUNT(DISTINCT c.customer_id) AS customer_count,
+                ROW_NUMBER() OVER (PARTITION BY pa.persona_name ORDER BY COUNT(DISTINCT c.customer_id) DESC) AS rn
+         FROM persona_assignments pa
+         JOIN customers c ON pa.customer_id = c.customer_id
+         GROUP BY pa.persona_name, c.channel_preference
+       )
+       SELECT segment, preferred_channel, customer_count FROM ranked WHERE rn = 1 ORDER BY customer_count DESC
+chart: {"type": "bar", "x_col": "segment", "y_col": "customer_count", "title": "Preferred Communication Channel per Segment"}
+— x_col MUST be "segment" (persona_name), NOT a compound label. Each bar represents one persona; the narrative explains which channel each persona prefers.
+— NEVER concatenate persona_name with customer_segment or any other column.
+
+Q: "What are the preferred communication channels for each segment?" / "channel distribution by segment"
+— persona_assignments NOT available (fallback):
+RIGHT: SELECT c.life_stage AS segment, c.channel_preference AS preferred_channel,
+              COUNT(DISTINCT c.customer_id) AS customer_count
+       FROM customers c
+       GROUP BY c.life_stage, c.channel_preference
+       ORDER BY c.life_stage, customer_count DESC LIMIT 20
+chart: {"type": "bar", "x_col": "segment", "y_col": "customer_count", "title": "Preferred Channel by Life Stage"}
+
+Q: "What is the overall preferred communication channel?" / "channel preference breakdown" (no segment grouping)
+RIGHT: SELECT channel_preference AS preferred_channel, COUNT(DISTINCT customer_id) AS customer_count
+       FROM customers GROUP BY channel_preference ORDER BY customer_count DESC
+chart: {"type": "bar", "x_col": "preferred_channel", "y_col": "customer_count", "title": "Communication Channel Preferences"}
 
 PRODUCT COMPATIBILITY RULES — always apply when recommending products to specific customers:
 Never recommend a product the customer cannot qualify for. Check:
@@ -420,28 +667,44 @@ Triggers for chart type "none":
 - "which customers...", "list customers...", "who are the customers...", "show me customers..."
 - "which customers started...", "customers who...", "find customers..."
 - "show incomplete applications", "show wishlist customers", "which transactions..."
-- Any query where x_col would be customer_id, customer_name, full_name, or transaction_id
+- Any query where x_col would be customer_id, customer_name, or transaction_id
 
 Q: "Which customers started an application but never completed it?" / "Show incomplete applications"
-RIGHT: SELECT c.customer_id, c.full_name AS customer_name,
-              p.product_name, p.category,
-              i.application_date,
+RIGHT: SELECT c.customer_id, c.customer_name,
+              p.product_name, p.subcategory,
+              i.started_date,
               c.churn_risk_category, c.clv_tier
-       FROM incomplete_apps i
+       FROM incomplete_applications i
        JOIN customers c ON i.customer_id = c.customer_id
        JOIN products p ON i.product_id = p.product_id
-       ORDER BY i.application_date DESC
+       ORDER BY i.started_date DESC
        LIMIT 50
 chart: {"type": "none", "x_col": "customer_name", "y_col": "product_name", "title": "Incomplete Applications"}
 
 Q: "How many customers have incomplete applications by product?" (aggregated version — bar chart ok)
 RIGHT: SELECT p.product_name, COUNT(*) AS incomplete_count,
               ROUND(AVG(c.customer_lifetime_value), 0) AS avg_clv
-       FROM incomplete_apps i
+       FROM incomplete_applications i
        JOIN customers c ON i.customer_id = c.customer_id
        JOIN products p ON i.product_id = p.product_id
        GROUP BY p.product_name ORDER BY incomplete_count DESC LIMIT 15
 chart: {"type": "bar", "x_col": "product_name", "y_col": "incomplete_count", "title": "Incomplete Applications by Product"}
+
+INDIVIDUAL CUSTOMER LOOKUP — name-based queries (e.g. "George Davis is from which segment?"):
+When the user mentions a specific customer name, use LIKE for fuzzy matching then return their segment, profile, or other data:
+RIGHT: SELECT c.customer_id, c.customer_name, pa.persona_name, c.income, c.credit_score, c.clv_tier
+       FROM customers c
+       JOIN persona_assignments pa ON c.customer_id = pa.customer_id
+       WHERE c.customer_name LIKE '%George%Davis%'
+chart: {"type": "none", "title": "Customer Segment Lookup"}
+— The narrative MUST use the EXACT persona_name value from the result row. NEVER rename or substitute (e.g. if the table shows "Wealth Manager", say "Wealth Manager" not "Wealth Builder").
+— If the result has 0 rows: report "No customer named X was found in the database."
+— If the result has EXACTLY 1 row: answer the question directly using that row's values.
+— If the result has 2+ rows: this means MULTIPLE customers share that name. The narrative MUST open with:
+   "Found **N customers** named '[name]' in the database. Please clarify which one you mean:"
+   Then list EACH customer on its own bullet with their customer_id, persona, income, and credit_score so the user can identify the right person.
+   End with: "Reply with the customer ID (e.g. **CUST_00123**) to get details for a specific customer."
+   Do NOT pick one silently. Do NOT answer the original question until the user disambiguates.
 
 CHART RULES:
 - none: Use for customer-listing queries (x-axis would be customer_id or names) — table is more useful
@@ -454,7 +717,7 @@ CHART RULES:
 
 Respond ONLY with a valid JSON object — no markdown fences:
 {
-  "sql": "SELECT ...",
+  "sql": "SELECT ... or null for strategy/advisory questions",
   "narrative": "**Key metric in bold** — rich Markdown narrative with bullets and a Recommendation at the end.",
   "chart": {"type": "bar|line|pie|area|none", "x_col": "column_name", "y_col": "column_name", "title": "Chart title"},
   "follow_ups": ["question 1", "question 2", "question 3"]
@@ -683,6 +946,18 @@ def _resolve_chart(columns: List[str], rows: List[List], llm_chart: Dict) -> Dic
     if x_col not in columns:
         x_col = label_cols[0] if label_cols else columns[0]
 
+    # Suppress chart when x-axis would be individual customer IDs or names (not useful for charting)
+    _id_keywords = ("customer_id", "transaction_id", "customer_name")
+    if x_col and any(kw in x_col.lower() for kw in _id_keywords):
+        return {"type": "none"}
+    # Also suppress if the x-axis values look like CUST_##### ID patterns
+    if rows and x_col in columns:
+        xi = columns.index(x_col)
+        sample_vals = [str(r[xi]) for r in rows[:5] if xi < len(r) and r[xi] is not None]
+        import re as _re
+        if sample_vals and all(_re.match(r'CUST_', v) for v in sample_vals):
+            return {"type": "none"}
+
     y_col = llm_chart.get("y_col")
     if y_col not in columns:
         y_col = numeric_cols[0] if numeric_cols else (columns[1] if len(columns) > 1 else columns[0])
@@ -749,6 +1024,16 @@ def ask_chatbot(
       success, narrative, sql, table ({columns, rows}), chart, follow_ups, sql_error
     """
     history = history or []
+
+    # Agent A detection — warn when segment/persona questions asked without personas registered
+    _segment_keywords = ("segment", "persona", "wealth builder", "digital native", "at risk", "cluster")
+    _needs_personas = any(kw in question.lower() for kw in _segment_keywords)
+    _personas_warning = (
+        "\n\n> **Note:** Persona assignments are not yet generated. "
+        "Run **Agent A** first for AI-driven segment answers. "
+        "Answering using `life_stage` as a fallback."
+    ) if (_needs_personas and not _PERSONAS_REGISTERED) else ""
+
     schema = build_schema_context()
     prompt = _build_prompt(question, history, schema)
 
@@ -769,6 +1054,35 @@ def ask_chatbot(
     follow_ups = parsed.get("follow_ups") or []
     llm_chart = parsed.get("chart") or {}
 
+    # Normalize narrative formatting and number display
+    if narrative:
+        # Convert literal \n sequences (backslash-n as two chars) the LLM sometimes emits into real newlines
+        narrative = narrative.replace('\\n', '\n')
+        # Strip stray trailing backslashes left before newlines (e.g. "sentence. \<newline>")
+        narrative = re.sub(r'\\ *\n', '\n', narrative)
+        narrative = re.sub(r'\\$', '', narrative, flags=re.MULTILINE)
+        # Inject newlines before bullets/headers the LLM compacted inline (- or * markers)
+        narrative = re.sub(r'([.!?;:])\s+([*-] (?=[A-Z\*`\d]))', r'\1\n\2', narrative)
+        narrative = re.sub(r'([^\n])(## )', r'\1\n\2', narrative)
+        narrative = re.sub(r'([^\n])(### )', r'\1\n\2', narrative)
+        narrative = re.sub(r'([.!?])\s+(\*\*Recommendation)', r'\1\n\n\2', narrative)
+        # Format large bold numbers with K/M suffixes  e.g. **43000** → **43K**
+        def _fmt_bold_num(m: re.Match) -> str:
+            raw = m.group(1).replace(',', '')
+            try:
+                n = float(raw)
+            except ValueError:
+                return m.group(0)
+            a = abs(n)
+            if a >= 1_000_000_000:
+                return f'**{n/1_000_000_000:.1f}B**'
+            if a >= 1_000_000:
+                return f'**{n/1_000_000:.1f}M**'
+            if a >= 10_000:
+                return f'**{n/1_000:.0f}K**'
+            return m.group(0)
+        narrative = re.sub(r'\*\*([\d,]+(?:\.\d+)?)\*\*', _fmt_bold_num, narrative)
+
     table = None
     chart = None
     sql_error = None
@@ -781,9 +1095,27 @@ def ask_chatbot(
             try:
                 table = _exec_sql(sql)
                 if table and table.get("columns"):
-                    # Auto-aggregate if the LLM returned ungrouped rows (safety net)
-                    table = _auto_aggregate(table, llm_chart)
-                    chart = _resolve_chart(table["columns"], table.get("rows", []), llm_chart)
+                    rows = table.get("rows", [])
+                    if not rows:
+                        # Zero rows returned — override narrative so it cannot hallucinate
+                        join_count = sql.upper().count("JOIN")
+                        if join_count >= 2:
+                            narrative = (
+                                "The query returned **0 rows**. This usually means one of the joined tables "
+                                "has no matching data — for example, `persona_assignments` may not be populated "
+                                "(run Agent A first), or there are no records matching the filter conditions.\n\n"
+                                "**Recommendation:** Run Agent A to generate persona assignments, then retry this query."
+                            )
+                        else:
+                            narrative = (
+                                "The query returned **0 rows** — no records match the specified conditions. "
+                                "Try broadening the filter or checking if the data has been loaded."
+                            )
+                        chart = {"type": "none"}
+                    else:
+                        # Auto-aggregate if the LLM returned ungrouped rows (safety net)
+                        table = _auto_aggregate(table, llm_chart)
+                        chart = _resolve_chart(table["columns"], rows, llm_chart)
             except Exception as e:
                 sql_error = str(e)
                 logger.warning("SQL execution failed: %s\nSQL: %s", e, sql[:400])
@@ -793,6 +1125,10 @@ def ask_chatbot(
     if not follow_ups:
         follow_ups = _default_follow_ups(question)
 
+    # Append Agent A warning to narrative if applicable
+    if _personas_warning and narrative:
+        narrative = narrative + _personas_warning
+
     return {
         "success": True,
         "narrative": narrative,
@@ -801,7 +1137,463 @@ def ask_chatbot(
         "chart": chart,
         "follow_ups": follow_ups[:3],
         "sql_error": sql_error,
+        "personas_registered": _PERSONAS_REGISTERED,
     }
+
+
+# ── Agent A status ───────────────────────────────────────────────────────────
+
+def is_personas_registered() -> bool:
+    """Return True if Agent A has been run and persona_assignments is available."""
+    return _PERSONAS_REGISTERED
+
+
+# ── Anomaly detection ─────────────────────────────────────────────────────────
+
+_ANOMALY_QUERIES = [
+    {
+        "id": "high_value_churn",
+        "title": "High-Value Customers at Churn Risk",
+        "severity": "critical",
+        "description": "Gold/Platinum customers with churn probability > 0.6",
+        "sql": """
+            SELECT c.customer_name, c.customer_id, c.clv_tier,
+                   ROUND(c.churn_probability, 3) AS churn_prob,
+                   ROUND(c.customer_lifetime_value, 0) AS clv,
+                   ROUND(c.income, 0) AS income
+            FROM customers c
+            WHERE c.churn_probability > 0.6
+              AND c.clv_tier IN ('Gold', 'Platinum')
+            ORDER BY c.customer_lifetime_value DESC
+            LIMIT 15
+        """,
+    },
+    {
+        "id": "wishlist_gap",
+        "title": "High-Wishlist Products with Low Conversion",
+        "severity": "warning",
+        "description": "Products wishlisted 10+ times where buyers are far fewer than wishlisters — indicating interest without purchase",
+        "sql": """
+            SELECT p.product_name, p.subcategory,
+                   COUNT(DISTINCT w.customer_id) AS wishlisted_by,
+                   COUNT(DISTINCT t.customer_id) AS actually_purchased,
+                   ROUND(
+                       CASE WHEN COUNT(DISTINCT w.customer_id) > 0
+                            THEN COUNT(DISTINCT t.customer_id) * 100.0 / COUNT(DISTINCT w.customer_id)
+                            ELSE 0 END, 1
+                   ) AS conversion_pct
+            FROM products p
+            JOIN wishlist w ON p.product_id = w.product_id
+            LEFT JOIN transactions t ON p.product_id = t.product_id
+            GROUP BY p.product_name, p.subcategory
+            HAVING wishlisted_by >= 10
+               AND (actually_purchased = 0 OR actually_purchased < wishlisted_by * 0.5)
+            ORDER BY wishlisted_by DESC
+            LIMIT 10
+        """,
+    },
+    {
+        "id": "txn_volume_spike",
+        "title": "Transaction Volume Outliers",
+        "severity": "info",
+        "description": "Customers whose transaction count is > 2 std deviations above average",
+        "sql": """
+            WITH vol AS (
+                SELECT customer_id, COUNT(*) AS txn_count FROM transactions GROUP BY customer_id
+            ),
+            stats AS (
+                SELECT AVG(txn_count) AS mean_count, STDDEV(txn_count) AS std_count FROM vol
+            )
+            SELECT c.customer_name, c.customer_id, vol.txn_count,
+                   ROUND(stats.mean_count, 1) AS avg_count,
+                   ROUND((vol.txn_count - stats.mean_count) / stats.std_count, 2) AS z_score,
+                   c.clv_tier, c.churn_risk_category
+            FROM vol CROSS JOIN stats
+            JOIN customers c ON vol.customer_id = c.customer_id
+            WHERE (vol.txn_count - stats.mean_count) / stats.std_count > 2
+            ORDER BY z_score DESC
+            LIMIT 10
+        """,
+    },
+    {
+        "id": "abandoned_applications",
+        "title": "Products with High Application Abandonment",
+        "severity": "warning",
+        "description": "Products with the most incomplete applications",
+        "sql": """
+            SELECT p.product_name, p.subcategory, COUNT(*) AS abandoned_count,
+                   ROUND(COUNT(*) * 100.0 / (SELECT COUNT(*) FROM incomplete_applications), 1) AS pct_of_total
+            FROM incomplete_applications i
+            JOIN products p ON i.product_id = p.product_id
+            GROUP BY p.product_name, p.subcategory
+            ORDER BY abandoned_count DESC
+            LIMIT 10
+        """,
+    },
+    {
+        "id": "roas_outliers",
+        "title": "Marketing ROAS Outliers",
+        "severity": "info",
+        "description": "Channel-persona combos with ROAS more than 1.5σ from average",
+        "sql": """
+            WITH ch AS (
+                SELECT channel, persona,
+                       ROUND(SUM(revenue_usd) / NULLIF(SUM(spend_usd), 0), 2) AS roas,
+                       ROUND(SUM(spend_usd), 0) AS total_spend
+                FROM ad_spend GROUP BY channel, persona
+            ),
+            stats AS (SELECT AVG(roas) AS mean_roas, STDDEV(roas) AS std_roas FROM ch)
+            SELECT ch.channel, ch.persona, ch.roas, ch.total_spend,
+                   ROUND((ch.roas - stats.mean_roas) / NULLIF(stats.std_roas, 0), 2) AS z_score
+            FROM ch CROSS JOIN stats
+            WHERE ABS((ch.roas - stats.mean_roas) / NULLIF(stats.std_roas, 0)) > 1.5
+            ORDER BY z_score DESC
+            LIMIT 10
+        """,
+    },
+]
+
+
+def detect_anomalies() -> List[Dict[str, Any]]:
+    """
+    Run all anomaly detection queries and return structured results.
+    Each result contains: id, title, severity, description, columns, rows, count.
+    """
+    con = _get_con()
+    results = []
+    for spec in _ANOMALY_QUERIES:
+        try:
+            rel = con.execute(spec["sql"].strip())
+            cols = [d[0] for d in rel.description]
+            rows = rel.fetchall()
+            results.append({
+                "id": spec["id"],
+                "title": spec["title"],
+                "severity": spec["severity"],
+                "description": spec["description"],
+                "columns": cols,
+                "rows": [list(r) for r in rows],
+                "count": len(rows),
+            })
+        except Exception as e:
+            logger.warning("Anomaly query '%s' failed: %s", spec["id"], e)
+            results.append({
+                "id": spec["id"],
+                "title": spec["title"],
+                "severity": spec["severity"],
+                "description": spec["description"],
+                "columns": [],
+                "rows": [],
+                "count": 0,
+                "error": str(e),
+            })
+    return results
+
+
+# ── Trend detection ───────────────────────────────────────────────────────────
+
+_TREND_QUERIES = [
+    {
+        "id": "revenue_mom",
+        "title": "Monthly Revenue",
+        "unit": "$",
+        "sql": """
+            WITH max_dt AS (SELECT MAX(CAST(transaction_date AS DATE)) AS mx FROM transactions),
+            monthly AS (
+                SELECT CAST(year(CAST(transaction_date AS DATE)) AS VARCHAR)
+                       || '-' || LPAD(CAST(month(CAST(transaction_date AS DATE)) AS VARCHAR), 2, '0') AS month_key,
+                       ROUND(SUM(amount), 0) AS value
+                FROM transactions, max_dt
+                WHERE CAST(transaction_date AS DATE) >= max_dt.mx - INTERVAL 13 MONTH
+                GROUP BY month_key
+            )
+            SELECT month_key, value FROM monthly ORDER BY month_key
+        """,
+    },
+    {
+        "id": "txn_count_mom",
+        "title": "Monthly Transaction Count",
+        "unit": "",
+        "sql": """
+            WITH max_dt AS (SELECT MAX(CAST(transaction_date AS DATE)) AS mx FROM transactions),
+            monthly AS (
+                SELECT CAST(year(CAST(transaction_date AS DATE)) AS VARCHAR)
+                       || '-' || LPAD(CAST(month(CAST(transaction_date AS DATE)) AS VARCHAR), 2, '0') AS month_key,
+                       COUNT(*) AS value
+                FROM transactions, max_dt
+                WHERE CAST(transaction_date AS DATE) >= max_dt.mx - INTERVAL 13 MONTH
+                GROUP BY month_key
+            )
+            SELECT month_key, value FROM monthly ORDER BY month_key
+        """,
+    },
+    {
+        "id": "ad_spend_mom",
+        "title": "Monthly Marketing Spend",
+        "unit": "$",
+        "sql": """
+            SELECT month_key, value FROM (
+                SELECT CAST(year AS VARCHAR) || '-' || LPAD(CAST(month AS VARCHAR), 2, '0') AS month_key,
+                       ROUND(SUM(spend_usd), 0) AS value
+                FROM ad_spend
+                GROUP BY year, month, month_key ORDER BY month_key DESC LIMIT 13
+            ) sub ORDER BY month_key
+        """,
+    },
+    {
+        "id": "wishlist_mom",
+        "title": "Monthly Wishlist Additions",
+        "unit": "",
+        "sql": """
+            WITH max_dt AS (SELECT MAX(CAST(added_date AS DATE)) AS mx FROM wishlist),
+            monthly AS (
+                SELECT CAST(year(CAST(added_date AS DATE)) AS VARCHAR)
+                       || '-' || LPAD(CAST(month(CAST(added_date AS DATE)) AS VARCHAR), 2, '0') AS month_key,
+                       COUNT(*) AS value
+                FROM wishlist, max_dt
+                WHERE CAST(added_date AS DATE) >= max_dt.mx - INTERVAL 13 MONTH
+                GROUP BY month_key
+            )
+            SELECT month_key, value FROM monthly ORDER BY month_key
+        """,
+    },
+    {
+        "id": "incomplete_mom",
+        "title": "Monthly Incomplete Applications",
+        "unit": "",
+        "sql": """
+            WITH max_dt AS (SELECT MAX(CAST(started_date AS DATE)) AS mx FROM incomplete_applications),
+            monthly AS (
+                SELECT CAST(year(CAST(started_date AS DATE)) AS VARCHAR)
+                       || '-' || LPAD(CAST(month(CAST(started_date AS DATE)) AS VARCHAR), 2, '0') AS month_key,
+                       COUNT(*) AS value
+                FROM incomplete_applications, max_dt
+                WHERE CAST(started_date AS DATE) >= max_dt.mx - INTERVAL 13 MONTH
+                GROUP BY month_key
+            )
+            SELECT month_key, value FROM monthly ORDER BY month_key
+        """,
+    },
+]
+
+
+def get_trend_summary() -> List[Dict[str, Any]]:
+    """
+    Run MoM trend queries. Returns list of trend objects:
+      id, title, unit, months (list of {month, value}),
+      latest_value, prev_value, pct_change, direction ('up'|'down'|'flat')
+    """
+    con = _get_con()
+    results = []
+    for spec in _TREND_QUERIES:
+        try:
+            rel = con.execute(spec["sql"].strip())
+            rows = rel.fetchall()
+            months = [{"month": r[0], "value": float(r[1]) if r[1] is not None else 0} for r in rows]
+            # Use the second-to-last month as "latest" for MoM comparison
+            # because the last month in the dataset is typically partial (incomplete data)
+            # Only flag as partial if there are 2+ months and the last value is <50% of the prior month
+            last_month_partial = False
+            if len(months) >= 2:
+                last_val = months[-1]["value"]
+                prev_val = months[-2]["value"]
+                if prev_val > 0 and last_val < prev_val * 0.5:
+                    last_month_partial = True
+
+            latest = months[-1]["value"] if months else 0
+            prev = months[-2]["value"] if len(months) >= 2 else None
+            # For MoM % change, compare last two complete months (skip if last is partial)
+            cmp_latest = months[-2]["value"] if (last_month_partial and len(months) >= 3) else latest
+            cmp_prev = months[-3]["value"] if (last_month_partial and len(months) >= 3) else prev
+            if cmp_prev and cmp_prev != 0:
+                pct_change = round((cmp_latest - cmp_prev) / abs(cmp_prev) * 100, 1)
+            else:
+                pct_change = None
+            direction = "flat"
+            if pct_change is not None:
+                direction = "up" if pct_change > 1 else ("down" if pct_change < -1 else "flat")
+            results.append({
+                "id": spec["id"],
+                "title": spec["title"],
+                "unit": spec["unit"],
+                "months": months,
+                "latest_value": latest,
+                "prev_value": prev,
+                "pct_change": pct_change,
+                "direction": direction,
+                "last_month_partial": last_month_partial,
+            })
+        except Exception as e:
+            logger.warning("Trend query '%s' failed: %s", spec["id"], e)
+            results.append({
+                "id": spec["id"],
+                "title": spec["title"],
+                "unit": spec["unit"],
+                "months": [],
+                "latest_value": 0,
+                "prev_value": None,
+                "pct_change": None,
+                "direction": "flat",
+                "error": str(e),
+            })
+    return results
+
+
+# ── Product Pulse ─────────────────────────────────────────────────────────────
+
+def get_product_pulse() -> List[Dict[str, Any]]:
+    """
+    Per-product momentum for the Product Pulse panel.
+
+    Partial-month detection uses TWO signals (either triggers the flag):
+      1. days_elapsed < 20  — dataset ends early in the month (e.g. June 4 → 4 days)
+      2. cur_vol < 50% of prev_vol — overall transaction volume is abnormally low
+
+    When partial: the last month is still shown in the chart but is excluded from
+    momentum comparison and KPI values. The last COMPLETE month is used instead.
+    """
+    import datetime as _dt
+    con = _get_con()
+    results: List[Dict[str, Any]] = []
+    try:
+        # ── Step 0: detect partial last month ────────────────────────────────
+        meta = con.execute("""
+            WITH max_dt AS (SELECT MAX(CAST(transaction_date AS DATE)) AS mx FROM transactions),
+            agg AS (
+                SELECT
+                    SUM(CASE WHEN CAST(year(CAST(transaction_date AS DATE)) AS VARCHAR)
+                                  || '-' || LPAD(CAST(month(CAST(transaction_date AS DATE)) AS VARCHAR), 2, '0')
+                                  = CAST(year(mx) AS VARCHAR)
+                                  || '-' || LPAD(CAST(month(mx) AS VARCHAR), 2, '0')
+                             THEN amount ELSE 0 END) AS cur_vol,
+                    SUM(CASE WHEN CAST(transaction_date AS DATE)
+                                  >= date_trunc('month', mx) - INTERVAL 1 MONTH
+                              AND CAST(transaction_date AS DATE)
+                                  <  date_trunc('month', mx)
+                             THEN amount ELSE 0 END) AS prev_vol
+                FROM transactions, max_dt
+            )
+            SELECT max_dt.mx, day(max_dt.mx) AS days_elapsed, agg.cur_vol, agg.prev_vol
+            FROM max_dt, agg
+        """).fetchone()
+
+        max_date, days_elapsed, cur_vol, prev_vol = meta
+        last_month_partial = bool(
+            days_elapsed < 20
+            or (prev_vol and prev_vol > 0 and (cur_vol or 0) < prev_vol * 0.5)
+        )
+
+        # Reference month for "new customers" KPI: last complete month
+        if last_month_partial:
+            first_of_cur = max_date.replace(day=1)
+            last_complete_day = first_of_cur - _dt.timedelta(days=1)
+            ref_month_str = last_complete_day.strftime('%Y-%m')
+        else:
+            ref_month_str = max_date.strftime('%Y-%m')
+
+        # ── Step 1: monthly volume + customers per product (last 7 months) ───
+        # Fetch 7 so that after dropping the partial last month we still have 6 complete months
+        volume_rows = con.execute("""
+            WITH max_dt AS (SELECT MAX(CAST(transaction_date AS DATE)) AS mx FROM transactions),
+            monthly AS (
+                SELECT t.product_id,
+                       CAST(year(CAST(t.transaction_date AS DATE)) AS VARCHAR)
+                           || '-' || LPAD(CAST(month(CAST(t.transaction_date AS DATE)) AS VARCHAR), 2, '0') AS month_key,
+                       COUNT(DISTINCT t.customer_id) AS uniq_customers,
+                       ROUND(SUM(t.amount), 0) AS volume
+                FROM transactions t, max_dt
+                WHERE CAST(t.transaction_date AS DATE) >= max_dt.mx - INTERVAL 7 MONTH
+                GROUP BY t.product_id, month_key
+            )
+            SELECT p.product_name, p.subcategory, m.month_key, m.uniq_customers, m.volume
+            FROM monthly m
+            JOIN products p ON m.product_id = p.product_id
+            ORDER BY p.product_name, m.month_key
+        """).fetchall()
+
+        # ── Step 2: new customers for the reference (last complete) month ────
+        new_cust_rows = con.execute(f"""
+            WITH first_txn AS (
+                SELECT customer_id, product_id, MIN(CAST(transaction_date AS DATE)) AS first_date
+                FROM transactions GROUP BY customer_id, product_id
+            )
+            SELECT p.product_name, COUNT(DISTINCT ft.customer_id) AS new_customers
+            FROM first_txn ft
+            JOIN products p ON ft.product_id = p.product_id
+            WHERE CAST(year(ft.first_date) AS VARCHAR)
+                  || '-' || LPAD(CAST(month(ft.first_date) AS VARCHAR), 2, '0') = '{ref_month_str}'
+            GROUP BY p.product_name
+        """).fetchall()
+
+        new_customers_map = {r[0]: int(r[1]) for r in new_cust_rows}
+
+        # ── Step 3: group monthly rows by product ─────────────────────────────
+        from collections import defaultdict
+        product_map: dict = defaultdict(lambda: {"subcategory": "", "months": []})
+        for product_name, subcategory, month_key, uniq, volume in volume_rows:
+            product_map[product_name]["subcategory"] = subcategory
+            product_map[product_name]["months"].append({
+                "month": month_key,
+                "customers": int(uniq),
+                "volume": float(volume),
+            })
+
+        # ── Step 4: compute momentum using only complete months ───────────────
+        for product_name, data in product_map.items():
+            months = data["months"]   # full list, ascending; may end with a partial month
+
+            # Slice off the partial month for all calculations
+            complete = months[:-1] if last_month_partial and len(months) > 1 else months
+            nc = len(complete)
+
+            if nc >= 4:
+                recent_avg = (complete[-1]["volume"] + complete[-2]["volume"]) / 2
+                prior_avg  = (complete[-3]["volume"] + complete[-4]["volume"]) / 2
+            elif nc >= 2:
+                recent_avg = complete[-1]["volume"]
+                prior_avg  = complete[-2]["volume"]
+            elif nc == 1:
+                recent_avg = complete[0]["volume"]
+                prior_avg  = 0
+            else:
+                recent_avg = 0
+                prior_avg  = 0
+
+            if prior_avg > 0:
+                pct_change = round((recent_avg - prior_avg) / prior_avg * 100, 1)
+                if pct_change > 10:
+                    momentum = "Growing"
+                elif pct_change < -10:
+                    momentum = "Declining"
+                else:
+                    momentum = "Stable"
+            else:
+                pct_change = None
+                momentum = "Stable"
+
+            # KPI values come from the last COMPLETE month, not the partial one
+            kpi_month = complete[-1] if complete else (months[-1] if months else {})
+
+            results.append({
+                "product_name": product_name,
+                "subcategory": data["subcategory"],
+                "new_customers": new_customers_map.get(product_name, 0),
+                "this_month_volume": kpi_month.get("volume", 0),
+                "this_month_customers": kpi_month.get("customers", 0),
+                "kpi_month_label": kpi_month.get("month", ref_month_str),
+                "last_month_partial": last_month_partial,
+                "momentum": momentum,
+                "pct_change": pct_change,
+                "months": months,   # full list (chart still shows partial month)
+            })
+
+        # Sort: Declining first (most urgent), then Stable, then Growing; within each by volume desc
+        _priority = {"Declining": 0, "Stable": 1, "Growing": 2}
+        results.sort(key=lambda x: (_priority.get(x["momentum"], 1), -x["this_month_volume"]))
+    except Exception as e:
+        logger.warning("get_product_pulse failed: %s", e)
+
+    return results
 
 
 # ── Table list for UI ─────────────────────────────────────────────────────────

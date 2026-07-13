@@ -3,7 +3,8 @@ import { useMutation } from '@tanstack/react-query';
 import {
   BarChart2, Table2, X, Send, ChevronDown, Plus, Sparkles,
   Download, Copy, Check, TrendingUp, PieChart as PieIcon, Activity,
-  Trash2, Database,
+  Trash2, Database, AlertTriangle, TrendingDown, Minus, Bot,
+  FileText, Zap, Package, Layers,
 } from 'lucide-react';
 import {
   BarChart, Bar, LineChart, Line, AreaChart, Area,
@@ -35,6 +36,7 @@ interface ChatResponse {
   chart: ChartConfig | null;
   follow_ups: string[];
   sql_error?: string | null;
+  personas_registered?: boolean;
   error?: string;
 }
 
@@ -48,6 +50,53 @@ interface ConversationBreak {
 }
 
 type HistoryItem = ChatEntry | ConversationBreak;
+
+interface AnomalyResult {
+  id: string;
+  title: string;
+  severity: 'critical' | 'warning' | 'info';
+  description: string;
+  columns: string[];
+  rows: (string | number)[][];
+  count: number;
+  error?: string;
+}
+
+interface ProductPulseMonth { month: string; customers: number; volume: number; }
+interface ProductPulseItem {
+  product_name: string;
+  subcategory: string;
+  new_customers: number;
+  this_month_volume: number;
+  this_month_customers: number;
+  kpi_month_label?: string;
+  last_month_partial?: boolean;
+  momentum: 'Growing' | 'Stable' | 'Declining';
+  pct_change: number | null;
+  months: ProductPulseMonth[];
+}
+
+interface FunnelStage {
+  id: string;
+  label: string;
+  sublabel: string;
+  count: number | null;
+  color: string;
+}
+
+interface TrendMonth { month: string; value: number; }
+interface TrendResult {
+  id: string;
+  title: string;
+  unit: string;
+  months: TrendMonth[];
+  latest_value: number;
+  prev_value: number | null;
+  pct_change: number | null;
+  direction: 'up' | 'down' | 'flat';
+  last_month_partial?: boolean;
+  error?: string;
+}
 
 // ── Constants ─────────────────────────────────────────────────────────────────
 
@@ -64,15 +113,27 @@ const CHART_TYPE_ICONS: Record<string, React.ReactNode> = {
 };
 
 const SUGGESTED_QUESTIONS = [
-  "Which customer segment has the highest churn risk?",
-  "Who are the top 10 most valuable customers by CLV?",
-  "What is the ROAS by marketing channel and persona?",
-  "Which customers started an application but never completed it?",
-  "Show average income and credit score by life stage",
-  "What products are customers wishlisting but not applying for?",
-  "Compare total transaction volume by life stage",
-  "Show monthly marketing spend trend across all channels",
+  { q: "Which customer segment has the highest churn risk?",              category: "Segments",    color: "violet"  },
+  { q: "Who are the top 10 most valuable customers by CLV?",             category: "CLV",          color: "blue"    },
+  { q: "What is the ROAS by marketing channel and persona?",             category: "Marketing",    color: "emerald" },
+  { q: "Which customers started an application but never completed it?", category: "Retention",    color: "amber"   },
+  { q: "What are the key characteristics of each customer segment?",     category: "Segments",     color: "violet"  },
+  { q: "What products are customers wishlisting but not applying for?",  category: "Products",     color: "indigo"  },
+  { q: "Which customer segment generates the highest transaction volume?", category: "Transactions", color: "sky"   },
+  { q: "Show monthly marketing spend trend across all channels",         category: "Marketing",    color: "emerald" },
 ];
+
+const QUESTION_COLORS: Record<string, {
+  accent: string; chipBg: string; chipText: string; chipBorder: string;
+  iconBg: string; iconText: string; hoverBorder: string; hoverBg: string;
+}> = {
+  violet:  { accent: '#8B5CF6', chipBg: 'bg-violet-50',  chipText: 'text-violet-700',  chipBorder: 'border-violet-200',  iconBg: 'bg-violet-100',  iconText: 'text-violet-600',  hoverBorder: 'hover:border-violet-300',  hoverBg: 'hover:bg-violet-50/40'  },
+  blue:    { accent: '#3B82F6', chipBg: 'bg-blue-50',    chipText: 'text-blue-700',    chipBorder: 'border-blue-200',    iconBg: 'bg-blue-100',    iconText: 'text-blue-600',    hoverBorder: 'hover:border-blue-300',    hoverBg: 'hover:bg-blue-50/40'    },
+  emerald: { accent: '#10B981', chipBg: 'bg-emerald-50', chipText: 'text-emerald-700', chipBorder: 'border-emerald-200', iconBg: 'bg-emerald-100', iconText: 'text-emerald-600', hoverBorder: 'hover:border-emerald-300', hoverBg: 'hover:bg-emerald-50/40' },
+  amber:   { accent: '#F59E0B', chipBg: 'bg-amber-50',   chipText: 'text-amber-700',   chipBorder: 'border-amber-200',   iconBg: 'bg-amber-100',   iconText: 'text-amber-600',   hoverBorder: 'hover:border-amber-300',   hoverBg: 'hover:bg-amber-50/40'   },
+  indigo:  { accent: '#6366F1', chipBg: 'bg-indigo-50',  chipText: 'text-indigo-700',  chipBorder: 'border-indigo-200',  iconBg: 'bg-indigo-100',  iconText: 'text-indigo-600',  hoverBorder: 'hover:border-indigo-300',  hoverBg: 'hover:bg-indigo-50/40'  },
+  sky:     { accent: '#0EA5E9', chipBg: 'bg-sky-50',     chipText: 'text-sky-700',     chipBorder: 'border-sky-200',     iconBg: 'bg-sky-100',     iconText: 'text-sky-600',     hoverBorder: 'hover:border-sky-300',     hoverBg: 'hover:bg-sky-50/40'     },
+};
 
 const STORAGE_KEY = 'segment_ai_history_v2';
 
@@ -128,6 +189,20 @@ function fmtTooltip(v: number): string {
   return v.toLocaleString(undefined, { maximumFractionDigits: 2 });
 }
 
+// Format large numbers in table cells with K/M/B suffixes.
+// Skip year-range integers (2000-2040) to keep them as plain years.
+function fmtCellNum(n: number): string {
+  if (!isFinite(n)) return '—';
+  const abs = Math.abs(n);
+  // Leave years and small counts unformatted
+  if (n === Math.round(n) && n >= 2000 && n <= 2040) return String(n);
+  if (abs >= 1_000_000_000) return (n / 1_000_000_000).toFixed(2) + 'B';
+  if (abs >= 1_000_000)     return (n / 1_000_000).toFixed(2) + 'M';
+  if (abs >= 1_000)         return (n / 1_000).toFixed(1) + 'K';
+  if (Math.round(n) !== n)  return n.toFixed(2);
+  return String(n);
+}
+
 // ── Markdown renderer ─────────────────────────────────────────────────────────
 
 function renderInline(text: string, key: string): React.ReactNode {
@@ -148,7 +223,25 @@ function renderInline(text: string, key: string): React.ReactNode {
 }
 
 function NarrativeMarkdown({ text }: { text: string }) {
-  const lines = text.split('\n');
+  // Client-side pre-processing: inject newlines if the LLM compacted bullets/headers inline
+  const processed = React.useMemo(() => {
+    let t = text;
+    // Safety net: convert literal \n sequences (backslash-n) to real newlines if Python didn't catch them
+    t = t.replace(/\\n/g, '\n');
+    // Strip stray trailing backslashes before newlines
+    t = t.replace(/\\ *\n/g, '\n');
+    t = t.replace(/\\$/gm, '');
+    // Inject \n before "- Bullet" or "* Bullet" that follows sentence-ending punctuation/colon
+    t = t.replace(/([.!?;:]) ([*-] (?=[A-Z*`\d]))/g, '$1\n$2');
+    // Inject \n before ## and ### headers embedded mid-text
+    t = t.replace(/([^\n]) (## )/g, '$1\n$2');
+    t = t.replace(/([^\n]) (### )/g, '$1\n$2');
+    // Ensure **Recommendation:** starts on its own line
+    t = t.replace(/([.!?]) (\*\*Recommendation)/g, '$1\n\n$2');
+    return t;
+  }, [text]);
+
+  const lines = processed.split('\n');
   const elements: React.ReactNode[] = [];
   let bulletBuffer: React.ReactNode[] = [];
   let idx = 0;
@@ -165,7 +258,7 @@ function NarrativeMarkdown({ text }: { text: string }) {
   };
 
   lines.forEach((line, i) => {
-    const isBullet = line.startsWith('- ') || line.startsWith('• ');
+    const isBullet = line.startsWith('- ') || line.startsWith('• ') || line.startsWith('* ');
     if (!isBullet) flushBullets();
 
     if (/^## /.test(line)) {
@@ -270,8 +363,10 @@ function ResultChart({
     return { chartData: allData.slice(0, LINE_LIMIT), truncatedFrom: allData.length };
   }, [allData, activeType]);
 
-  const tickAngle = chartData.length > 6 ? -40 : 0;
-  const bottomMargin = chartData.length > 6 ? 70 : 35;
+  const maxLabelLen = Math.max(...chartData.map(d => String(d.x).length), 0);
+  const tickAngle = maxLabelLen > 12 ? -55 : (chartData.length > 6 ? -40 : 0);
+  const bottomMargin = maxLabelLen > 20 ? 130 : maxLabelLen > 12 ? 90 : 35;
+  const chartHeight = maxLabelLen > 20 ? 360 : 300;
   const margin = { top: 10, right: 20, left: 10, bottom: bottomMargin };
 
   const typeButtons: Array<'bar' | 'line' | 'area' | 'pie'> = ['bar', 'line', 'area', 'pie'];
@@ -279,8 +374,8 @@ function ResultChart({
   const tooltipStyle = { fontSize: 12, borderRadius: 8, border: '1px solid #e2e8f0' };
   const tickStyle = { fontSize: 11, fill: '#64748b' };
 
-  // Truncate long x labels
-  const truncLabel = (s: string) => s.length > 18 ? s.slice(0, 16) + '…' : s;
+  // Truncate only for pie overlay labels (axis labels are shown in full via rotation)
+  const truncLabel = (s: string) => s.length > 22 ? s.slice(0, 20) + '…' : s;
 
   return (
     <div className="bg-white rounded-xl border border-slate-200 overflow-hidden shadow-sm">
@@ -311,13 +406,12 @@ function ResultChart({
       </div>
 
       <div className="p-4">
-        <ResponsiveContainer width="100%" height={300}>
+        <ResponsiveContainer width="100%" height={chartHeight}>
           {activeType === 'bar' ? (
             <BarChart data={chartData} margin={margin}>
               <CartesianGrid strokeDasharray="3 3" stroke="#f1f5f9" vertical={false} />
               <XAxis dataKey="x" tick={{ ...tickStyle, fontSize: chartData.length > 8 ? 10 : 11 }}
-                angle={tickAngle} textAnchor={tickAngle ? 'end' : 'middle'} interval={0}
-                tickFormatter={truncLabel} />
+                angle={tickAngle} textAnchor={tickAngle ? 'end' : 'middle'} interval={0} />
               <YAxis tick={tickStyle} tickFormatter={fmtNum} width={52} />
               <Tooltip contentStyle={tooltipStyle}
                 formatter={(v: number) => [fmtTooltip(v), config.y_col]}
@@ -330,8 +424,7 @@ function ResultChart({
             <LineChart data={chartData} margin={margin}>
               <CartesianGrid strokeDasharray="3 3" stroke="#f1f5f9" />
               <XAxis dataKey="x" tick={{ ...tickStyle, fontSize: chartData.length > 12 ? 10 : 11 }}
-                angle={tickAngle} textAnchor={tickAngle ? 'end' : 'middle'} interval={0}
-                tickFormatter={truncLabel} />
+                angle={tickAngle} textAnchor={tickAngle ? 'end' : 'middle'} interval={0} />
               <YAxis tick={tickStyle} tickFormatter={fmtNum} width={52} />
               <Tooltip contentStyle={tooltipStyle}
                 formatter={(v: number) => [fmtTooltip(v), config.y_col]} />
@@ -349,8 +442,7 @@ function ResultChart({
               </defs>
               <CartesianGrid strokeDasharray="3 3" stroke="#f1f5f9" />
               <XAxis dataKey="x" tick={{ ...tickStyle, fontSize: chartData.length > 12 ? 10 : 11 }}
-                angle={tickAngle} textAnchor={tickAngle ? 'end' : 'middle'} interval={0}
-                tickFormatter={truncLabel} />
+                angle={tickAngle} textAnchor={tickAngle ? 'end' : 'middle'} interval={0} />
               <YAxis tick={tickStyle} tickFormatter={fmtNum} width={52} />
               <Tooltip contentStyle={tooltipStyle}
                 formatter={(v: number) => [fmtTooltip(v), config.y_col]} />
@@ -403,6 +495,15 @@ function ResultTable({ table, title }: { table: TableData; title: string }) {
   const PAGE_SIZE = 50;
 
   const manyColumns = table.columns.length > 6;
+
+  // Detect which columns are numeric by sampling the first non-empty value
+  const isNumericCol = React.useMemo(() =>
+    table.columns.map((_, ci) => {
+      const sample = table.rows.find(r => r[ci] !== '' && r[ci] !== null);
+      return sample ? typeof sample[ci] === 'number' : false;
+    }),
+    [table]
+  );
 
   const sorted = React.useMemo(() => {
     if (sortCol === null) return table.rows;
@@ -488,9 +589,9 @@ function ResultTable({ table, title }: { table: TableData; title: string }) {
                   <th
                     key={ci}
                     onClick={() => handleSort(ci)}
-                    className="px-3 py-2 text-left text-xs font-bold text-slate-600 uppercase tracking-wide border-b border-slate-200 whitespace-nowrap cursor-pointer hover:bg-slate-200 select-none"
+                    className={`px-3 py-2 text-xs font-bold text-slate-600 uppercase tracking-wide border-b border-slate-200 whitespace-nowrap cursor-pointer hover:bg-slate-200 select-none ${isNumericCol[ci] ? 'text-right' : 'text-left'}`}
                   >
-                    <span className="flex items-center gap-1">
+                    <span className={`flex items-center gap-1 ${isNumericCol[ci] ? 'justify-end' : ''}`}>
                       {col}
                       {sortCol === ci && (
                         <span className="text-blue-600">{sortDir === 'desc' ? '↓' : '↑'}</span>
@@ -504,8 +605,8 @@ function ResultTable({ table, title }: { table: TableData; title: string }) {
               {visible.map((row, ri) => (
                 <tr key={ri} className={ri % 2 === 0 ? 'bg-white' : 'bg-slate-50'}>
                   {row.map((cell, ci) => (
-                    <td key={ci} className="px-3 py-2 text-slate-700 border-b border-slate-100 whitespace-nowrap text-xs">
-                      {String(cell)}
+                    <td key={ci} className={`px-3 py-2 text-slate-700 border-b border-slate-100 whitespace-nowrap text-xs font-variant-numeric tabular-nums ${isNumericCol[ci] ? 'text-right' : ''}`}>
+                      {isNumericCol[ci] && typeof cell === 'number' ? fmtCellNum(cell) : String(cell)}
                     </td>
                   ))}
                 </tr>
@@ -627,22 +728,33 @@ function ChatMessage({
             </div>
           )}
 
-          {/* SQL */}
-          {ans.sql && (
-            <details className="group">
-              <summary className="cursor-pointer inline-flex items-center gap-1.5 text-slate-400 hover:text-slate-600 text-xs font-medium select-none list-none">
-                <ChevronDown className="w-3.5 h-3.5 transition-transform group-open:rotate-180" />
-                View SQL
-              </summary>
-              <div className="mt-2 bg-slate-900 rounded-xl p-4 overflow-x-auto">
-                <div className="flex items-center justify-between mb-2">
-                  <span className="text-[10px] text-slate-500 uppercase tracking-widest">DuckDB</span>
-                  <CopyButton text={ans.sql} />
+          {/* Actions row: Export + SQL */}
+          <div className="flex items-center justify-between pt-1">
+            <button
+              type="button"
+              onClick={() => exportReport(entry)}
+              className="inline-flex items-center gap-1.5 text-slate-400 hover:text-violet-600 text-xs font-medium transition-colors"
+            >
+              <FileText className="w-3.5 h-3.5" />
+              Export Report
+            </button>
+
+            {ans.sql && (
+              <details className="group">
+                <summary className="cursor-pointer inline-flex items-center gap-1.5 text-slate-400 hover:text-slate-600 text-xs font-medium select-none list-none">
+                  <ChevronDown className="w-3.5 h-3.5 transition-transform group-open:rotate-180" />
+                  View SQL
+                </summary>
+                <div className="mt-2 bg-slate-900 rounded-xl p-4 overflow-x-auto">
+                  <div className="flex items-center justify-between mb-2">
+                    <span className="text-[10px] text-slate-500 uppercase tracking-widest">DuckDB</span>
+                    <CopyButton text={ans.sql} />
+                  </div>
+                  <pre className="text-sm text-emerald-400 font-mono whitespace-pre leading-relaxed">{ans.sql}</pre>
                 </div>
-                <pre className="text-sm text-emerald-400 font-mono whitespace-pre leading-relaxed">{ans.sql}</pre>
-              </div>
-            </details>
-          )}
+              </details>
+            )}
+          </div>
 
           {/* Follow-up chips */}
           {ans.follow_ups.length > 0 && (
@@ -668,6 +780,777 @@ function ChatMessage({
   );
 }
 
+// ── Export Report ─────────────────────────────────────────────────────────────
+
+function exportReport(entry: ChatEntry) {
+  const { question, answer: ans } = entry;
+
+  const fmtNum = (v: number) => {
+    if (Math.abs(v) >= 1e9) return (v / 1e9).toFixed(1) + 'B';
+    if (Math.abs(v) >= 1e6) return (v / 1e6).toFixed(1) + 'M';
+    if (Math.abs(v) >= 1e3) return (v / 1e3).toFixed(1) + 'K';
+    return v.toLocaleString();
+  };
+
+  const tableHtml = ans.table
+    ? `<table>
+        <thead><tr>${ans.table.columns.map(c => `<th>${c}</th>`).join('')}</tr></thead>
+        <tbody>${ans.table.rows.map(row =>
+          `<tr>${row.map(cell => `<td>${typeof cell === 'number' ? fmtNum(cell) : cell}</td>`).join('')}</tr>`
+        ).join('')}</tbody>
+      </table>`
+    : '';
+
+  const narrative = (ans.narrative || '')
+    .replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>')
+    .replace(/^## (.+)$/gm, '<h3>$1</h3>')
+    .replace(/^- (.+)$/gm, '<li>$1</li>')
+    .replace(/\n/g, '<br>');
+
+  const html = `<!DOCTYPE html>
+<html><head><meta charset="utf-8">
+<title>Segment AI Report — ${question}</title>
+<style>
+  body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; max-width: 860px; margin: 40px auto; color: #1e293b; padding: 0 24px; }
+  .logo { font-size: 11px; font-weight: 700; letter-spacing: 0.1em; color: #7c3aed; text-transform: uppercase; margin-bottom: 4px; }
+  .question { background: #1d4ed8; color: white; border-radius: 12px; padding: 12px 18px; font-size: 15px; display: inline-block; margin-bottom: 20px; }
+  .narrative { background: #faf5ff; border-left: 3px solid #8b5cf6; border-radius: 8px; padding: 16px 20px; font-size: 14px; line-height: 1.7; margin-bottom: 20px; }
+  .narrative li { margin: 4px 0; }
+  table { width: 100%; border-collapse: collapse; font-size: 13px; margin-top: 8px; }
+  th { background: #0f172a; color: white; padding: 8px 12px; text-align: left; font-size: 11px; letter-spacing: 0.05em; text-transform: uppercase; }
+  td { padding: 7px 12px; border-bottom: 1px solid #e2e8f0; }
+  tr:nth-child(even) td { background: #f8fafc; }
+  .footer { margin-top: 32px; font-size: 11px; color: #94a3b8; border-top: 1px solid #e2e8f0; padding-top: 12px; }
+  h3 { font-size: 14px; font-weight: 700; color: #1e293b; margin: 16px 0 6px; }
+  @media print { body { margin: 20px; } }
+</style>
+</head><body>
+<div class="logo">Meridian Bank · Segment AI Report</div>
+<div class="question">${question}</div>
+<div class="narrative">${narrative}</div>
+${tableHtml ? `<div><strong style="font-size:12px;color:#475569;">Data Table</strong>${tableHtml}</div>` : ''}
+<div class="footer">Generated by Segment AI · Meridian Bank Data Platform · ${new Date().toLocaleDateString('en-US', { year: 'numeric', month: 'long', day: 'numeric' })}</div>
+</body></html>`;
+
+  const win = window.open('', '_blank');
+  if (!win) return;
+  win.document.write(html);
+  win.document.close();
+  setTimeout(() => win.print(), 400);
+}
+
+// ── Agent A Banner ─────────────────────────────────────────────────────────────
+
+function AgentABanner({ onDismiss }: { onDismiss: () => void }) {
+  return (
+    <div className="flex items-start gap-3 bg-amber-50 border border-amber-200 rounded-xl px-4 py-3">
+      <Bot className="w-4 h-4 text-amber-600 flex-shrink-0 mt-0.5" />
+      <div className="flex-1 min-w-0">
+        <p className="text-sm font-semibold text-amber-800">Agent A not yet run</p>
+        <p className="text-xs text-amber-700 mt-0.5 leading-snug">
+          Persona segments (Wealth Builder, Digital Native, etc.) are unavailable.
+          Segment questions will fall back to <strong>life stage</strong>. Run Agent A on the pipeline page for AI-driven segments.
+        </p>
+      </div>
+      <button onClick={onDismiss} className="text-amber-400 hover:text-amber-600 flex-shrink-0">
+        <X className="w-4 h-4" />
+      </button>
+    </div>
+  );
+}
+
+// ── Anomalies Panel ───────────────────────────────────────────────────────────
+
+const ANOMALY_META: Record<string, {
+  whatItMeans: string;
+  colDefs: Record<string, string>;
+  actionHint: string;
+}> = {
+  high_value_churn: {
+    whatItMeans: "These are your highest-value customers (Gold / Platinum CLV tier) who are statistically likely to close accounts or stop transacting within 90 days. Each lost Platinum customer can represent thousands in lifetime revenue.",
+    colDefs: {
+      clv:        "Customer Lifetime Value — total expected revenue over this customer's entire relationship with Meridian Bank.",
+      churn_prob: "Probability (0–1) the customer will disengage within 90 days. Above 0.6 is considered high-risk.",
+      clv_tier:   "CLV segment bucket: Platinum > Gold > Silver > Bronze.",
+      income:     "Annual gross income — used to gauge the financial impact of losing this customer.",
+    },
+    actionHint: "Prioritise personal outreach from relationship managers — especially for Platinum-tier customers.",
+  },
+  wishlist_gap: {
+    whatItMeans: "Products that many customers expressed interest in (wishlist) but rarely converted to purchase. A large gap between wishlisters and buyers usually signals a pricing, eligibility, or awareness barrier.",
+    colDefs: {
+      wishlisted_by:      "Number of distinct customers who added this product to their wishlist.",
+      actually_purchased: "Number of distinct customers who completed at least one transaction for this product.",
+      conversion_pct:     "Buyers ÷ Wishlisters × 100. Below 50 % flags a conversion barrier worth investigating.",
+    },
+    actionHint: "Run a targeted offer or rate promotion for the top-wishlisted products with the lowest conversion.",
+  },
+  txn_volume_spike: {
+    whatItMeans: "Customers whose transaction count is significantly above the typical customer. Could indicate high engagement (power users) or irregular activity worth a compliance review.",
+    colDefs: {
+      txn_count:            "Total number of transactions recorded for this customer across all products.",
+      avg_count:            "Average transaction count across all customers — the baseline being compared against.",
+      z_score:              "Standard deviations above the mean transaction count. A z-score above 2 is a statistical outlier.",
+      clv_tier:             "CLV segment: Platinum > Gold > Silver > Bronze. Helps distinguish power users from low-value outliers.",
+      churn_risk_category:  "Model-assigned churn risk label (High / Medium / Low) — high-volume + high-churn is the most urgent combination.",
+    },
+    actionHint: "Review high z-score customers for both upsell opportunity (engaged users) and unusual patterns.",
+  },
+  abandoned_applications: {
+    whatItMeans: "Products where customers started an application but never completed it. High abandonment signals friction in the onboarding flow, unclear eligibility requirements, or a drop-off point in the application UI.",
+    colDefs: {
+      abandoned_count: "Total incomplete application records for this product.",
+      pct_of_total:    "This product's share of all abandoned applications site-wide. Higher % means fixing this product will have the biggest impact.",
+    },
+    actionHint: "Send an 'application recovery' nudge (email or push) to customers with incomplete applications for these products.",
+  },
+  roas_outliers: {
+    whatItMeans: "Channel-persona pairs whose Return on Ad Spend (ROAS) is unusually high or low compared to the overall average. Positive outliers reveal your best-performing marketing mix; negative outliers highlight budget waste.",
+    colDefs: {
+      roas:        "Return on Ad Spend = Revenue ÷ Ad Spend. A ROAS of 3.5 means $3.50 earned for every $1 spent.",
+      total_spend: "Total marketing dollars spent on this channel-persona combination — context for how meaningful the ROAS figure is.",
+      z_score:     "Standard deviations from the mean ROAS across all channel-persona pairs. z > 1.5 = significantly above average (great); z < −1.5 = significantly below average (review or cut).",
+    },
+    actionHint: "Shift budget toward high-ROAS pairs and pause or renegotiate low-ROAS channels.",
+  },
+};
+
+const SEVERITY_STYLE: Record<string, { bg: string; text: string; border: string; dot: string }> = {
+  critical: { bg: 'bg-red-50',    text: 'text-red-700',    border: 'border-red-200',    dot: 'bg-red-500' },
+  warning:  { bg: 'bg-amber-50',  text: 'text-amber-700',  border: 'border-amber-200',  dot: 'bg-amber-500' },
+  info:     { bg: 'bg-blue-50',   text: 'text-blue-700',   border: 'border-blue-200',   dot: 'bg-blue-400' },
+};
+
+function AnomaliesPanel({ anomalies, onClose }: { anomalies: AnomalyResult[]; onClose: () => void }) {
+  const [active, setActive] = React.useState(anomalies[0]?.id ?? '');
+  const current = anomalies.find(a => a.id === active);
+
+  return (
+    <div className="fixed inset-y-0 right-0 w-full max-w-2xl bg-white shadow-2xl border-l border-slate-200 flex flex-col z-50">
+      {/* Header */}
+      <div className="flex items-center justify-between px-5 py-4 border-b border-slate-200">
+        <div className="flex items-center gap-2">
+          <AlertTriangle className="w-4 h-4 text-amber-500" />
+          <h2 className="font-semibold text-slate-900 text-sm">Anomaly Detection</h2>
+          <span className="text-[11px] bg-red-100 text-red-700 font-semibold px-2 py-0.5 rounded-full">
+            {anomalies.filter(a => a.count > 0).length} active
+          </span>
+        </div>
+        <button onClick={onClose} className="text-slate-400 hover:text-slate-600"><X className="w-4 h-4" /></button>
+      </div>
+
+      <div className="flex flex-1 min-h-0">
+        {/* Sidebar */}
+        <div className="w-52 flex-shrink-0 border-r border-slate-100 overflow-y-auto bg-slate-50 py-2">
+          {anomalies.map(a => {
+            const s = SEVERITY_STYLE[a.severity];
+            return (
+              <button key={a.id} onClick={() => setActive(a.id)}
+                className={`w-full text-left px-4 py-3 transition-colors text-xs ${active === a.id ? 'bg-white border-r-2 border-violet-500 font-semibold text-slate-900' : 'text-slate-600 hover:bg-white'}`}>
+                <div className="flex items-center gap-2 mb-1">
+                  <span className={`w-2 h-2 rounded-full flex-shrink-0 ${s.dot}`} />
+                  <span className="font-medium leading-snug">{a.title}</span>
+                </div>
+                <span className={`ml-4 text-[11px] font-semibold ${s.text}`}>{a.count} found</span>
+              </button>
+            );
+          })}
+        </div>
+
+        {/* Detail */}
+        <div className="flex-1 overflow-y-auto p-5">
+          {current && (() => {
+            const meta = ANOMALY_META[current.id];
+            return (
+              <>
+                <div className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-[11px] font-semibold mb-3 border ${SEVERITY_STYLE[current.severity].bg} ${SEVERITY_STYLE[current.severity].text} ${SEVERITY_STYLE[current.severity].border}`}>
+                  <span className={`w-1.5 h-1.5 rounded-full ${SEVERITY_STYLE[current.severity].dot}`} />
+                  {current.severity.toUpperCase()}
+                </div>
+                <h3 className="font-semibold text-slate-900 text-sm mb-1">{current.title}</h3>
+                <p className="text-xs text-slate-500 mb-3">{current.description}</p>
+
+                {/* What this means */}
+                {meta && (
+                  <div className="bg-blue-50 border border-blue-200 rounded-xl px-3 py-2.5 mb-4">
+                    <p className="text-[11px] font-semibold text-blue-700 uppercase tracking-wide mb-1">What this means</p>
+                    <p className="text-xs text-blue-900 leading-relaxed">{meta.whatItMeans}</p>
+                  </div>
+                )}
+
+                {current.error && (
+                  <p className="text-xs text-red-600 bg-red-50 rounded-lg px-3 py-2 mb-3">{current.error}</p>
+                )}
+
+                {current.count === 0 && !current.error && (
+                  <div className="text-center py-8 text-slate-400 text-sm">No anomalies detected ✓</div>
+                )}
+
+                {current.columns.length > 0 && current.rows.length > 0 && (
+                  <>
+                    <div className="overflow-x-auto rounded-xl border border-slate-200">
+                      <table className="w-full text-xs">
+                        <thead className="bg-slate-900 text-white">
+                          <tr>{current.columns.map(c => {
+                            const def = meta?.colDefs?.[c];
+                            return (
+                              <th key={c} title={def ?? undefined}
+                                className="px-3 py-2 text-left font-semibold uppercase tracking-wide text-[10px] cursor-help">
+                                {c}{def && <span className="ml-1 opacity-60">ⓘ</span>}
+                              </th>
+                            );
+                          })}</tr>
+                        </thead>
+                        <tbody>
+                          {current.rows.map((row, ri) => (
+                            <tr key={ri} className={ri % 2 === 0 ? 'bg-white' : 'bg-slate-50'}>
+                              {row.map((cell, ci) => (
+                                <td key={ci} className="px-3 py-2 text-slate-700">
+                                  {typeof cell === 'number' ? cell.toLocaleString() : String(cell ?? '')}
+                                </td>
+                              ))}
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    </div>
+
+                    {/* Column legend */}
+                    {meta && Object.keys(meta.colDefs).some(k => current.columns.includes(k)) && (
+                      <div className="mt-3 bg-slate-50 border border-slate-200 rounded-xl px-3 py-2.5 space-y-1">
+                        <p className="text-[10px] font-semibold text-slate-400 uppercase tracking-wide mb-1.5">Column definitions</p>
+                        {current.columns.filter(c => meta.colDefs[c]).map(c => (
+                          <div key={c} className="flex gap-2 text-[11px]">
+                            <span className="font-semibold text-slate-600 shrink-0 uppercase">{c}</span>
+                            <span className="text-slate-500">{meta.colDefs[c]}</span>
+                          </div>
+                        ))}
+                      </div>
+                    )}
+
+                    {/* Action hint */}
+                    {meta?.actionHint && (
+                      <div className="mt-3 flex items-start gap-2 bg-emerald-50 border border-emerald-200 rounded-xl px-3 py-2.5">
+                        <Zap className="w-3.5 h-3.5 text-emerald-600 shrink-0 mt-0.5" />
+                        <p className="text-[11px] text-emerald-800 leading-relaxed"><span className="font-semibold">Suggested action: </span>{meta.actionHint}</p>
+                      </div>
+                    )}
+                  </>
+                )}
+              </>
+            );
+          })()}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ── Trends Panel ──────────────────────────────────────────────────────────────
+
+function fmtTrendVal(v: number, unit: string) {
+  const abs = Math.abs(v);
+  const n = abs >= 1e6 ? (v / 1e6).toFixed(1) + 'M' : abs >= 1e3 ? (v / 1e3).toFixed(1) + 'K' : v.toLocaleString();
+  return unit === '$' ? '$' + n : n;
+}
+
+function TrendSparkline({ months }: { months: TrendMonth[] }) {
+  if (months.length < 2) return null;
+  const vals = months.map(m => m.value);
+  const max = Math.max(...vals);
+  const min = Math.min(...vals);
+  const range = max - min || 1;
+  const W = 80; const H = 28;
+  const pts = vals.map((v, i) => {
+    const x = (i / (vals.length - 1)) * W;
+    const y = H - ((v - min) / range) * H;
+    return `${x},${y}`;
+  }).join(' ');
+  return (
+    <svg width={W} height={H} className="overflow-visible">
+      <polyline points={pts} fill="none" stroke="#8b5cf6" strokeWidth="1.5" strokeLinejoin="round" />
+      <circle cx={parseFloat(pts.split(' ').pop()!.split(',')[0])} cy={parseFloat(pts.split(' ').pop()!.split(',')[1])} r="2.5" fill="#8b5cf6" />
+    </svg>
+  );
+}
+
+function TrendsPanel({ trends, onClose }: { trends: TrendResult[]; onClose: () => void }) {
+  const [active, setActive] = React.useState(trends[0]?.id ?? '');
+  const current = trends.find(t => t.id === active);
+
+  const DirIcon = ({ dir }: { dir: string }) => {
+    if (dir === 'up')   return <TrendingUp className="w-4 h-4 text-emerald-500" />;
+    if (dir === 'down') return <TrendingDown className="w-4 h-4 text-red-500" />;
+    return <Minus className="w-4 h-4 text-slate-400" />;
+  };
+
+  return (
+    <div className="fixed inset-y-0 right-0 w-full max-w-2xl bg-white shadow-2xl border-l border-slate-200 flex flex-col z-50">
+      <div className="flex items-center justify-between px-5 py-4 border-b border-slate-200">
+        <div className="flex items-center gap-2">
+          <TrendingUp className="w-4 h-4 text-violet-500" />
+          <h2 className="font-semibold text-slate-900 text-sm">Month-over-Month Trends</h2>
+        </div>
+        <button onClick={onClose} className="text-slate-400 hover:text-slate-600"><X className="w-4 h-4" /></button>
+      </div>
+
+      <div className="flex flex-1 min-h-0">
+        {/* Sidebar cards */}
+        <div className="w-52 flex-shrink-0 border-r border-slate-100 overflow-y-auto bg-slate-50 py-2">
+          {trends.map(t => (
+            <button key={t.id} onClick={() => setActive(t.id)}
+              className={`w-full text-left px-4 py-3 transition-colors ${active === t.id ? 'bg-white border-r-2 border-violet-500' : 'hover:bg-white'}`}>
+              <p className={`text-xs font-medium mb-1 ${active === t.id ? 'text-slate-900' : 'text-slate-600'}`}>{t.title}</p>
+              <div className="flex items-center gap-1.5">
+                <DirIcon dir={t.direction} />
+                <span className={`text-[11px] font-semibold ${t.direction === 'up' ? 'text-emerald-600' : t.direction === 'down' ? 'text-red-600' : 'text-slate-500'}`}>
+                  {t.pct_change !== null ? `${t.pct_change > 0 ? '+' : ''}${t.pct_change}%` : 'N/A'}
+                </span>
+              </div>
+            </button>
+          ))}
+        </div>
+
+        {/* Detail chart */}
+        <div className="flex-1 overflow-y-auto p-5">
+          {current && (
+            <>
+              <h3 className="font-semibold text-slate-900 text-sm mb-1">{current.title}</h3>
+              <div className="flex items-center gap-4 mb-6">
+                <div>
+                  <p className="text-[11px] text-slate-400 uppercase tracking-wide">Latest</p>
+                  <p className="text-2xl font-bold text-slate-900">{fmtTrendVal(current.latest_value, current.unit)}</p>
+                </div>
+                {current.prev_value !== null && (
+                  <div>
+                    <p className="text-[11px] text-slate-400 uppercase tracking-wide">vs Prior Month</p>
+                    <div className="flex items-center gap-1">
+                      {current.direction === 'up'   && <TrendingUp className="w-4 h-4 text-emerald-500" />}
+                      {current.direction === 'down'  && <TrendingDown className="w-4 h-4 text-red-500" />}
+                      {current.direction === 'flat'  && <Minus className="w-4 h-4 text-slate-400" />}
+                      <span className={`text-lg font-bold ${current.direction === 'up' ? 'text-emerald-600' : current.direction === 'down' ? 'text-red-600' : 'text-slate-500'}`}>
+                        {current.pct_change !== null ? `${current.pct_change > 0 ? '+' : ''}${current.pct_change}%` : '—'}
+                      </span>
+                    </div>
+                  </div>
+                )}
+              </div>
+
+              {current.error && (
+                <p className="text-xs text-red-600 bg-red-50 rounded-lg px-3 py-2 mb-4">{current.error}</p>
+              )}
+
+              {/* Partial-month warning */}
+              {current.last_month_partial && (
+                <div className="flex items-start gap-2 bg-amber-50 border border-amber-200 rounded-xl px-3 py-2.5 mb-4">
+                  <AlertTriangle className="w-3.5 h-3.5 text-amber-600 shrink-0 mt-0.5" />
+                  <p className="text-[11px] text-amber-800 leading-relaxed">
+                    <span className="font-semibold">Last month is partial.</span> The most recent month in the chart contains only part of the month's data — transactions are still being recorded. The MoM % shown above compares the two most recent <em>complete</em> months, so the trend direction is reliable. The last bar may appear lower than expected simply because the month isn't finished yet.
+                  </p>
+                </div>
+              )}
+
+              {current.months.length > 0 ? (
+                <div className="h-52">
+                  <ResponsiveContainer width="100%" height="100%">
+                    <AreaChart data={current.months} margin={{ top: 4, right: 8, left: 0, bottom: 20 }}>
+                      <defs>
+                        <linearGradient id="trendGrad" x1="0" y1="0" x2="0" y2="1">
+                          <stop offset="5%" stopColor="#8b5cf6" stopOpacity={0.15} />
+                          <stop offset="95%" stopColor="#8b5cf6" stopOpacity={0} />
+                        </linearGradient>
+                      </defs>
+                      <CartesianGrid strokeDasharray="3 3" stroke="#f1f5f9" />
+                      <XAxis dataKey="month" tick={{ fontSize: 9, angle: -35, textAnchor: 'end', dy: 6 }} tickLine={false} interval={0} />
+                      <YAxis tick={{ fontSize: 10 }} tickLine={false} axisLine={false}
+                        tickFormatter={v => current.unit === '$' ? '$' + (v >= 1e6 ? (v/1e6).toFixed(1)+'M' : v >= 1e3 ? (v/1e3).toFixed(0)+'K' : v) : v >= 1e3 ? (v/1e3).toFixed(0)+'K' : String(v)} />
+                      <Tooltip formatter={(v: number) => [fmtTrendVal(v, current.unit), current.title]} />
+                      <Area type="monotone" dataKey="value" stroke="#8b5cf6" strokeWidth={2} fill="url(#trendGrad)" dot={{ r: 3, fill: '#8b5cf6' }} />
+                    </AreaChart>
+                  </ResponsiveContainer>
+                </div>
+              ) : (
+                <div className="text-center py-8 text-slate-400 text-sm">No data available for this period</div>
+              )}
+
+              {/* Monthly table */}
+              {current.months.length > 0 && (
+                <div className="mt-5 overflow-x-auto rounded-xl border border-slate-200">
+                  <table className="w-full text-xs">
+                    <thead className="bg-slate-900 text-white">
+                      <tr>
+                        <th className="px-3 py-2 text-left font-semibold uppercase tracking-wide text-[10px]">Month</th>
+                        <th className="px-3 py-2 text-right font-semibold uppercase tracking-wide text-[10px]">Value</th>
+                        <th className="px-3 py-2 text-right font-semibold uppercase tracking-wide text-[10px]">MoM Change</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {current.months.map((m, i) => {
+                        const isLastPartial = current.last_month_partial && i === current.months.length - 1;
+                        const prev = current.months[i - 1]?.value;
+                        const chg = (!isLastPartial && prev) ? ((m.value - prev) / Math.abs(prev) * 100) : null;
+                        return (
+                          <tr key={i} className={i % 2 === 0 ? 'bg-white' : 'bg-slate-50'}>
+                            <td className="px-3 py-2 text-slate-700 font-medium">
+                              <div className="flex items-center gap-1.5">
+                                {m.month}
+                                {isLastPartial && <span className="text-[9px] bg-amber-100 text-amber-700 font-semibold px-1.5 py-0.5 rounded-full">partial</span>}
+                              </div>
+                            </td>
+                            <td className="px-3 py-2 text-slate-900 text-right font-semibold">{fmtTrendVal(m.value, current.unit)}</td>
+                            <td className={`px-3 py-2 text-right font-semibold ${isLastPartial ? 'text-amber-500 italic text-[10px]' : chg === null ? 'text-slate-400' : chg > 0 ? 'text-emerald-600' : chg < 0 ? 'text-red-600' : 'text-slate-400'}`}>
+                              {isLastPartial ? 'in progress' : chg === null ? '—' : `${chg > 0 ? '+' : ''}${chg.toFixed(1)}%`}
+                            </td>
+                          </tr>
+                        );
+                      })}
+                    </tbody>
+                  </table>
+                </div>
+              )}
+            </>
+          )}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ── Product Pulse Panel ───────────────────────────────────────────────────────
+
+const MOMENTUM_STYLE = {
+  Growing:   { bg: 'bg-emerald-100', text: 'text-emerald-700', dot: 'bg-emerald-500', bar: '#10b981' },
+  Stable:    { bg: 'bg-slate-100',   text: 'text-slate-600',   dot: 'bg-slate-400',   bar: '#94a3b8' },
+  Declining: { bg: 'bg-red-100',     text: 'text-red-700',     dot: 'bg-red-500',     bar: '#ef4444' },
+};
+
+function PulseSparkline({ months }: { months: { volume: number }[] }) {
+  if (months.length < 2) return null;
+  const vals = months.map(m => m.volume);
+  const max = Math.max(...vals); const min = Math.min(...vals);
+  const range = max - min || 1;
+  const W = 72; const H = 24;
+  const pts = vals.map((v, i) => {
+    const x = (i / (vals.length - 1)) * W;
+    const y = H - ((v - min) / range) * H;
+    return `${x.toFixed(1)},${y.toFixed(1)}`;
+  }).join(' ');
+  const lastPt = pts.split(' ').pop()!.split(',');
+  return (
+    <svg width={W} height={H} className="overflow-visible">
+      <polyline points={pts} fill="none" stroke="#6366f1" strokeWidth="1.5" strokeLinejoin="round" />
+      <circle cx={parseFloat(lastPt[0])} cy={parseFloat(lastPt[1])} r="2.5" fill="#6366f1" />
+    </svg>
+  );
+}
+
+function ProductPulsePanel({ products, onClose }: { products: ProductPulseItem[]; onClose: () => void }) {
+  const [active, setActive] = React.useState(products[0]?.product_name ?? '');
+  const [filter, setFilter] = React.useState<'All' | 'Growing' | 'Stable' | 'Declining'>('All');
+
+  const visible = filter === 'All' ? products : products.filter(p => p.momentum === filter);
+  const current = visible.find(p => p.product_name === active) ?? visible[0];
+
+  const fmtVol = (v: number) => v >= 1e6 ? '$' + (v / 1e6).toFixed(1) + 'M'
+                               : v >= 1e3 ? '$' + (v / 1e3).toFixed(0) + 'K'
+                               : '$' + v.toFixed(0);
+
+  const counts = {
+    Growing:   products.filter(p => p.momentum === 'Growing').length,
+    Stable:    products.filter(p => p.momentum === 'Stable').length,
+    Declining: products.filter(p => p.momentum === 'Declining').length,
+  };
+
+  return (
+    <div className="fixed inset-y-0 right-0 w-full max-w-2xl bg-white shadow-2xl border-l border-slate-200 flex flex-col z-50">
+      {/* Header */}
+      <div className="flex items-center justify-between px-5 py-4 border-b border-slate-200">
+        <div className="flex items-center gap-3">
+          <Package className="w-4 h-4 text-teal-600" />
+          <h2 className="font-semibold text-slate-900 text-sm">Product Pulse</h2>
+          <div className="flex gap-1.5">
+            {(['All', 'Growing', 'Stable', 'Declining'] as const).map(f => (
+              <button key={f} onClick={() => { setFilter(f); }}
+                className={`text-[10px] font-semibold px-2 py-0.5 rounded-full transition-colors
+                  ${filter === f
+                    ? f === 'Growing' ? 'bg-emerald-500 text-white'
+                      : f === 'Declining' ? 'bg-red-500 text-white'
+                      : f === 'Stable' ? 'bg-slate-500 text-white'
+                      : 'bg-slate-900 text-white'
+                    : 'bg-slate-100 text-slate-600 hover:bg-slate-200'}`}>
+                {f}{f !== 'All' && ` (${counts[f]})`}
+              </button>
+            ))}
+          </div>
+        </div>
+        <button onClick={onClose} className="text-slate-400 hover:text-slate-600"><X className="w-4 h-4" /></button>
+      </div>
+
+      <div className="flex flex-1 min-h-0">
+        {/* Sidebar */}
+        <div className="w-56 flex-shrink-0 border-r border-slate-100 overflow-y-auto bg-slate-50 py-2">
+          {visible.map(p => {
+            const ms = MOMENTUM_STYLE[p.momentum];
+            return (
+              <button key={p.product_name} onClick={() => setActive(p.product_name)}
+                className={`w-full text-left px-3 py-2.5 transition-colors ${active === p.product_name ? 'bg-white border-r-2 border-teal-500' : 'hover:bg-white'}`}>
+                <div className="flex items-start justify-between gap-1 mb-1">
+                  <p className={`text-[11px] font-semibold leading-snug ${active === p.product_name ? 'text-slate-900' : 'text-slate-700'}`}>
+                    {p.product_name}
+                  </p>
+                  <span className={`text-[9px] font-bold px-1.5 py-0.5 rounded-full shrink-0 ${ms.bg} ${ms.text}`}>
+                    {p.momentum}
+                  </span>
+                </div>
+                <div className="flex items-center justify-between">
+                  <span className="text-[10px] text-slate-400">{p.subcategory}</span>
+                  <PulseSparkline months={p.months} />
+                </div>
+              </button>
+            );
+          })}
+          {visible.length === 0 && (
+            <p className="text-center text-xs text-slate-400 py-8">No products match this filter</p>
+          )}
+        </div>
+
+        {/* Detail */}
+        <div className="flex-1 overflow-y-auto p-5">
+          {current && (() => {
+            const ms = MOMENTUM_STYLE[current.momentum];
+            return (
+              <>
+                {/* Title row */}
+                <div className="flex items-start justify-between gap-2 mb-4">
+                  <div>
+                    <h3 className="font-bold text-slate-900 text-sm">{current.product_name}</h3>
+                    <p className="text-xs text-slate-500 mt-0.5">{current.subcategory}</p>
+                  </div>
+                  <span className={`inline-flex items-center gap-1 text-[11px] font-bold px-2.5 py-1 rounded-full ${ms.bg} ${ms.text}`}>
+                    <span className={`w-1.5 h-1.5 rounded-full ${ms.dot}`} />
+                    {current.momentum}
+                    {current.pct_change !== null && (
+                      <span className="ml-0.5">({current.pct_change > 0 ? '+' : ''}{current.pct_change}%)</span>
+                    )}
+                  </span>
+                </div>
+
+                {/* Partial month warning */}
+                {current.last_month_partial && (
+                  <div className="flex items-start gap-2 bg-amber-50 border border-amber-200 rounded-xl px-3 py-2.5 mb-4">
+                    <AlertTriangle className="w-3.5 h-3.5 text-amber-600 shrink-0 mt-0.5" />
+                    <p className="text-[11px] text-amber-800 leading-snug">
+                      Latest month is incomplete — KPIs and momentum reflect{' '}
+                      <strong>{current.kpi_month_label ?? 'last complete month'}</strong> instead.
+                      The partial month is still shown in the chart.
+                    </p>
+                  </div>
+                )}
+
+                {/* KPI strip */}
+                <div className="grid grid-cols-3 gap-3 mb-5">
+                  {[
+                    {
+                      label: current.kpi_month_label ? `Volume (${current.kpi_month_label})` : 'Volume (Latest Month)',
+                      value: fmtVol(current.this_month_volume),
+                    },
+                    { label: 'Active Customers', value: current.this_month_customers.toLocaleString() },
+                    { label: 'New Customers', value: current.new_customers.toLocaleString() },
+                  ].map(kpi => (
+                    <div key={kpi.label} className="bg-slate-50 border border-slate-200 rounded-xl p-3">
+                      <p className="text-[10px] text-slate-400 uppercase tracking-wide mb-1">{kpi.label}</p>
+                      <p className="text-xl font-bold text-slate-900">{kpi.value}</p>
+                    </div>
+                  ))}
+                </div>
+
+                {/* Momentum explanation */}
+                <div className={`flex items-start gap-2 rounded-xl px-3 py-2.5 mb-4 border ${
+                  current.momentum === 'Growing' ? 'bg-emerald-50 border-emerald-200' :
+                  current.momentum === 'Declining' ? 'bg-red-50 border-red-200' :
+                  'bg-slate-50 border-slate-200'}`}>
+                  <Activity className={`w-3.5 h-3.5 shrink-0 mt-0.5 ${
+                    current.momentum === 'Growing' ? 'text-emerald-600' :
+                    current.momentum === 'Declining' ? 'text-red-600' : 'text-slate-500'}`} />
+                  <p className={`text-[11px] leading-relaxed ${
+                    current.momentum === 'Growing' ? 'text-emerald-800' :
+                    current.momentum === 'Declining' ? 'text-red-800' : 'text-slate-600'}`}>
+                    {current.momentum === 'Growing' && `Revenue grew ${current.pct_change !== null ? Math.abs(current.pct_change) + '% ' : ''}comparing the last 2 months to the prior 2 months. Consider featuring this product more prominently in Agent C offers.`}
+                    {current.momentum === 'Declining' && `Revenue fell ${current.pct_change !== null ? Math.abs(current.pct_change) + '% ' : ''}comparing the last 2 months to the prior 2 months. Review pricing, eligibility criteria, or channel targeting for this product.`}
+                    {current.momentum === 'Stable' && `Revenue is steady (within ±10% compared to the prior 2-month period). No immediate action required.`}
+                  </p>
+                </div>
+
+                {/* 6-month area chart */}
+                {current.months.length > 0 && (
+                  <div className="h-44 mb-5">
+                    <ResponsiveContainer width="100%" height="100%">
+                      <AreaChart data={current.months} margin={{ top: 4, right: 8, left: 0, bottom: 20 }}>
+                        <defs>
+                          <linearGradient id="pulseGrad" x1="0" y1="0" x2="0" y2="1">
+                            <stop offset="5%" stopColor={ms.bar} stopOpacity={0.18} />
+                            <stop offset="95%" stopColor={ms.bar} stopOpacity={0} />
+                          </linearGradient>
+                        </defs>
+                        <CartesianGrid strokeDasharray="3 3" stroke="#f1f5f9" />
+                        <XAxis dataKey="month" tick={{ fontSize: 9, angle: -35, textAnchor: 'end', dy: 6 }} tickLine={false} interval={0} />
+                        <YAxis tick={{ fontSize: 10 }} tickLine={false} axisLine={false}
+                          tickFormatter={v => v >= 1e6 ? '$' + (v/1e6).toFixed(1)+'M' : v >= 1e3 ? '$' + (v/1e3).toFixed(0)+'K' : '$'+v} />
+                        <Tooltip formatter={(v: number) => [fmtVol(v), 'Volume']} />
+                        <Area type="monotone" dataKey="volume" stroke={ms.bar} strokeWidth={2}
+                          fill="url(#pulseGrad)" dot={{ r: 3, fill: ms.bar }} />
+                      </AreaChart>
+                    </ResponsiveContainer>
+                  </div>
+                )}
+
+                {/* Monthly table */}
+                {current.months.length > 0 && (
+                  <div className="overflow-x-auto rounded-xl border border-slate-200">
+                    <table className="w-full text-xs">
+                      <thead className="bg-slate-900 text-white">
+                        <tr>
+                          <th className="px-3 py-2 text-left text-[10px] uppercase tracking-wide font-semibold">Month</th>
+                          <th className="px-3 py-2 text-right text-[10px] uppercase tracking-wide font-semibold">Volume</th>
+                          <th className="px-3 py-2 text-right text-[10px] uppercase tracking-wide font-semibold">Customers</th>
+                          <th className="px-3 py-2 text-right text-[10px] uppercase tracking-wide font-semibold">MoM Δ</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {current.months.map((m, i) => {
+                          const prevVol = current.months[i - 1]?.volume;
+                          const chg = prevVol ? ((m.volume - prevVol) / Math.abs(prevVol) * 100) : null;
+                          return (
+                            <tr key={i} className={i % 2 === 0 ? 'bg-white' : 'bg-slate-50'}>
+                              <td className="px-3 py-2 font-medium text-slate-700">{m.month}</td>
+                              <td className="px-3 py-2 text-right font-semibold text-slate-900">{fmtVol(m.volume)}</td>
+                              <td className="px-3 py-2 text-right text-slate-600">{m.customers.toLocaleString()}</td>
+                              <td className={`px-3 py-2 text-right font-semibold ${chg === null ? 'text-slate-400' : chg > 0 ? 'text-emerald-600' : chg < 0 ? 'text-red-600' : 'text-slate-400'}`}>
+                                {chg === null ? '—' : `${chg > 0 ? '+' : ''}${chg.toFixed(1)}%`}
+                              </td>
+                            </tr>
+                          );
+                        })}
+                      </tbody>
+                    </table>
+                  </div>
+                )}
+              </>
+            );
+          })()}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ── Funnel Health Panel ───────────────────────────────────────────────────────
+
+function FunnelPanel({ stages, onClose }: { stages: FunnelStage[]; onClose: () => void }) {
+  const maxCount = Math.max(...stages.map(s => s.count ?? 0), 1);
+  const hasData = stages.some(s => s.count !== null && s.count > 0);
+
+  return (
+    <div className="fixed inset-y-0 right-0 w-full max-w-xl bg-white shadow-2xl border-l border-slate-200 flex flex-col z-50">
+      {/* Header */}
+      <div className="flex items-center justify-between px-5 py-4 border-b border-slate-200">
+        <div className="flex items-center gap-2">
+          <Layers className="w-4 h-4 text-indigo-600" />
+          <h2 className="font-semibold text-slate-900 text-sm">Funnel Health</h2>
+          <span className="text-[11px] bg-indigo-100 text-indigo-700 font-semibold px-2 py-0.5 rounded-full">
+            Agent A → B → C → D
+          </span>
+        </div>
+        <button onClick={onClose} className="text-slate-400 hover:text-slate-600"><X className="w-4 h-4" /></button>
+      </div>
+
+      <div className="flex-1 overflow-y-auto p-6">
+        {!hasData && (
+          <div className="text-center py-12">
+            <Layers className="w-10 h-10 text-slate-300 mx-auto mb-3" />
+            <p className="text-sm font-semibold text-slate-500">No pipeline runs detected yet</p>
+            <p className="text-xs text-slate-400 mt-1 leading-relaxed max-w-xs mx-auto">
+              Run agents from the pipeline pages to populate this funnel. Counts track unique customers processed per stage this session.
+            </p>
+          </div>
+        )}
+
+        {hasData && (
+          <>
+            <p className="text-xs text-slate-500 mb-6 leading-relaxed">
+              Each bar shows how many unique customers were processed by that agent stage in this session. Drop-off between stages highlights where the pipeline narrows.
+            </p>
+            <div className="space-y-4">
+              {stages.map((stage, i) => {
+                const prev = stages[i - 1];
+                const pct = maxCount > 0 ? ((stage.count ?? 0) / maxCount) * 100 : 0;
+                const dropPct = prev?.count && stage.count !== null
+                  ? Math.round((1 - stage.count / prev.count) * 100) : null;
+                return (
+                  <div key={stage.id}>
+                    <div className="flex items-center justify-between mb-1">
+                      <div>
+                        <span className="text-xs font-bold text-slate-800">{stage.label}</span>
+                        <span className="text-[10px] text-slate-400 ml-2">{stage.sublabel}</span>
+                      </div>
+                      <div className="flex items-center gap-2">
+                        {dropPct !== null && dropPct > 0 && (
+                          <span className="text-[10px] bg-red-50 text-red-600 font-semibold px-1.5 py-0.5 rounded-full">
+                            −{dropPct}% drop
+                          </span>
+                        )}
+                        <span className="text-sm font-bold text-slate-900 tabular-nums">
+                          {stage.count !== null ? stage.count.toLocaleString() : '—'}
+                        </span>
+                      </div>
+                    </div>
+                    <div className="h-8 bg-slate-100 rounded-lg overflow-hidden">
+                      <div
+                        className="h-full rounded-lg transition-all duration-500 flex items-center px-2"
+                        style={{ width: `${pct}%`, backgroundColor: stage.color, minWidth: pct > 0 ? '2rem' : '0' }}>
+                        {pct > 15 && (
+                          <span className="text-[10px] font-semibold text-white">
+                            {stage.count !== null ? stage.count.toLocaleString() : ''}
+                          </span>
+                        )}
+                      </div>
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+
+            {/* Drop-off insight */}
+            {(() => {
+              const worstDrop = stages.reduce<{ label: string; pct: number } | null>((acc, s, i) => {
+                const prev = stages[i - 1];
+                if (!prev?.count || s.count === null) return acc;
+                const dp = Math.round((1 - s.count / prev.count) * 100);
+                if (!acc || dp > acc.pct) return { label: s.label, pct: dp };
+                return acc;
+              }, null);
+              if (!worstDrop || worstDrop.pct < 5) return null;
+              return (
+                <div className="mt-6 flex items-start gap-2 bg-amber-50 border border-amber-200 rounded-xl px-3 py-2.5">
+                  <AlertTriangle className="w-3.5 h-3.5 text-amber-600 shrink-0 mt-0.5" />
+                  <p className="text-[11px] text-amber-800 leading-relaxed">
+                    <span className="font-semibold">Largest drop-off: </span>
+                    {worstDrop.pct}% of customers didn't reach the <strong>{worstDrop.label}</strong> stage. Check if this agent is being run for all customers in the current session.
+                  </p>
+                </div>
+              );
+            })()}
+
+            <div className="mt-4 text-[10px] text-slate-400 border-t border-slate-100 pt-3">
+              Counts reset when the server restarts. Run each agent from their respective pipeline pages to populate.
+            </div>
+          </>
+        )}
+      </div>
+    </div>
+  );
+}
+
 // ── ThinkingBubble ────────────────────────────────────────────────────────────
 
 function ThinkingBubble({ question }: { question: string }) {
@@ -679,16 +1562,11 @@ function ThinkingBubble({ question }: { question: string }) {
         </div>
       </div>
       <div className="flex justify-start">
-        <div className="bg-slate-50 border border-slate-200 rounded-2xl rounded-tl-sm px-4 py-3">
-          <div className="flex items-center gap-2 mb-2">
-            <Sparkles className="w-3.5 h-3.5 text-violet-400 animate-pulse flex-shrink-0" />
-            <p className="text-[11px] font-bold text-slate-400 uppercase tracking-widest">Segment AI</p>
-          </div>
-          <div className="flex items-center gap-1.5 text-slate-400 text-sm">
-            <span className="w-2 h-2 rounded-full bg-blue-400 animate-bounce" style={{ animationDelay: '0ms' }} />
-            <span className="w-2 h-2 rounded-full bg-blue-400 animate-bounce" style={{ animationDelay: '150ms' }} />
-            <span className="w-2 h-2 rounded-full bg-blue-400 animate-bounce" style={{ animationDelay: '300ms' }} />
-            <span className="ml-1 text-xs">Generating SQL and analyzing data…</span>
+        <div className="bg-white border border-slate-200 rounded-2xl rounded-tl-sm px-4 py-3 shadow-sm">
+          <div className="flex items-center gap-1.5">
+            <span className="w-2 h-2 rounded-full bg-violet-400 animate-bounce" style={{ animationDelay: '0ms' }} />
+            <span className="w-2 h-2 rounded-full bg-violet-400 animate-bounce" style={{ animationDelay: '150ms' }} />
+            <span className="w-2 h-2 rounded-full bg-violet-400 animate-bounce" style={{ animationDelay: '300ms' }} />
           </div>
         </div>
       </div>
@@ -711,8 +1589,88 @@ export default function BankingAskGenie() {
     return [];
   });
 
+  // Feature states
+  const [personasRegistered, setPersonasRegistered] = React.useState<boolean | null>(null);
+  const [bannerDismissed, setBannerDismissed] = React.useState(false);
+  const [anomalies, setAnomalies] = React.useState<AnomalyResult[] | null>(null);
+  const [anomaliesLoading, setAnomaliesLoading] = React.useState(false);
+  const [showAnomalies, setShowAnomalies] = React.useState(false);
+  const [trends, setTrends] = React.useState<TrendResult[] | null>(null);
+  const [trendsLoading, setTrendsLoading] = React.useState(false);
+  const [showTrends, setShowTrends] = React.useState(false);
+  const [productPulse, setProductPulse] = React.useState<ProductPulseItem[] | null>(null);
+  const [productPulseLoading, setProductPulseLoading] = React.useState(false);
+  const [showProductPulse, setShowProductPulse] = React.useState(false);
+  const [funnel, setFunnel] = React.useState<FunnelStage[] | null>(null);
+  const [funnelLoading, setFunnelLoading] = React.useState(false);
+  const [showFunnel, setShowFunnel] = React.useState(false);
+
   const bottomRef = React.useRef<HTMLDivElement>(null);
   const textareaRef = React.useRef<HTMLTextAreaElement>(null);
+
+  // Check Agent A status on mount, then poll every 15 s until registered
+  React.useEffect(() => {
+    if (personasRegistered) return;                 // already known — no need to poll
+    const check = () =>
+      fetch(`${API_BASE}/api/banking/chat/status`)
+        .then(r => r.json())
+        .then(d => { if (d.personas_registered) setPersonasRegistered(true); })
+        .catch(() => {});
+
+    check();
+    const id = setInterval(check, 15_000);
+    return () => clearInterval(id);
+  }, [API_BASE, personasRegistered]);
+
+  const loadAnomalies = React.useCallback(async () => {
+    if (anomaliesLoading) return;
+    // Always refetch — data may have changed since last open
+    setAnomaliesLoading(true);
+    try {
+      const r = await fetch(`${API_BASE}/api/banking/chat/anomalies`);
+      const d = await r.json();
+      setAnomalies(d.anomalies ?? []);
+      setShowAnomalies(true);
+    } catch { /* ignore */ }
+    finally { setAnomaliesLoading(false); }
+  }, [API_BASE, anomaliesLoading]);
+
+  const loadTrends = React.useCallback(async () => {
+    if (trendsLoading) return;
+    // Always refetch — data may have changed since last open
+    setTrendsLoading(true);
+    try {
+      const r = await fetch(`${API_BASE}/api/banking/chat/trends`);
+      const d = await r.json();
+      setTrends(d.trends ?? []);
+      setShowTrends(true);
+    } catch { /* ignore */ }
+    finally { setTrendsLoading(false); }
+  }, [API_BASE, trendsLoading]);
+
+  const loadProductPulse = React.useCallback(async () => {
+    if (productPulseLoading) return;
+    setProductPulseLoading(true);
+    try {
+      const r = await fetch(`${API_BASE}/api/banking/chat/product-pulse`);
+      const d = await r.json();
+      setProductPulse(d.products ?? []);
+      setShowProductPulse(true);
+    } catch { /* ignore */ }
+    finally { setProductPulseLoading(false); }
+  }, [API_BASE, productPulseLoading]);
+
+  const loadFunnel = React.useCallback(async () => {
+    if (funnelLoading) return;
+    setFunnelLoading(true);
+    try {
+      const r = await fetch(`${API_BASE}/api/banking/chat/funnel`);
+      const d = await r.json();
+      setFunnel(d.stages ?? []);
+      setShowFunnel(true);
+    } catch { /* ignore */ }
+    finally { setFunnelLoading(false); }
+  }, [API_BASE, funnelLoading]);
 
   // Save history whenever it changes
   React.useEffect(() => {
@@ -746,6 +1704,8 @@ export default function BankingAskGenie() {
     onSuccess: (data, q) => {
       setHistory(prev => [...prev, { question: q, answer: data }]);
       setQuestion('');
+      // Sync Agent A status from the response — the backend always returns this flag
+      if (data.personas_registered) setPersonasRegistered(true);
       setTimeout(() => bottomRef.current?.scrollIntoView({ behavior: 'smooth' }), 100);
     },
   });
@@ -779,6 +1739,20 @@ export default function BankingAskGenie() {
   return (
     <div className="space-y-5 animate-fadeIn">
 
+      {/* Panels */}
+      {showAnomalies && anomalies && (
+        <AnomaliesPanel anomalies={anomalies} onClose={() => setShowAnomalies(false)} />
+      )}
+      {showTrends && trends && (
+        <TrendsPanel trends={trends} onClose={() => setShowTrends(false)} />
+      )}
+      {showProductPulse && productPulse && (
+        <ProductPulsePanel products={productPulse} onClose={() => setShowProductPulse(false)} />
+      )}
+      {showFunnel && funnel && (
+        <FunnelPanel stages={funnel} onClose={() => setShowFunnel(false)} />
+      )}
+
       {/* Header */}
       <div className="flex items-start justify-between gap-4">
         <div>
@@ -793,7 +1767,47 @@ export default function BankingAskGenie() {
             Ask anything about your customers, segments, products, and marketing.
           </p>
         </div>
-        <div className="flex items-center gap-2 flex-shrink-0">
+        <div className="flex items-center gap-2 flex-shrink-0 flex-wrap justify-end">
+          {/* Anomalies button */}
+          <button
+            type="button"
+            onClick={() => anomalies ? setShowAnomalies(true) : loadAnomalies()}
+            disabled={anomaliesLoading}
+            className="inline-flex items-center gap-1.5 px-3 py-2 rounded-lg border border-amber-200 text-amber-700 bg-amber-50 text-sm font-medium hover:bg-amber-100 disabled:opacity-50 transition-colors"
+          >
+            <AlertTriangle className="w-3.5 h-3.5" />
+            {anomaliesLoading ? 'Scanning…' : 'Anomalies'}
+          </button>
+          {/* Trends button */}
+          <button
+            type="button"
+            onClick={() => trends ? setShowTrends(true) : loadTrends()}
+            disabled={trendsLoading}
+            className="inline-flex items-center gap-1.5 px-3 py-2 rounded-lg border border-violet-200 text-violet-700 bg-violet-50 text-sm font-medium hover:bg-violet-100 disabled:opacity-50 transition-colors"
+          >
+            <Zap className="w-3.5 h-3.5" />
+            {trendsLoading ? 'Loading…' : 'Trends'}
+          </button>
+          {/* Product Pulse button */}
+          <button
+            type="button"
+            onClick={loadProductPulse}
+            disabled={productPulseLoading}
+            className="inline-flex items-center gap-1.5 px-3 py-2 rounded-lg border border-teal-200 text-teal-700 bg-teal-50 text-sm font-medium hover:bg-teal-100 disabled:opacity-50 transition-colors"
+          >
+            <Package className="w-3.5 h-3.5" />
+            {productPulseLoading ? 'Loading…' : 'Product Pulse'}
+          </button>
+          {/* Funnel Health button */}
+          <button
+            type="button"
+            onClick={loadFunnel}
+            disabled={funnelLoading}
+            className="inline-flex items-center gap-1.5 px-3 py-2 rounded-lg border border-indigo-200 text-indigo-700 bg-indigo-50 text-sm font-medium hover:bg-indigo-100 disabled:opacity-50 transition-colors"
+          >
+            <Layers className="w-3.5 h-3.5" />
+            {funnelLoading ? 'Loading…' : 'Funnel'}
+          </button>
           {chatEntries.length > 0 && (
             <>
               <button
@@ -818,30 +1832,40 @@ export default function BankingAskGenie() {
         </div>
       </div>
 
+      {/* Agent A banner */}
+      {personasRegistered === false && !bannerDismissed && (
+        <AgentABanner onDismiss={() => setBannerDismissed(true)} />
+      )}
+
       {/* Suggested questions — only shown when empty */}
       {history.length === 0 && (
-        <div className="bg-white rounded-xl border border-gray-200 shadow-sm p-5">
-          <div className="flex items-center gap-2 mb-4">
-            <Sparkles className="w-4 h-4 text-violet-500" />
-            <p className="text-xs font-semibold text-gray-500 uppercase tracking-wide">Try asking</p>
-          </div>
-          <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
-            {SUGGESTED_QUESTIONS.map((q, i) => (
-              <button
-                key={i}
-                type="button"
-                onClick={() => sendQuestion(q)}
-                disabled={askMutation.isPending}
-                className="text-left text-sm px-4 py-3 bg-slate-50 border border-slate-200 text-slate-700 rounded-xl hover:bg-blue-50 hover:border-blue-200 hover:text-blue-800 disabled:opacity-40 transition-all leading-snug group"
-              >
-                <span className="text-blue-400 mr-1.5 opacity-0 group-hover:opacity-100 transition-opacity">→</span>
-                {q}
-              </button>
-            ))}
-          </div>
-          <p className="text-[11px] text-slate-400 mt-4 text-center">
-            Powered by DuckDB · customers · transactions · ad_spend · impressions · wishlist · and 5 more tables
+        <div>
+          <p className="flex items-center gap-1.5 text-[11px] font-semibold text-slate-400 uppercase tracking-widest mb-3 pl-0.5">
+            <Sparkles className="w-3 h-3 text-violet-400" />
+            Suggestions
           </p>
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+            {SUGGESTED_QUESTIONS.map((item, i) => {
+              const c = QUESTION_COLORS[item.color];
+              return (
+                <button
+                  key={i}
+                  type="button"
+                  onClick={() => sendQuestion(item.q)}
+                  disabled={askMutation.isPending}
+                  className="group text-left bg-white border border-slate-100 rounded-xl px-4 py-3.5 hover:border-slate-200 hover:shadow-sm disabled:opacity-40 transition-all duration-150"
+                  style={{ borderLeft: `2px solid ${c.accent}` }}
+                >
+                  <p className={`text-[10px] font-bold uppercase tracking-widest mb-1.5 ${c.chipText}`}>
+                    {item.category}
+                  </p>
+                  <p className="text-[13px] text-slate-600 leading-snug font-medium group-hover:text-slate-900 transition-colors">
+                    {item.q}
+                  </p>
+                </button>
+              );
+            })}
+          </div>
         </div>
       )}
 
