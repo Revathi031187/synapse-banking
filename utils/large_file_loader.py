@@ -67,6 +67,11 @@ def ensure_csv(local_path: Path, vol_path: str | None = None) -> Path:
         )
         return local_path
 
+    # Databricks Apps injects DATABRICKS_HOST as bare hostname (no scheme).
+    # urllib.request requires a full URL, so add https:// when missing.
+    if not host.startswith('http'):
+        host = f'https://{host}'
+
     try:
         import urllib.request
         _TMP_BASE.mkdir(parents=True, exist_ok=True)
