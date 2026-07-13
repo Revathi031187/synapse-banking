@@ -2,11 +2,18 @@
 Utility for loading large CSV files that are excluded from Databricks App deployments
 (> 10 MB per-file limit).
 
-Pattern:
-  - Local Repos path is checked first (fast, works in dev).
-  - /tmp/meridian_bank/ is checked next (persists across requests in same App instance).
-  - If neither exists, the file is downloaded from the UC Volume via the Databricks
-    Files REST API (DATABRICKS_HOST + DATABRICKS_TOKEN, auto-injected by Databricks Apps).
+Access priority for each file:
+  1. local_path  — dev Repos path (always wins when present)
+  2. /tmp/meridian_bank/<file>  — cached from a previous download this App instance
+  3. Direct UC Volume filesystem path (/Volumes/...) — works when the App's service
+     principal has been granted READ FILES on the volume (no REST call needed)
+  4. Databricks Files REST API  — fallback download via DATABRICKS_HOST + DATABRICKS_TOKEN
+
+For option 4 to work the App's service principal needs:
+  GRANT READ FILES ON VOLUME dev.banking.meridian_preloaded
+  TO `<app-service-principal>`;
+Run that SQL in a Databricks notebook or SQL editor. The service principal name is
+visible in the App's settings page under "Permissions".
 """
 
 from __future__ import annotations
@@ -33,42 +40,65 @@ def ensure_csv(local_path: Path, vol_path: str | None = None) -> Path:
     """
     Return a valid path to the requested CSV file.
 
-    Priority:
-      1. local_path (Repos path — present in dev, absent in Databricks App for large files)
-      2. /tmp/meridian_bank/<filename>  (already downloaded this App instance)
-      3. Download from UC Volume via Databricks Files API → /tmp/meridian_bank/<filename>
+    Priority order:
+      1. local_path            (dev Repos — fast, always correct in dev)
+      2. /tmp/meridian_bank/   (cached download — persists within an App instance)
+      3. Direct /Volumes/ path (UC Volume mounted in the App container — no REST call)
+      4. Files REST API        (download via DATABRICKS_HOST + DATABRICKS_TOKEN)
 
-    Returns local_path if download is impossible or fails — caller's is_file() will handle it.
+    Returns local_path on total failure; caller's .is_file() will surface the gap.
     """
+    # ── 1. Local dev path ────────────────────────────────────────────────────
     if local_path.exists():
         return local_path
 
     fname = local_path.name
     tmp_path = _TMP_BASE / fname
 
+    # ── 2. Already cached from a previous download this App instance ─────────
     if tmp_path.exists():
-        logger.info("Using cached %s from %s", fname, tmp_path)
+        logger.info("[large_file_loader] Using cached %s from %s", fname, tmp_path)
         return tmp_path
 
     # Resolve the UC Volume path for this file
     resolved_vol = vol_path or _LARGE_FILES.get(fname)
     if not resolved_vol:
-        logger.warning("No UC Volume path configured for %s — cannot download", fname)
+        logger.warning("[large_file_loader] No UC Volume path configured for %s", fname)
         return local_path
 
+    # ── 3. Direct filesystem access (UC Volume mounted in App container) ──────
+    # Databricks Apps can read /Volumes/... directly when the App's service
+    # principal has been granted READ FILES on the volume — no HTTP call needed.
+    vol_direct = Path(resolved_vol)
+    if vol_direct.exists():
+        try:
+            _TMP_BASE.mkdir(parents=True, exist_ok=True)
+            shutil.copy2(vol_direct, tmp_path)
+            size_mb = tmp_path.stat().st_size / 1_048_576
+            print(
+                f"[large_file_loader] Copied {fname} from UC Volume → {tmp_path} ({size_mb:.1f} MB)",
+                flush=True,
+            )
+            return tmp_path
+        except Exception as exc:
+            logger.warning("[large_file_loader] Direct volume copy failed: %s", exc)
+            if tmp_path.exists():
+                tmp_path.unlink(missing_ok=True)
+
+    # ── 4. Databricks Files REST API download ─────────────────────────────────
     host = os.environ.get('DATABRICKS_HOST', '').rstrip('/')
     token = os.environ.get('DATABRICKS_TOKEN', '')
 
     if not host or not token:
         logger.warning(
-            "DATABRICKS_HOST / DATABRICKS_TOKEN not set — cannot download %s. "
-            "Set these env vars or place the file at %s",
+            "[large_file_loader] DATABRICKS_HOST / DATABRICKS_TOKEN not set — "
+            "cannot download %s. Place the file at %s or set env vars.",
             fname, local_path,
         )
         return local_path
 
-    # Databricks Apps injects DATABRICKS_HOST as bare hostname (no scheme).
-    # urllib.request requires a full URL, so add https:// when missing.
+    # Databricks Apps injects DATABRICKS_HOST as a bare hostname (no scheme).
+    # urllib.request requires a full URL with https://.
     if not host.startswith('http'):
         host = f'https://{host}'
 
@@ -81,11 +111,24 @@ def ensure_csv(local_path: Path, vol_path: str | None = None) -> Path:
         with urllib.request.urlopen(req, timeout=300) as resp, open(tmp_path, 'wb') as fp:
             shutil.copyfileobj(resp, fp)
         size_mb = tmp_path.stat().st_size / 1_048_576
-        print(f"[large_file_loader] Downloaded {fname} → {tmp_path} ({size_mb:.1f} MB)", flush=True)
+        print(
+            f"[large_file_loader] Downloaded {fname} → {tmp_path} ({size_mb:.1f} MB)",
+            flush=True,
+        )
         return tmp_path
     except Exception as exc:
+        err_str = str(exc)
         print(f"[large_file_loader] ERROR downloading {fname}: {exc}", flush=True)
-        logger.error("Could not download %s from %s: %s", fname, resolved_vol, exc)
+        if '403' in err_str or 'Forbidden' in err_str:
+            print(
+                "[large_file_loader] 403 Forbidden — the App's service principal lacks "
+                "READ FILES on the UC Volume. Fix by running this SQL in Databricks:\n"
+                f"  GRANT READ FILES ON VOLUME {resolved_vol.split('/')[3]}.{resolved_vol.split('/')[4]}.{resolved_vol.split('/')[5]}\n"
+                "  TO `<your-app-service-principal>`;\n"
+                "Find the service principal name in Databricks → Apps → <this app> → Permissions.",
+                flush=True,
+            )
+        logger.error("[large_file_loader] Could not download %s from %s: %s", fname, resolved_vol, exc)
         if tmp_path.exists():
             tmp_path.unlink(missing_ok=True)
         return local_path

@@ -7,3 +7,14 @@ command:
   - python
   - run_app.py
 
+# UC Volume declaration — grants the App's service principal READ FILES on this volume.
+# transactions.csv (876K rows, ~80 MB) lives here and is too large for the App bundle.
+# The App reads it directly from /Volumes/dev/banking/meridian_preloaded/ at runtime.
+resources:
+  - name: meridian-preloaded-volume
+    description: "Meridian Bank preloaded transaction data (transactions.csv)"
+    uc_volume:
+      catalog: dev
+      schema: banking
+      volume_name: meridian_preloaded
+      access_type: READ
