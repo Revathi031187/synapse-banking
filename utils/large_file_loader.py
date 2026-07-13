@@ -87,7 +87,9 @@ def ensure_csv(local_path: Path, vol_path: str | None = None) -> Path:
 
     # ── 4. Databricks Files REST API download ─────────────────────────────────
     host = os.environ.get('DATABRICKS_HOST', '').rstrip('/')
-    token = os.environ.get('DATABRICKS_TOKEN', '')
+    # TRANSACTIONS_TOKEN overrides the app service-principal token, which
+    # may lack READ VOLUME in older metastores. Set it in App → Environment.
+    token = os.environ.get('TRANSACTIONS_TOKEN') or os.environ.get('DATABRICKS_TOKEN', '')
 
     if not host or not token:
         logger.warning(
