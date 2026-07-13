@@ -2136,56 +2136,6 @@ export default function BankingLanding() {
               </div>
             </div>
 
-            {/* Right — 3 featured products (shown when not signed in) */}
-            {!personalized && (() => {
-              const heropicks = (allProducts.length > 0 ? allProducts : FALLBACK)
-                .filter(p =>
-                  (p.credit_tier_required === 'any' || !p.credit_tier_required) &&
-                  (!p.min_income || p.min_income === 0) &&
-                  (!p.min_credit_score || p.min_credit_score === 0) &&
-                  p.category === 'Personal'
-                )
-                .sort((a, b) => (b.avg_rating ?? 0) - (a.avg_rating ?? 0))
-                .slice(0, 3);
-              if (!heropicks.length) return null;
-              return (
-                <div className="lg:w-[380px] w-full flex-shrink-0 space-y-3">
-                  <p className="text-[10px] uppercase tracking-widest font-bold text-amber-400 mb-3">
-                    Most Popular · No Credit Check
-                  </p>
-                  {heropicks.map((p, i) => (
-                    <div
-                      key={p.product_id}
-                      onClick={() => { onCardClick(p); openProductDetail(p); }}
-                      className="flex items-center gap-4 bg-white/10 hover:bg-white/15 backdrop-blur-sm border border-white/20 rounded-2xl px-4 py-3.5 cursor-pointer transition-all group"
-                    >
-                      <span className="text-2xl flex-shrink-0">{SUBCAT_ICONS[p.subcategory] ?? '🏦'}</span>
-                      <div className="flex-1 min-w-0">
-                        <div className="flex items-center gap-2 mb-0.5">
-                          <p className="text-white font-semibold text-sm truncate">{p.product_name}</p>
-                          {i === 0 && (
-                            <span className="flex-shrink-0 text-[9px] font-bold bg-amber-400 text-amber-950 px-1.5 py-0.5 rounded-full">
-                              #1
-                            </span>
-                          )}
-                        </div>
-                        {rateLabel(p) && (
-                          <p className={`text-sm font-extrabold leading-none ${rateColor(p)}`}>{rateLabel(p)}</p>
-                        )}
-                        <p className="text-blue-200 text-[11px] mt-0.5 line-clamp-1">{p.description}</p>
-                      </div>
-                      <ArrowRight className="w-4 h-4 text-white/40 group-hover:text-white/70 flex-shrink-0 transition-colors" />
-                    </div>
-                  ))}
-                  <button
-                    onClick={() => setShowSignIn(true)}
-                    className="w-full mt-1 text-[11px] text-blue-300 hover:text-white text-center py-2 transition-colors"
-                  >
-                    Sign in for personalized picks →
-                  </button>
-                </div>
-              );
-            })()}
 
           </div>
         </div>

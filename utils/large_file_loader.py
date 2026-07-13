@@ -123,7 +123,7 @@ def ensure_csv(local_path: Path, vol_path: str | None = None) -> Path:
             print(
                 "[large_file_loader] 403 Forbidden — the App's service principal lacks "
                 "READ FILES on the UC Volume. Fix by running this SQL in Databricks:\n"
-                f"  GRANT READ FILES ON VOLUME {resolved_vol.split('/')[3]}.{resolved_vol.split('/')[4]}.{resolved_vol.split('/')[5]}\n"
+                f"  GRANT READ FILES ON VOLUME {resolved_vol.split('/')[2]}.{resolved_vol.split('/')[3]}.{resolved_vol.split('/')[4]}\n"
                 "  TO `<your-app-service-principal>`;\n"
                 "Find the service principal name in Databricks → Apps → <this app> → Permissions.",
                 flush=True,
