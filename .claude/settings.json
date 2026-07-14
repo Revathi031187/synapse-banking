@@ -102,7 +102,9 @@
       "Bash(python \"C:\\\\Users\\\\JAISON~1.LV\\\\AppData\\\\Local\\\\Temp\\\\claude\\\\d--personalization-agent-banking\\\\300d159f-ea2f-4de7-9881-fe62e83debbe\\\\scratchpad\\\\duckdb_query.py\")",
       "Bash(python \"C:\\\\Users\\\\JAISON~1.LV\\\\AppData\\\\Local\\\\Temp\\\\claude\\\\d--personalization-agent-banking\\\\300d159f-ea2f-4de7-9881-fe62e83debbe\\\\scratchpad\\\\credit_card_mortgage_queries.py\")",
       "Bash(python \"C:\\\\Users\\\\JAISON~1.LV\\\\AppData\\\\Local\\\\Temp\\\\claude\\\\d--personalization-agent-banking\\\\300d159f-ea2f-4de7-9881-fe62e83debbe\\\\scratchpad\\\\advanced_analysis.py\")",
-      "Bash(python \"C:\\\\Users\\\\JAISON~1.LV\\\\AppData\\\\Local\\\\Temp\\\\claude\\\\d--personalization-agent-banking\\\\300d159f-ea2f-4de7-9881-fe62e83debbe\\\\scratchpad\\\\final_summary.py\")"
+      "Bash(python \"C:\\\\Users\\\\JAISON~1.LV\\\\AppData\\\\Local\\\\Temp\\\\claude\\\\d--personalization-agent-banking\\\\300d159f-ea2f-4de7-9881-fe62e83debbe\\\\scratchpad\\\\final_summary.py\")",
+      "Bash(python -c \"import pandas as pd; df = pd.read_csv\\('data/preloaded/meridian_bank/products.csv'\\); print\\(df[['product_id','product_name','category','subcategory']].to_string\\(index=False\\)\\)\")",
+      "Bash(xargs grep -l \"pinned_offer_card\\\\|agent_d.*directives\")"
     ]
   }
 }

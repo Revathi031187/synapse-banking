@@ -577,10 +577,10 @@ export default function BankingAgentB() {
         });
         requestBody.factor_weights = fw;
       }
-      const pinnedByAgentD = (
-        agentDDirectivesQuery.data?.next_visit_directives as { priority_pin_product_id?: string } | null
-      )?.priority_pin_product_id;
-      if (mode === 'customer' && customerId && (String(pinnedByAgentD || '').trim() || useAgentDDirectives)) {
+      // Always request director directives in customer mode — the backend silently skips
+      // when none exist. Avoids a race where the directives query hasn't resolved yet
+      // but the user already clicks Run, causing the tag to be missing intermittently.
+      if (mode === 'customer' && customerId) {
         requestBody.use_agent_d_directives = true;
       }
 

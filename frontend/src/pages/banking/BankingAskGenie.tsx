@@ -686,6 +686,12 @@ function ChatMessage({
                   Note: {ans.sql_error}
                 </p>
               )}
+              {ans.table && (
+                <p className="mt-2.5 text-[10.5px] text-slate-400 flex items-center gap-1.5">
+                  <span className="inline-block w-1.5 h-1.5 rounded-full bg-amber-400 flex-shrink-0" />
+                  AI-generated summary — verify values in the table below.
+                </p>
+              )}
             </div>
           )}
 

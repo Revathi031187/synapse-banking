@@ -320,20 +320,22 @@ class AgentD_Banking:
         if offer:
             offer_reason = str(offer.get("reasoning") or offer.get("reason") or "").strip()
 
-        # Build offer card snapshot to surface in Recommender when the pinned product is shown
+        # Build offer card snapshot to surface in Recommender when the pinned product is shown.
+        # Requires only a product_id — offer experiment fields are optional so the card still
+        # renders even when no named offer experiment is active for this customer.
         _pinned_offer_card = None
-        if _sel_offer.get("offer_name") and offer and offer.get("product_id"):
+        if offer and offer.get("product_id"):
             _pinned_offer_card = {
                 "product_id": _pid(offer["product_id"]),
                 "product_name": offer.get("product_name") or "",
-                "offer_name": _sel_offer.get("offer_name") or "",
-                "offer_type": _sel_offer.get("offer_type") or "",
-                "headline_value": _sel_offer.get("headline_value") or "",
+                "offer_name": _sel_offer.get("offer_name") or offer.get("offer_name") or "",
+                "offer_type": _sel_offer.get("offer_type") or offer.get("offer_type") or "",
+                "headline_value": _sel_offer.get("headline_value") or offer.get("headline_value") or "",
                 "content_benefit_1": _sel_offer.get("content_benefit_1") or "",
                 "content_benefit_2": _sel_offer.get("content_benefit_2") or "",
                 "content_benefit_3": _sel_offer.get("content_benefit_3") or "",
                 "days_remaining": _sel_offer.get("days_remaining"),
-                "terms_summary": _sel_offer.get("terms_summary") or "",
+                "terms_summary": _sel_offer.get("terms_summary") or offer.get("terms_summary") or "",
             }
 
         directives = {

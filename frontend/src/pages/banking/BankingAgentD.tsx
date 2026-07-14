@@ -382,31 +382,6 @@ export default function BankingAgentD() {
 
   return (
     <div className="space-y-6 animate-fadeIn">
-        {/* Flow breadcrumb — banking */}
-        <nav className="flex flex-wrap items-center gap-1 text-xs md:text-sm text-slate-500">
-          <Link to="/banking/data-loader" className="hover:text-emerald-700">
-            Data Loader
-          </Link>
-          <span>/</span>
-          <Link to="/banking/agent-a" className="hover:text-emerald-700">
-            Segmentation
-          </Link>
-          <span>/</span>
-          <Link to="/banking/macro-dashboard" className="hover:text-emerald-700">
-            Segments
-          </Link>
-          <span>/</span>
-          <Link to="/banking/agent-b" className="hover:text-emerald-700">
-            Recommender
-          </Link>
-          <span>/</span>
-          <Link to="/banking/agent-c" className="hover:text-emerald-700">
-            Best Offer
-          </Link>
-          <span>/</span>
-          <span className="text-emerald-800 font-semibold">Director</span>
-        </nav>
-
         <header className="flex gap-3 items-start">
           <div className="p-3 rounded-2xl bg-emerald-100 text-emerald-800 shadow-sm">
             <Bot className="w-8 h-8" />
