@@ -458,11 +458,48 @@ STRATEGY QUESTION GROUNDING RULES:
 - Tactics must be specific to Meridian Bank (use actual product names, channel names from the schema)
 - NO hypothetical numbers — every figure cited must come from the data or conversation history
 
+CONTEXT CARRY-FORWARD — "these customers / those customers / these top N" queries:
+When the user says "these customers", "those top N customers", "for these customers", or any phrase that refers
+back to a prior result set, you MUST re-derive that same set inside a subquery or CTE — do NOT query the full
+customer table. Reconstruct the filter/ordering logic from the conversation history.
+
+Examples:
+Q (prior): "Who are the top 10 most valuable customers?"
+  → prior SQL used: SELECT customer_id FROM customers ORDER BY customer_lifetime_value DESC LIMIT 10
+
+Q (follow-up): "What are the preferred communication channels for these top 10 customers?"
+WRONG: SELECT channel_preference, COUNT(*) FROM customers GROUP BY channel_preference   ← queries ALL customers
+RIGHT: WITH top10 AS (
+           SELECT customer_id FROM customers ORDER BY customer_lifetime_value DESC LIMIT 10
+       )
+       SELECT c.channel_preference AS preferred_channel, COUNT(*) AS customer_count
+       FROM customers c
+       WHERE c.customer_id IN (SELECT customer_id FROM top10)
+       GROUP BY c.channel_preference
+       ORDER BY customer_count DESC
+
+Q (prior): "Show me at-risk customers with churn probability > 0.7"
+Q (follow-up): "What products do these at-risk customers hold?"
+RIGHT: WITH at_risk AS (
+           SELECT customer_id FROM customers WHERE churn_probability > 0.7
+       )
+       SELECT p.product_name, COUNT(*) AS holders
+       FROM wishlist w
+       JOIN products p ON w.product_id = p.product_id
+       WHERE w.customer_id IN (SELECT customer_id FROM at_risk)
+       GROUP BY p.product_name ORDER BY holders DESC
+
+RULE: The subquery in the CTE must exactly mirror the WHERE / ORDER BY / LIMIT from the prior question's logic.
+NEVER drop the LIMIT or change the filter — the user is asking about a specific subset.
+
 STRICT SQL RULES:
 - Only SELECT statements. Never DROP/INSERT/UPDATE/DELETE/CREATE/ALTER.
 - Table names are exactly as shown in the schema (lowercase, no backticks needed for DuckDB).
 - Use ROUND(value, 2) for monetary amounts and rates.
 - DuckDB date functions: date_trunc('month', col), strftime(col, '%Y-%m'), year(col), month(col).
+- DATE DISPLAY: Always cast date/timestamp columns to DATE to strip the time component:
+    CAST(started_date AS DATE) AS started_date  → shows 2025-06-04 not 2025-06-04T00:00:00
+  Apply to ALL date columns in SELECT: started_date, completed_date, added_date, transaction_date, etc.
 - String concat in DuckDB: col1 || ' ' || col2
 STRING LITERALS — CRITICAL (DuckDB parser rule):
 - ALWAYS use single quotes for string values: WHERE col = 'value'
@@ -854,20 +891,42 @@ RIGHT: SELECT p.product_name, COUNT(*) AS incomplete_count,
 chart: {"type": "bar", "x_col": "product_name", "y_col": "incomplete_count", "title": "Incomplete Applications by Product"}
 
 INDIVIDUAL CUSTOMER LOOKUP — name-based queries (e.g. "George Davis is from which segment?"):
-When the user mentions a specific customer name, use LIKE for fuzzy matching then return their segment, profile, or other data:
-RIGHT: SELECT c.customer_id, c.customer_name, pa.persona_name, c.income, c.credit_score, c.clv_tier
+When the user mentions a specific customer name, use LIKE for fuzzy matching then return their segment, profile, or other data.
+ALWAYS use LEFT JOIN for both persona_assignments and segment_assignments — NEVER INNER JOIN — so results
+appear even before Agent A has been run.
+RIGHT: SELECT c.customer_id, c.customer_name,
+              COALESCE(pa.persona_name, sa.segment_name) AS segment_name,
+              c.income, c.credit_score, c.clv_tier
        FROM customers c
-       JOIN persona_assignments pa ON c.customer_id = pa.customer_id
+       LEFT JOIN persona_assignments pa ON c.customer_id = pa.customer_id
+       LEFT JOIN segment_assignments sa ON c.customer_id = sa.customer_id
        WHERE c.customer_name LIKE '%George%Davis%'
 chart: {"type": "none", "title": "Customer Segment Lookup"}
-— The narrative MUST use the EXACT persona_name value from the result row. NEVER rename or substitute (e.g. if the table shows "Wealth Manager", say "Wealth Manager" not "Wealth Builder").
+— The narrative MUST use the EXACT segment_name value from the result row. NEVER rename or substitute.
 — If the result has 0 rows: report "No customer named X was found in the database."
 — If the result has EXACTLY 1 row: answer the question directly using that row's values.
 — If the result has 2+ rows: this means MULTIPLE customers share that name. The narrative MUST open with:
    "Found **N customers** named '[name]' in the database. Please clarify which one you mean:"
-   Then list EACH customer on its own bullet with their customer_id, persona, income, and credit_score so the user can identify the right person.
+   Then list EACH customer on its own bullet with their customer_id, segment_name, income, and credit_score.
    End with: "Reply with the customer ID (e.g. **CUST_00123**) to get details for a specific customer."
    Do NOT pick one silently. Do NOT answer the original question until the user disambiguates.
+
+INDIVIDUAL CUSTOMER LOOKUP — ID-based queries (e.g. user replies "CUST_00003" or "tell me about CUST_00003"):
+When the user provides a customer ID directly, look up their full profile using that ID.
+ALWAYS use LEFT JOIN — NEVER INNER JOIN — so the row is returned even without Agent A data.
+RIGHT: SELECT c.customer_id, c.customer_name,
+              COALESCE(pa.persona_name, sa.segment_name) AS segment_name,
+              c.income, c.credit_score, c.clv_tier,
+              ROUND(c.churn_probability, 3) AS churn_probability,
+              ROUND(c.customer_lifetime_value, 0) AS clv,
+              c.channel_preference, c.digital_engagement_score
+       FROM customers c
+       LEFT JOIN persona_assignments pa ON c.customer_id = pa.customer_id
+       LEFT JOIN segment_assignments sa ON c.customer_id = sa.customer_id
+       WHERE c.customer_id = 'CUST_00003'
+chart: {"type": "none", "title": "Customer Profile"}
+— Always use the exact ID string the user provided (case-sensitive, e.g. 'CUST_00003').
+— NEVER use INNER JOIN here — persona_assignments may be empty if Agent A has not been run.
 
 CHART RULES:
 - none: Use for customer-listing queries (x-axis would be customer_id or names) — table is more useful
@@ -1058,8 +1117,8 @@ def _sanitize_sql(sql: str) -> str:
     # Pattern: operator token, optional whitespace, then "value in double quotes"
     # This avoids converting double-quoted column/table identifiers (e.g. SELECT "col" FROM ...)
     sql = re.sub(
-        r'(?<=[=!<>]\s{0,6})"([A-Za-z][A-Za-z0-9 _\-]*)"',
-        lambda m: f"'{m.group(1)}'",
+        r'([=!<>])\s{0,6}"([A-Za-z][A-Za-z0-9 _\-]*)"',
+        lambda m: f"{m.group(1)} '{m.group(2)}'",
         sql,
     )
     # Also handle: IN ("val1", "val2") → IN ('val1', 'val2')
@@ -1403,9 +1462,40 @@ def ask_chatbot(
                             )
                         chart = {"type": "none"}
                     else:
+                        # Duplicate-name guard: if all rows share the same customer_name
+                        # the narrative was written before SQL ran and is hallucinated.
+                        # Override with a disambiguation message so the user can pick the right record.
+                        _col_lower = [c.lower() for c in table["columns"]]
+                        if "customer_name" in _col_lower and len(rows) >= 2:
+                            _name_idx = _col_lower.index("customer_name")
+                            _names = {r[_name_idx] for r in rows}
+                            if len(_names) == 1:
+                                _cname = next(iter(_names))
+                                _bullets = []
+                                for _r in rows:
+                                    _rd = dict(zip(table["columns"], _r))
+                                    _cid = _rd.get("customer_id") or _rd.get("CUSTOMER_ID", "?")
+                                    _seg = (
+                                        _rd.get("segment_name") or _rd.get("persona_name")
+                                        or _rd.get("SEGMENT_NAME") or _rd.get("PERSONA_NAME")
+                                        or "unknown segment"
+                                    )
+                                    _inc = _rd.get("income") or _rd.get("INCOME")
+                                    _cs  = _rd.get("credit_score") or _rd.get("CREDIT_SCORE")
+                                    _inc_str = f", income **${float(_inc):,.0f}**" if _inc is not None else ""
+                                    _cs_str  = f", credit score **{_cs}**" if _cs is not None else ""
+                                    _bullets.append(f"- **{_cid}**: {_seg}{_inc_str}{_cs_str}")
+                                narrative = (
+                                    f"Found **{len(rows)} customers** named **{_cname}** in the database. "
+                                    "Please clarify which one you mean:\n\n"
+                                    + "\n".join(_bullets)
+                                    + "\n\nReply with the customer ID (e.g. **CUST_00123**) to get details for a specific customer."
+                                )
+                                chart = {"type": "none"}
+
                         # Auto-aggregate if the LLM returned ungrouped rows (safety net)
                         table = _auto_aggregate(table, llm_chart)
-                        chart = _resolve_chart(table["columns"], rows, llm_chart)
+                        chart = chart or _resolve_chart(table["columns"], rows, llm_chart)
             except Exception as e:
                 sql_error = str(e)
                 logger.warning("SQL execution failed: %s\nSQL: %s", e, sql[:400])
@@ -1446,6 +1536,37 @@ def ask_chatbot(
         )
         if not _is_hollow and _SPECULATIVE_RE.search(narrative):
             _is_hollow = True
+
+        # Unfilled template placeholders: LLM wrote {avg_income} or ${avg_clv} instead of real values
+        if not _is_hollow and re.search(r'\$?\{[a-z][a-z_]*\}', narrative):
+            _is_hollow = True
+            logger.info("Segment AI: unfilled placeholders detected in narrative — triggering grounded replacement.")
+
+        # Category name cross-validation: extract bold non-numeric terms from narrative (e.g. "Income Verification",
+        # "Personal Loan") and check that at least one appears in the actual result rows.
+        # If NONE of the bolded category names appear in the table, the narrative was hallucinated.
+        if not _is_hollow:
+            _bold_categories = re.findall(r'\*\*([A-Za-z][A-Za-z ]{3,})\*\*', narrative)
+            # Only check when we have 2+ category names (skip numeric-only narratives)
+            if len(_bold_categories) >= 2:
+                _all_cell_text = ' '.join(
+                    str(v).lower()
+                    for row in table.get('rows', [])
+                    for v in row
+                    if v is not None
+                ).lower()
+                _col_text = ' '.join(c.lower() for c in table.get('columns', []))
+                _searchable = _all_cell_text + ' ' + _col_text
+                _matches = sum(
+                    1 for w in _bold_categories
+                    if w.lower() in _searchable
+                )
+                if _matches == 0:
+                    _is_hollow = True
+                    logger.info(
+                        "Segment AI: bold category names %s not found in table — triggering grounded replacement.",
+                        _bold_categories[:4],
+                    )
 
         if _is_hollow:
             logger.info("Segment AI: hollow narrative detected — generating grounded replacement.")
