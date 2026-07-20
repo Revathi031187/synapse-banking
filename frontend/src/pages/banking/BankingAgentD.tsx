@@ -175,7 +175,7 @@ export default function BankingAgentD() {
   const { mode, personaId, customerId, persistedOrchestrate } = ui;
 
   const personasQuery = useQuery({
-    queryKey: ['banking-personas-d'],
+    queryKey: ['banking-personas'],
     queryFn: async () => {
       const res = await fetch(`${API_BASE}/api/banking/personas`);
       if (!res.ok) throw new Error('Failed personas');
@@ -487,7 +487,7 @@ export default function BankingAgentD() {
                   value={customerId}
                   disabled={segmentCustomersQuery.isLoading}
                   onChange={(e) => {
-                    setUi((prev) => ({ ...prev, customerId: e.target.value }));
+                    setUi((prev) => ({ ...prev, customerId: e.target.value, persistedOrchestrate: null }));
                     orchestrateMutation.reset();
                   }}
                 >
@@ -514,7 +514,7 @@ export default function BankingAgentD() {
                 className="w-full border border-slate-300 rounded-xl px-3 py-2.5 bg-white max-w-xl"
                 value={customerId}
                 onChange={(e) => {
-                  setUi((prev) => ({ ...prev, customerId: e.target.value }));
+                  setUi((prev) => ({ ...prev, customerId: e.target.value, persistedOrchestrate: null }));
                   orchestrateMutation.reset();
                 }}
               >
@@ -890,7 +890,7 @@ export default function BankingAgentD() {
                                   )}
                                 </div>
                                 <div className="shrink-0 text-right">
-                                  <p className="text-2xl font-black text-slate-900 leading-none">{nextVisitResult.affinity_analysis.affinity_score.toFixed(2)}</p>
+                                  <p className="text-2xl font-black text-slate-900 leading-none">{(nextVisitResult.affinity_analysis?.affinity_score ?? 0).toFixed(2)}</p>
                                   <p className="text-[10px] text-slate-400 mt-0.5">affinity</p>
                                   {nextVisitResult.next_visit_directives.recommended_channel && (
                                     <span className="inline-block mt-1.5 text-[10px] px-2 py-0.5 rounded-full bg-white border border-slate-200 text-slate-600">

@@ -4,7 +4,7 @@ import {
   BarChart2, Table2, X, Send, ChevronDown, Plus, Sparkles,
   Download, Copy, Check, TrendingUp, PieChart as PieIcon, Activity,
   Trash2, Database, AlertTriangle, TrendingDown, Minus, Bot,
-  FileText, Zap, Package, Layers,
+  FileText, Zap, Package,
 } from 'lucide-react';
 import {
   BarChart, Bar, LineChart, Line, AreaChart, Area,
@@ -74,14 +74,6 @@ interface ProductPulseItem {
   momentum: 'Growing' | 'Stable' | 'Declining';
   pct_change: number | null;
   months: ProductPulseMonth[];
-}
-
-interface FunnelStage {
-  id: string;
-  label: string;
-  sublabel: string;
-  count: number | null;
-  color: string;
 }
 
 interface TrendMonth { month: string; value: number; }
@@ -681,7 +673,7 @@ function ChatMessage({
                 <p className="text-[11px] font-bold text-violet-500 uppercase tracking-widest">Segment AI</p>
               </div>
               <NarrativeMarkdown text={ans.narrative} />
-              {ans.sql_error && (
+              {ans.sql_error && (hasTable || hasChart) && (
                 <p className="mt-2 text-xs text-amber-700 bg-amber-50 rounded-lg px-3 py-2">
                   Note: {ans.sql_error}
                 </p>
@@ -1450,113 +1442,6 @@ function ProductPulsePanel({ products, onClose }: { products: ProductPulseItem[]
   );
 }
 
-// ── Funnel Health Panel ───────────────────────────────────────────────────────
-
-function FunnelPanel({ stages, onClose }: { stages: FunnelStage[]; onClose: () => void }) {
-  const maxCount = Math.max(...stages.map(s => s.count ?? 0), 1);
-  const hasData = stages.some(s => s.count !== null && s.count > 0);
-
-  return (
-    <div className="fixed inset-y-0 right-0 w-full max-w-xl bg-white shadow-2xl border-l border-slate-200 flex flex-col z-50">
-      {/* Header */}
-      <div className="flex items-center justify-between px-5 py-4 border-b border-slate-200">
-        <div className="flex items-center gap-2">
-          <Layers className="w-4 h-4 text-indigo-600" />
-          <h2 className="font-semibold text-slate-900 text-sm">Funnel Health</h2>
-          <span className="text-[11px] bg-indigo-100 text-indigo-700 font-semibold px-2 py-0.5 rounded-full">
-            Agent A → B → C → D
-          </span>
-        </div>
-        <button onClick={onClose} className="text-slate-400 hover:text-slate-600"><X className="w-4 h-4" /></button>
-      </div>
-
-      <div className="flex-1 overflow-y-auto p-6">
-        {!hasData && (
-          <div className="text-center py-12">
-            <Layers className="w-10 h-10 text-slate-300 mx-auto mb-3" />
-            <p className="text-sm font-semibold text-slate-500">No pipeline runs detected yet</p>
-            <p className="text-xs text-slate-400 mt-1 leading-relaxed max-w-xs mx-auto">
-              Run agents from the pipeline pages to populate this funnel. Counts track unique customers processed per stage this session.
-            </p>
-          </div>
-        )}
-
-        {hasData && (
-          <>
-            <p className="text-xs text-slate-500 mb-6 leading-relaxed">
-              Each bar shows how many unique customers were processed by that agent stage in this session. Drop-off between stages highlights where the pipeline narrows.
-            </p>
-            <div className="space-y-4">
-              {stages.map((stage, i) => {
-                const prev = stages[i - 1];
-                const pct = maxCount > 0 ? ((stage.count ?? 0) / maxCount) * 100 : 0;
-                const dropPct = prev?.count && stage.count !== null
-                  ? Math.round((1 - stage.count / prev.count) * 100) : null;
-                return (
-                  <div key={stage.id}>
-                    <div className="flex items-center justify-between mb-1">
-                      <div>
-                        <span className="text-xs font-bold text-slate-800">{stage.label}</span>
-                        <span className="text-[10px] text-slate-400 ml-2">{stage.sublabel}</span>
-                      </div>
-                      <div className="flex items-center gap-2">
-                        {dropPct !== null && dropPct > 0 && (
-                          <span className="text-[10px] bg-red-50 text-red-600 font-semibold px-1.5 py-0.5 rounded-full">
-                            −{dropPct}% drop
-                          </span>
-                        )}
-                        <span className="text-sm font-bold text-slate-900 tabular-nums">
-                          {stage.count !== null ? stage.count.toLocaleString() : '—'}
-                        </span>
-                      </div>
-                    </div>
-                    <div className="h-8 bg-slate-100 rounded-lg overflow-hidden">
-                      <div
-                        className="h-full rounded-lg transition-all duration-500 flex items-center px-2"
-                        style={{ width: `${pct}%`, backgroundColor: stage.color, minWidth: pct > 0 ? '2rem' : '0' }}>
-                        {pct > 15 && (
-                          <span className="text-[10px] font-semibold text-white">
-                            {stage.count !== null ? stage.count.toLocaleString() : ''}
-                          </span>
-                        )}
-                      </div>
-                    </div>
-                  </div>
-                );
-              })}
-            </div>
-
-            {/* Drop-off insight */}
-            {(() => {
-              const worstDrop = stages.reduce<{ label: string; pct: number } | null>((acc, s, i) => {
-                const prev = stages[i - 1];
-                if (!prev?.count || s.count === null) return acc;
-                const dp = Math.round((1 - s.count / prev.count) * 100);
-                if (!acc || dp > acc.pct) return { label: s.label, pct: dp };
-                return acc;
-              }, null);
-              if (!worstDrop || worstDrop.pct < 5) return null;
-              return (
-                <div className="mt-6 flex items-start gap-2 bg-amber-50 border border-amber-200 rounded-xl px-3 py-2.5">
-                  <AlertTriangle className="w-3.5 h-3.5 text-amber-600 shrink-0 mt-0.5" />
-                  <p className="text-[11px] text-amber-800 leading-relaxed">
-                    <span className="font-semibold">Largest drop-off: </span>
-                    {worstDrop.pct}% of customers didn't reach the <strong>{worstDrop.label}</strong> stage. Check if this agent is being run for all customers in the current session.
-                  </p>
-                </div>
-              );
-            })()}
-
-            <div className="mt-4 text-[10px] text-slate-400 border-t border-slate-100 pt-3">
-              Counts reset when the server restarts. Run each agent from their respective pipeline pages to populate.
-            </div>
-          </>
-        )}
-      </div>
-    </div>
-  );
-}
-
 // ── ThinkingBubble ────────────────────────────────────────────────────────────
 
 function ThinkingBubble({ question }: { question: string }) {
@@ -1607,9 +1492,6 @@ export default function BankingAskGenie() {
   const [productPulse, setProductPulse] = React.useState<ProductPulseItem[] | null>(null);
   const [productPulseLoading, setProductPulseLoading] = React.useState(false);
   const [showProductPulse, setShowProductPulse] = React.useState(false);
-  const [funnel, setFunnel] = React.useState<FunnelStage[] | null>(null);
-  const [funnelLoading, setFunnelLoading] = React.useState(false);
-  const [showFunnel, setShowFunnel] = React.useState(false);
 
   const bottomRef = React.useRef<HTMLDivElement>(null);
   const textareaRef = React.useRef<HTMLTextAreaElement>(null);
@@ -1666,17 +1548,6 @@ export default function BankingAskGenie() {
     finally { setProductPulseLoading(false); }
   }, [API_BASE, productPulseLoading]);
 
-  const loadFunnel = React.useCallback(async () => {
-    if (funnelLoading) return;
-    setFunnelLoading(true);
-    try {
-      const r = await fetch(`${API_BASE}/api/banking/chat/funnel`);
-      const d = await r.json();
-      setFunnel(d.stages ?? []);
-      setShowFunnel(true);
-    } catch { /* ignore */ }
-    finally { setFunnelLoading(false); }
-  }, [API_BASE, funnelLoading]);
 
   // Save history whenever it changes
   React.useEffect(() => {
@@ -1755,9 +1626,6 @@ export default function BankingAskGenie() {
       {showProductPulse && productPulse && (
         <ProductPulsePanel products={productPulse} onClose={() => setShowProductPulse(false)} />
       )}
-      {showFunnel && funnel && (
-        <FunnelPanel stages={funnel} onClose={() => setShowFunnel(false)} />
-      )}
 
       {/* Header */}
       <div className="flex items-start justify-between gap-4">
@@ -1803,16 +1671,6 @@ export default function BankingAskGenie() {
           >
             <Package className="w-3.5 h-3.5" />
             {productPulseLoading ? 'Loading…' : 'Product Pulse'}
-          </button>
-          {/* Funnel Health button */}
-          <button
-            type="button"
-            onClick={loadFunnel}
-            disabled={funnelLoading}
-            className="inline-flex items-center gap-1.5 px-3 py-2 rounded-lg border border-indigo-200 text-indigo-700 bg-indigo-50 text-sm font-medium hover:bg-indigo-100 disabled:opacity-50 transition-colors"
-          >
-            <Layers className="w-3.5 h-3.5" />
-            {funnelLoading ? 'Loading…' : 'Funnel'}
           </button>
           {chatEntries.length > 0 && (
             <>

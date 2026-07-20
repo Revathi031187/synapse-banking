@@ -12,6 +12,7 @@ Databricks Genie + Unity Catalog persona sync helpers.
 from __future__ import annotations
 
 import os
+import re
 import logging
 from typing import Any, Dict, List, Optional, Tuple
 
@@ -631,7 +632,8 @@ def build_genie_persona_context(
         f"3. When the user says 'Yes', 'Yes please', or similar, execute the action you most recently proposed — run the SQL and return the table.\n"
         f"4. Keep narrative text brief (2-3 sentences max). The table IS the answer.\n"
         f"5. CRITICAL — persona names: ALWAYS get the persona_name from `{pa}` by joining on customer_id. NEVER read persona_name directly from `{customers_tbl}` — that column is stale and will give wrong results. The authoritative persona assignment is ONLY in `{pa}`.\n"
-        f"6. If a customer name matches multiple rows, list ALL matching rows in the table — do not pick just one. State clearly that multiple customers share this name and refer to customer_id to disambiguate.\n\n"
+        f"6. If a customer name matches multiple rows, list ALL matching rows in the table — do not pick just one. State clearly that multiple customers share this name and refer to customer_id to disambiguate.\n"
+        f"7. CRITICAL — NEVER write placeholder text such as '(value from SQL result)', '**', '[insert value]', '[X]', or any unfilled template token in your narrative. If you reference a number or fact, it MUST be the real computed value from your SQL query. If you are unsure of a value, omit that sentence and let the table speak.\n\n"
         f"For persona or segment questions, join `{customers_tbl}` to `{pa}` ON `customer_id`. "
         f"Use `{pa}.persona_name` and `{pa}.cluster_id` as the ONLY source of truth for current segments. "
         f"NEVER use `{customers_tbl}.persona_name` — it is legacy data from dataset generation and does not reflect the current segmentation.\n\n"
@@ -1243,6 +1245,18 @@ def ask_genie(question: str, context_prefix: str, conversation_id: Optional[str]
                     payload["table"] = table
             except Exception as qr_exc:
                 logger.warning("Could not fetch Genie query-result: %s", qr_exc)
+
+    # Strip placeholder narratives Genie sometimes emits instead of real values.
+    # Pattern matches common unfilled tokens: "(value from SQL result)", "**", "[insert X]", etc.
+    _PLACEHOLDER_RE = re.compile(
+        r'\(value from SQL\b|\(from (?:the )?(?:SQL|query|data)\b'
+        r'|\[\s*(?:insert|value|X)\s*\]'
+        r'|\*\*\s*\(value'
+        r'|\bplaceholder\b',
+        re.IGNORECASE,
+    )
+    if payload.get("narrative") and _PLACEHOLDER_RE.search(payload["narrative"]):
+        payload["narrative"] = ""
 
     payload["success"] = True
     payload["config"] = cfg

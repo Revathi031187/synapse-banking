@@ -3389,11 +3389,17 @@ async def create_banking_micro_segments(macro_segment_id: int, n_micro_segments:
         logger.info(f"  Executing banking micro segmentation agent...")
         result = micro_agent.execute(macro_segment_id, n_micro_segments)
 
+        # execute() returns {'error': ...} on failure instead of raising — detect and propagate
+        if result.get('error') or not result.get('micro_segments'):
+            err_msg = result.get('error') or 'Micro segmentation produced no segments'
+            logger.error(f"Micro segmentation failed for segment {macro_segment_id}: {err_msg}")
+            raise HTTPException(status_code=500, detail=err_msg)
+
         # Accumulate all generated micro names so future runs avoid them
         new_names = {seg['name'] for seg in result.get('micro_segments', []) if seg.get('name')}
         system_state['banking']['used_micro_names'] = global_names | new_names
 
-        # Store in system state
+        # Store in system state (only store valid results)
         if 'banking_micro_segments' not in system_state['banking']:
             system_state['banking']['banking_micro_segments'] = {}
 
@@ -3430,13 +3436,16 @@ async def get_banking_micro_segments(macro_segment_id: int):
         if 'banking_micro_segments' not in system_state['banking']:
             system_state['banking']['banking_micro_segments'] = {}
         
-        if macro_segment_id not in system_state['banking']['banking_micro_segments']:
-            # Auto-create micro segments if Agent A results exist
+        cached = system_state['banking']['banking_micro_segments'].get(macro_segment_id)
+        # Re-create if missing or previously cached as an error / empty result
+        if not cached or cached.get('error') or not cached.get('micro_segments'):
             if system_state['banking']['agent_a_results']:
+                # Clear bad entry before re-creating so a fresh result is stored
+                system_state['banking']['banking_micro_segments'].pop(macro_segment_id, None)
                 await create_banking_micro_segments(macro_segment_id)
             else:
                 raise HTTPException(status_code=404, detail=f"No micro segments found for macro segment {macro_segment_id}")
-        
+
         result = system_state['banking']['banking_micro_segments'][macro_segment_id]
         
         # Convert numpy types
@@ -4326,7 +4335,8 @@ def _get_churn_df():
         )
         _churn_df_cache = df_churn
         return df_churn
-    except Exception:
+    except Exception as _churn_exc:
+        logger.warning("add_essential_churn_features failed — churn scores will be zeroed: %s", _churn_exc)
         return banking_agent_a.customers_df
 
 

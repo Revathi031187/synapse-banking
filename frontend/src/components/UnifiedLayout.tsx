@@ -1,5 +1,6 @@
-import { Outlet, NavLink, useNavigate } from 'react-router-dom';
-import { Home, Database, Users, Target, BarChart3, Search, Crosshair, Star, Activity, Sparkles, Globe, TrendingUp } from 'lucide-react';
+import { Outlet, NavLink, useNavigate, useLocation } from 'react-router-dom';
+import { Home, Database, Users, Target, BarChart3, Search, Crosshair, Star, Activity, Sparkles, Globe, TrendingUp, LayoutDashboard } from 'lucide-react';
+import { AnimatePresence, motion } from 'framer-motion';
 import latentviewLogo from '../assets/latentview-logo.svg';
 import { useQuery } from '@tanstack/react-query';
 
@@ -11,6 +12,8 @@ const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || 'http://localhost:8002
 
 export default function UnifiedLayout({ industry }: UnifiedLayoutProps) {
   const navigate = useNavigate();
+  const location = useLocation();
+  const isDashboard = location.pathname === `/${industry}/dashboard`;
   
   // Check if Agent A has been run (for Academy industry)
   const { data: agentAResults } = useQuery({
@@ -67,6 +70,7 @@ export default function UnifiedLayout({ industry }: UnifiedLayoutProps) {
   const config = industryConfig[industry];
   
   const navLinks = industry === 'banking' ? [
+    { path: `/${industry}/dashboard`, label: 'Dashboard', icon: LayoutDashboard },
     { path: `/${industry}/data-loader`, label: 'Data Loader', icon: Database },
     { path: `/${industry}/macro-dashboard`, label: 'Segments', icon: Search },
     { path: `/${industry}/agent-b`, label: 'Recommender', icon: Crosshair },
@@ -85,7 +89,7 @@ export default function UnifiedLayout({ industry }: UnifiedLayoutProps) {
   ];
   
   return (
-    <div className="min-h-screen bg-gray-50">
+    <div className={isDashboard ? 'h-screen overflow-hidden bg-gray-50 flex flex-col' : 'min-h-screen bg-gray-50'}>
       {/* Top Bar */}
       <div className="bg-white border-b border-gray-200 shadow-sm sticky top-0 z-50">
         <div className="max-w-7xl mx-auto px-6 py-4">
@@ -157,12 +161,21 @@ export default function UnifiedLayout({ industry }: UnifiedLayoutProps) {
       </div>
       
       {/* Content */}
-      <div className="max-w-7xl mx-auto px-6 py-8">
-        <Outlet />
-      </div>
-      
-      {/* Footer */}
-      <footer className="bg-white border-t border-gray-200 mt-16">
+      <AnimatePresence mode="wait" initial={false}>
+        <motion.div
+          key={location.pathname}
+          initial={{ opacity: 0, y: 5 }}
+          animate={{ opacity: 1, y: 0 }}
+          exit={{ opacity: 0 }}
+          transition={{ duration: 0.2, ease: 'easeOut' }}
+          className={isDashboard ? 'flex-1 overflow-hidden flex flex-col' : 'max-w-7xl mx-auto px-6 py-8'}
+        >
+          <Outlet />
+        </motion.div>
+      </AnimatePresence>
+
+      {/* Footer — hidden on dashboard (no-scroll layout) */}
+      {!isDashboard && <footer className="bg-white border-t border-gray-200 mt-16">
         <div className="max-w-7xl mx-auto px-6 py-8">
           <div className="flex items-center justify-between">
             <div className="text-gray-600 text-sm">
@@ -175,7 +188,7 @@ export default function UnifiedLayout({ industry }: UnifiedLayoutProps) {
             </div>
           </div>
         </div>
-      </footer>
+      </footer>}
     </div>
   );
 }

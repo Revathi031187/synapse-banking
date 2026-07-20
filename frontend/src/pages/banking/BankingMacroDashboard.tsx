@@ -123,53 +123,57 @@ export default function BankingMacroDashboard() {
 
   // Load micro segments for a macro cluster
   const loadMicroSegments = async (macroClusterId: number) => {
-    if (microSegments[macroClusterId]) return; // Already loaded
-    
+    // Guard: only skip if we already have real segments (length > 0).
+    // [] is truthy in JS, so "if (arr)" would permanently block retries after a failed load.
+    if ((microSegments[macroClusterId]?.length ?? 0) > 0) return;
+
     setLoadingMicro(prev => [...prev, macroClusterId]);
-    
+
     try {
-      console.log(`🚀 Creating micro segments for cluster ${macroClusterId}...`);
-      
-      // Create micro segments
+      console.log(`Creating micro segments for cluster ${macroClusterId}...`);
+
+      // POST creates (or re-creates) micro segments on the backend
       const createResponse = await fetch(
         `${API_BASE_URL}/api/banking/micro-segments/${macroClusterId}`,
         { method: 'POST' }
       );
-      
+
       if (!createResponse.ok) {
-        throw new Error('Failed to create micro segments');
+        const errBody = await createResponse.json().catch(() => ({}));
+        throw new Error(errBody?.detail || 'Failed to create micro segments');
       }
-      
-      // Fetch micro segments
+
+      // GET retrieves the stored result (POST already created it; GET is a cache read)
       const fetchResponse = await fetch(
         `${API_BASE_URL}/api/banking/micro-segments/${macroClusterId}`
       );
-      
+
       if (!fetchResponse.ok) {
         throw new Error('Failed to fetch micro segments');
       }
-      
+
       const data = await fetchResponse.json();
       const microSegs = data.result?.micro_segments || data.micro_segments || [];
-      
-      console.log(`✓ Loaded ${microSegs.length} micro segments for cluster ${macroClusterId}`);
-      
+
+      if (microSegs.length === 0) {
+        throw new Error('No micro segments returned — backend may have failed silently');
+      }
+
+      console.log(`Loaded ${microSegs.length} micro segments for cluster ${macroClusterId}`);
+
       setUi((prev) => ({
         ...prev,
-        microSegments: {
-          ...prev.microSegments,
-          [macroClusterId]: microSegs,
-        },
+        microSegments: { ...prev.microSegments, [macroClusterId]: microSegs },
       }));
     } catch (error) {
       console.error('Error loading micro segments:', error);
-      setUi((prev) => ({
-        ...prev,
-        microSegments: {
-          ...prev.microSegments,
-          [macroClusterId]: [],
-        },
-      }));
+      // Do NOT store [] here — that would make the guard treat it as "already loaded"
+      // and permanently block retries. Remove the key so the next click retries cleanly.
+      setUi((prev) => {
+        const next = { ...prev.microSegments };
+        delete next[macroClusterId];
+        return { ...prev, microSegments: next };
+      });
     } finally {
       setLoadingMicro(prev => prev.filter(id => id !== macroClusterId));
     }
@@ -177,16 +181,13 @@ export default function BankingMacroDashboard() {
 
   // Toggle macro expansion
   const toggleMacro = async (macroClusterId: number) => {
-    console.log('🔄 toggleMacro called for cluster:', macroClusterId, 'Current expanded:', expandedMacro);
-    
     if (expandedMacro === macroClusterId) {
-      console.log('📦 Collapsing macro segment:', macroClusterId);
       setUi((prev) => ({ ...prev, expandedMacro: null }));
     } else {
-      console.log('📂 Expanding macro segment:', macroClusterId);
       setUi((prev) => ({ ...prev, expandedMacro: macroClusterId }));
-      
-      if (!microSegments[macroClusterId]) {
+
+      // Only skip the load if we have real segments already cached
+      if ((microSegments[macroClusterId]?.length ?? 0) === 0) {
         await loadMicroSegments(macroClusterId);
       }
     }

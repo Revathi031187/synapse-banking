@@ -1392,7 +1392,7 @@ function MTAIntelligencePanel({
                                 .sort(([,a],[,b]) => b - a)
                                 .map(([ch, s]) => {
                                   const scores = Object.values(rec?.personal_scores ?? {});
-                                  const maxScore = scores.length > 0 ? Math.max(...scores) : 1;
+                                  const maxScore = Math.max(...scores) || 1;
                                   const isF = channelFatigue?.[ch]?.is_fatigued === true;
                                   const isBest = ch === bestChannel;
                                   return (

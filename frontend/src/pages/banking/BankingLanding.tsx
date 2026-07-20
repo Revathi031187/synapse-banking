@@ -2151,17 +2151,17 @@ export default function BankingLanding() {
         </div>
       </div>
 
-      {/* ── First-Timer Popular Picks — shown before sign-in ─────────────── */}
-      {!personalized && allProducts.length > 0 && (() => {
-        const picks = allProducts
-          .filter(p =>
-            (p.credit_tier_required === 'any' || !p.credit_tier_required) &&
-            (!p.min_income || p.min_income === 0) &&
-            (!p.min_credit_score || p.min_credit_score === 0) &&
-            p.category === 'Personal'
-          )
-          .sort((a, b) => (b.avg_rating ?? 0) - (a.avg_rating ?? 0))
-          .slice(0, 3);
+      {/* ── First-Timer Popular Picks — always visible unless personalized picks are shown ── */}
+      {/* Condition: hide ONLY when the signed-in personalized section below will render.    */}
+      {/* Previously used !personalized, but a cookie-tracked returning visitor can have     */}
+      {/* personalized=true with no firstName → both sections disappeared.                  */}
+      {!(firstName && personalized && personalizedCards.length > 0) && (() => {
+        // Pin the 3 default hero products by ID — no filter needed, no API dependency.
+        // Uses live API data when available; falls back to FALLBACK on first render.
+        const DEFAULT_PICK_IDS = ['MRD_P001', 'MRD_P002', 'MRD_P003'];
+        const picks: Product[] = DEFAULT_PICK_IDS
+          .map(id => allProducts.find(p => p.product_id === id) ?? FALLBACK.find(p => p.product_id === id))
+          .filter((p): p is Product => Boolean(p));
 
         if (picks.length === 0) return null;
 
