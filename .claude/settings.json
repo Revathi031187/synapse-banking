@@ -151,7 +151,14 @@
       "Bash(git config *)",
       "Bash(git init *)",
       "Bash(git remote *)",
-      "Bash(git fetch *)"
+      "Bash(git fetch *)",
+      "Bash(git commit *)",
+      "Bash(git branch *)",
+      "Bash(git merge *)",
+      "Bash(taskkill //F //PID 7528)",
+      "Bash(taskkill //F //PID 30932)",
+      "Bash(curl -s -X POST http://localhost:8002/api/banking/chat/ask -H \"Content-Type: application/json\" -d \"{\\\\\"question\\\\\": \\\\\"Show monthly marketing spend trend across all channels\\\\\", \\\\\"history\\\\\": []}\")",
+      "Bash(python -c \"import json,sys; d=json.load\\(sys.stdin\\); print\\('NARRATIVE:', d['narrative'][:400]\\); print\\(\\); print\\('SQL:', d.get\\('sql'\\)\\)\")"
     ]
   }
 }

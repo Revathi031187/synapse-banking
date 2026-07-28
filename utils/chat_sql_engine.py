@@ -1479,7 +1479,7 @@ _OUT_OF_SCOPE_RE = re.compile(
     r'\bfood\b|\bdish\b|\bmeal\b|restaurant|menu|calories|nutrition|diet|'
     r'weather|forecast|temperature|climate|'
     r'\bsport\b|football|soccer|cricket|basketball|tennis|baseball|golf|rugby|'
-    r'movie|film|\bshow\b|series|episode|\bactor\b|\bactress\b|celebrity|'
+    r'movie|film|\btv show\b|series|episode|\bactor\b|\bactress\b|celebrity|'
     r'singer|musician|\bsong\b|\bmusic\b|album|playlist|'
     r'\bjoke\b|funny|humor|laugh|meme|'
     r'\bpoem\b|poetry|\bessay\b|\bstory\b|fiction|novel|'
@@ -1494,12 +1494,12 @@ _OUT_OF_SCOPE_RE = re.compile(
 _IN_SCOPE_RE = re.compile(
     r'\b(customer|segment|product|loan|credit|mortgage|deposit|banking|'
     r'churn|transaction|revenue|clv|income|score|campaign|recommend|'
-    r'meridian|synapse|agent|persona|offer|channel|digital|engagement|'
+    r'meridian|synapse|agent|persona|offer|channels?|digital|engagement|'
     r'saver|accumulator|trendsetter|at.risk|retiree|depositor|'
     r'portfolio|account|balance|interest|apr|savings|checking|card|'
     r'wealth|analytics|dashboard|incomplete|application|wishlist|'
-    r'how many|average|total|top \d|which segment|which product|show me|'
-    r'ad.spend|roas|conversion|impression|click|churn.prob|clv.tier)\b',
+    r'how many|average|total|top \d|trend|monthly|which segment|which product|show me|'
+    r'ad.spend|marketing|spend|roas|conversion|impression|click|churn.prob|clv.tier)\b',
     re.IGNORECASE,
 )
 
