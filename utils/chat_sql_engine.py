@@ -257,7 +257,7 @@ def build_schema_context() -> str:
         "ad_spend":            "Monthly marketing spend and performance by channel and persona",
         "impressions":         "Product recommendation impression and click ledger",
         "wishlist":            "Products customers explicitly saved/wishlisted",
-        "incomplete_applications": "Applications started but not completed",
+        "incomplete_applications": "Applications started but not completed. Columns: customer_id, product_id, started_date, last_step. last_step values (EXACT — never rename): 'personal_info', 'financial_details', 'review', 'sign', 'document_upload'",
     }
 
     for table, fname in TABLE_FILES:
@@ -313,7 +313,19 @@ def build_schema_context() -> str:
         "  - customers.channel_preference: customer's PREFERRED contact channel (values: Digital, Branch, Hybrid — 3 values). Use for 'preferred communication channel' questions.\n"
         "  - customers.preferred_communication_style: communication style preference (e.g. Formal, Casual, etc.)\n"
         "  - products has NO revenue column — use SUM(transactions.amount) JOIN products ON product_id\n"
+        "  - customers.annual_transaction_value: PRE-COMPUTED total annual spend per customer — use this for 'top N by transaction value' queries instead of aggregating the transactions table.\n"
         "  - ad_spend columns: year, month, month_name, channel, persona, spend_usd, revenue_usd, roas, roi_pct, cpa, conversion_rate, click_rate, open_rate, sent, opened, clicked, converted, true_roas, true_roi_pct\n"
+        "  - ad_spend has NO date column — it has INTEGER year and month columns. Data covers 2025 only (months 1–12). For 'last N months of ad spend': use WHERE year = 2025 AND month >= (12 - N + 1). NEVER use CURRENT_DATE on ad_spend.\n"
+        "  - ad_spend.sent = total contacts/reach for that campaign row (email sent, SMS sent, etc.) — NOT a product impression count. NEVER call it 'impressions'.\n"
+        "  - customers.clv_tier values: 'Platinum', 'Gold', 'Silver', 'Bronze' — use these exact strings.\n"
+        "  - customers.days_since_last_transaction: PRE-COMPUTED integer, use it directly for dormancy queries. Max value in this dataset is ~48. Use >= 30 for dormancy targeting (yields meaningful cohort). NEVER use >= 90 (returns 0 rows — no customer exceeds 48 days). NEVER compute it from CURRENT_DATE.\n"
+        "CRITICAL — DATE REFERENCE RULE (transaction data is STATIC, max date 2025-06-04):\n"
+        "  NEVER use CURRENT_DATE, NOW(), TODAY(), or GETDATE() for time-range filters on transactions.\n"
+        "  Instead use: (SELECT MAX(CAST(transaction_date AS DATE)) FROM transactions) as the anchor date.\n"
+        "  'last 12 months' → WHERE CAST(transaction_date AS DATE) >= (SELECT MAX(CAST(transaction_date AS DATE)) - INTERVAL '365' DAY FROM transactions)\n"
+        "  'last 6 months'  → WHERE CAST(transaction_date AS DATE) >= (SELECT MAX(CAST(transaction_date AS DATE)) - INTERVAL '180' DAY FROM transactions)\n"
+        "  'last 90 days'   → WHERE CAST(transaction_date AS DATE) >= (SELECT MAX(CAST(transaction_date AS DATE)) - INTERVAL '90'  DAY FROM transactions)\n"
+        "  For DORMANCY on customers table use: WHERE c.days_since_last_transaction >= 30  (no date math needed; max value in dataset is ~48 so never use >= 90)\n"
         "PRODUCT COMPATIBILITY (customers table has: credit_score, credit_tier, income):\n"
         "  - products.credit_tier_required: 'any'=all, 'fair'=credit_score>=580, 'good'=credit_score>=670, 'excellent'=credit_score>=740\n"
         "  - always check: c.income >= p.min_income AND c.credit_score >= p.min_credit_score when recommending\n"
@@ -341,10 +353,11 @@ CRITICAL — JSON LINE BREAKS: The "narrative" value in your JSON MUST use \n es
 Rules:
 - **Open with the key metric in bold**: e.g., "**247 customers** (4.9% of the base) have incomplete applications — a significant missed revenue opportunity."
 - Use `**bold**` for ALL numbers, percentages, dollar amounts, and key metrics throughout
+- Format ALL monetary values (revenue, spend, income, balance, deposit, cost, amount, budget) as **$X.XK** / **$X.XM** / **$X.XB** — NEVER write raw decimals like 135600.0 or 23824.0. Examples: 135600 → **$135.6K**, 2300000 → **$2.3M**. Non-monetary metrics (ROAS, scores, rates, counts) use bold without $: **5.69 ROAS**, **1,247 customers**, **720 credit score**.
 - Use `- bullet points` when listing 3+ data points or breakdowns (e.g., top products, top segments) — EACH bullet on its OWN LINE using \n
-- End every response with "**Recommendation:** ..." followed by 1-2 specific, actionable banking insights — on its own line preceded by \n\n
+- Add "**Recommendation:** ..." ONLY when the answer involves segment strategy, product fit, campaign targeting, customer behaviour, or risk/retention analysis. SKIP the Recommendation entirely for simple factual lookups (e.g. "how many", "list the segments", "what is the definition of", pure count or name queries). When included, place it on its own line preceded by \n\n.
 - Use `## Section` headers only when the answer has 2+ clearly distinct parts — each header on its own line
-- NEVER start with "The SQL query identifies..." or "The query shows..." — start with the actual insight
+- NEVER start with query descriptions: "The SQL query identifies...", "The query returns...", "The query filters...", "This query retrieves..." — these describe the SQL, not the data. Start with the actual finding (e.g. "**143 Platinum and Gold customers** prefer digital channels but haven't transacted in 30+ days.")
 - NEVER write a 1-2 sentence answer — always provide depth, context, and business meaning
 - When listing customers, explain WHO they are and WHY it matters for the bank, not just how many
 - NEVER describe characteristics generically (e.g. "High average income") without citing the actual numbers from the query result. Always say "avg income of **$67,400**" not just "high income".
@@ -376,11 +389,33 @@ CORRECT behaviour:
 
 COLUMN COMPLETENESS — "characteristics" / "describe" / "profile" questions:
 When the user asks "what are the key characteristics", "describe", "profile", or "compare" ANY group — your SQL MUST SELECT all the columns you will discuss in the narrative. Required columns per entity type:
-- Persona/segment profile: persona_name, customer_count, avg_clv, avg_income, avg_credit_score, avg_churn_prob, avg_digital_engagement, avg_deposits
+- Segment/persona profile: segment_name, customer_count, avg_clv, avg_income, avg_credit_score, avg_churn_prob, avg_digital_engagement, avg_deposits
 - Customer list: customer_id, customer_name, churn_probability, clv_tier, income, credit_score
 - Product profile: product_name, subcategory, avg_rating, min_income, min_credit_score, credit_tier_required
   (use subcategory for grouping — 12 distinct types; category only has 3 values: Personal/Business/Agricultural)
 NEVER return 2 columns (e.g., name + avg_clv only) then describe 6 characteristics in the narrative.
+
+SEGMENT CHARACTERISTICS NARRATIVE — BEHAVIORAL INTERPRETATION REQUIRED:
+When answering "key characteristics", "describe each segment", or "segment profiles", the narrative MUST go
+beyond raw numbers and explain what each metric MEANS for that customer group. Raw numbers alone are NOT an insight.
+
+Interpretation guide (use in narrative alongside the actual values):
+- avg_credit_score < 620 → "subprime credit profile — limited product eligibility, elevated default risk"
+- avg_credit_score 620–720 → "fair-to-good credit — eligible for standard personal products"
+- avg_credit_score > 750 → "excellent credit — qualifies for premium cards and large loans"
+- avg_digital_engagement < 0.4 → "branch-first / phone preference — low digital adoption"
+- avg_digital_engagement 0.4–0.75 → "hybrid channel — comfortable with digital but still visits branches"
+- avg_digital_engagement > 0.75 → "digital-native — prefers mobile/online, rarely visits branch"
+- avg_churn_prob > 0.5 → "high retention risk — priority for proactive outreach campaigns"
+- avg_churn_prob < 0.3 → "stable and loyal — low immediate churn concern"
+- avg_deposits > 100K → "significant wealth on deposit — strong savings/investment orientation"
+- avg_deposits < 20K → "low deposit base — transaction-focused, not savings-driven"
+- avg_income > 100K → "affluent tier — suitable for wealth management and premium products"
+- avg_income < 50K → "mass-market income band — cost-sensitive, fee-waiver eligibility matters"
+
+Example of RIGHT narrative style (never just dump numbers):
+WRONG: "Retiree Depositor has an average balance of $102,119, income of $63,119, credit score of 734."
+RIGHT: "**Retiree Depositor** (**900 customers**): With an avg balance of **$102K** — nearly **1.6× their avg income of $63K** — this segment is savings-rich and wealth-preservation focused. Their excellent avg credit score of **734** qualifies them for premium deposit products. Low digital engagement (**0.25**) signals a branch-first relationship preference — digital campaigns alone will underperform here."
 
 TEMPORAL LIMITATIONS — columns that do NOT exist in this database:
 - "churn_in_next_30_days", "predicted_churn_date", "churn_forecast" → NO such columns
@@ -418,14 +453,106 @@ chart: {"type": "bar", "x_col": "segment_name", "y_col": "avg_churn_prob", "titl
 — The narrative MUST name the top segment by its exact segment_name and cite the avg_churn_prob and count.
 — NEVER use life_stage or churn_risk_category as the grouping column for this query.
 
-STRATEGY & ADVISORY QUESTIONS — SET sql TO null:
-When the question is asking HOW to do something, for ADVICE, for STRATEGIES, or for RECOMMENDATIONS — it is NOT a data query. Set `"sql": null` and write a comprehensive strategy narrative instead of retrieving rows.
+HYBRID QUESTIONS — DATA + STRATEGY (ALWAYS generate SQL first):
+Some questions combine "which segment / which customers / which product" (data) with "what should I do / campaign / recommend" (strategy).
+These ALWAYS require SQL — never set sql=null for hybrid questions.
 
-Triggers for sql = null (strategy/advisory):
-- "How can Meridian Bank...", "How should we...", "How do we..."
-- "What strategies...", "What should we do...", "What are the best ways..."
-- "What recommendations...", "How to retain...", "How to grow..."
+HYBRID TRIGGERS — generate SQL AND a strategy narrative:
+- "which segment should I target for [campaign/offer/retention]"
+- "which segment has [low engagement / high churn / low income]"
+- "which product should I recommend to [segment / customers]"
+- "I want to run a campaign to [X customers] — which segment / product"
+- "identify customers / segments for [campaign / outreach / intervention]"
+- "what segment should I focus on for [goal]"
+- "draft a summary report", "performance summary", "performance insights", "platform health"
+- "summary of [today's/this week's/this month's] performance" — use MAX(transaction_date) as reference date
+- "report for [team/stakeholders]" when performance metrics can be derived from the data
+
+For hybrid questions, the SQL identifies the data (segments, customers, products), and the narrative combines
+the data findings WITH strategy recommendations. NEVER set sql=null when the question asks "which segment",
+"which customers", or "which product" — these require actual data from the tables.
+
+HYBRID EXAMPLE:
+Q: "I want to run a campaign to low engagement customers to prevent churn, which segment should I identify and which product should I recommend?"
+RIGHT:
+SELECT sa.segment_name,
+       COUNT(*) AS customers,
+       ROUND(AVG(c.churn_probability), 3) AS avg_churn_prob,
+       ROUND(AVG(c.digital_engagement_score), 3) AS avg_digital_score,
+       ROUND(AVG(c.customer_lifetime_value), 0) AS avg_clv,
+       ROUND(AVG(c.income), 0) AS avg_income
+FROM customers c
+JOIN segment_assignments sa ON c.customer_id = sa.customer_id
+WHERE c.digital_engagement_score < 0.5
+GROUP BY sa.segment_name
+ORDER BY avg_churn_prob DESC
+chart: {"type": "bar", "x_col": "segment_name", "y_col": "avg_churn_prob", "title": "Churn Risk — Low Engagement Segments"}
+— Use segment_assignments (always available). NEVER join persona_assignments for this — it may be empty.
+— The narrative MUST name the top segment by its EXACT segment_name from the result.
+— Recommend a product by referencing the segment's income and credit_score profile from the result
+   (e.g. if avg_income < 50K → suggest Meridian Everyday Checking; if avg_credit_score < 620 → suggest secured card).
+— DO NOT invent product names — only reference products that exist in the products table.
+
+Q: "Which segment has the highest churn risk and what product should I cross-sell?"
+RIGHT:
+SELECT sa.segment_name,
+       COUNT(*) AS customers,
+       ROUND(AVG(c.churn_probability), 3) AS avg_churn_prob,
+       ROUND(AVG(c.credit_score), 0) AS avg_credit_score,
+       ROUND(AVG(c.income), 0) AS avg_income,
+       ROUND(AVG(c.total_deposits), 0) AS avg_deposits
+FROM customers c
+JOIN segment_assignments sa ON c.customer_id = sa.customer_id
+GROUP BY sa.segment_name
+ORDER BY avg_churn_prob DESC
+LIMIT 5
+chart: {"type": "bar", "x_col": "segment_name", "y_col": "avg_churn_prob", "title": "Churn Risk by Segment"}
+
+Q: "Draft a summary report of today's performance" / "Give me a platform performance summary" / "Summarize recent activity"
+Note: the database has static data (no live feed). Use MAX(transaction_date) as reference and report the most recent 90 days.
+RIGHT:
+SELECT CAST(transaction_date AS DATE) AS txn_date,
+       COUNT(*) AS transactions,
+       COUNT(DISTINCT customer_id) AS unique_customers,
+       ROUND(SUM(amount), 0) AS revenue
+FROM transactions
+WHERE CAST(transaction_date AS DATE) >= (
+    SELECT MAX(CAST(transaction_date AS DATE)) - INTERVAL '30' DAY FROM transactions
+)
+GROUP BY txn_date
+ORDER BY txn_date DESC
+LIMIT 30
+chart: {"type": "line", "x_col": "txn_date", "y_col": "revenue", "title": "Daily Revenue — Last 30 Days"}
+— Open narrative with the most recent date from the result and the total revenue for that period.
+— Include total transaction count, unique customers, and avg daily revenue as bolded numbers.
+— NEVER say "I need to consider several metrics" or list what TO track — show the actual data.
+— If asked for a "report for engineering/platform teams", focus on volume (transaction count, unique customers) over revenue.
+
+Q: "What is the overall platform health?" / "How is the platform performing?"
+RIGHT:
+SELECT
+    (SELECT COUNT(DISTINCT customer_id) FROM customers) AS total_customers,
+    (SELECT COUNT(*) FROM incomplete_applications) AS incomplete_applications,
+    (SELECT COUNT(*) FROM wishlist) AS wishlist_items,
+    (SELECT COUNT(DISTINCT customer_id) FROM transactions
+     WHERE CAST(transaction_date AS DATE) >= (SELECT MAX(CAST(transaction_date AS DATE)) - INTERVAL '90' DAY FROM transactions)
+    ) AS active_customers_90d,
+    (SELECT ROUND(SUM(amount), 0) FROM transactions
+     WHERE CAST(transaction_date AS DATE) >= (SELECT MAX(CAST(transaction_date AS DATE)) - INTERVAL '90' DAY FROM transactions)
+    ) AS revenue_90d
+chart: {"type": "none", "title": "Platform Health Summary"}
+— Report each metric as a bolded number. Open with active customers and revenue as the headline KPIs.
+
+STRATEGY & ADVISORY QUESTIONS — SET sql TO null:
+ONLY set sql=null when the question is purely HOW to do something with NO identifiable data dimension.
+If the question mentions "which segment", "which customers", "which product", "performance", "summary", or any metric to compute → use SQL.
+
+Triggers for sql = null (pure strategy only):
+- "How can Meridian Bank...", "How should we...", "How do we improve..."
+- "What strategies would you suggest...", "What are the best ways to grow..."
 - Follow-up questions after seeing data like "what should we do about this?" or "how can we fix this?"
+- "Give me a retention strategy", "Suggest a marketing plan"
+- Questions with NO data dimension and NO metric to compute
 
 For strategy questions, write a narrative (200-300 words) that:
 1. Opens with the business context and stakes (use numbers from conversation history if available)
@@ -458,6 +585,54 @@ STRATEGY QUESTION GROUNDING RULES:
 - Tactics must be specific to Meridian Bank (use actual product names, channel names from the schema)
 - NO hypothetical numbers — every figure cited must come from the data or conversation history
 
+CONTEXT CARRY-FORWARD — follow-up questions referencing prior results:
+When the user's question contains "that segment", "that customer", "those customers", "from that segment",
+"in that group", "the same segment", or similar anaphoric references, you MUST extract the referenced
+entity from the CONVERSATION HISTORY and embed it directly in the SQL.
+
+CONTEXT EXTRACTION RULES:
+- "that segment" → find the segment name mentioned in the prior assistant message (e.g. "At-Risk Saver") and
+  use it as a literal WHERE filter: WHERE sa.segment_name = 'At-Risk Saver'
+  ALWAYS use single quotes. NEVER double quotes. NEVER backslash-escaped quotes.
+- "that customer" / "that person" → find the customer_id or name from the prior message
+- "from those results" / "in that group" → re-derive the filter logic as a CTE subquery
+
+CONTEXT EXAMPLES:
+Q (prior): "Which segment has the lowest number of customers?" → answer mentioned "At-Risk Saver"
+Q (follow-up): "Which customer from that segment spent the most?"
+RIGHT:
+SELECT c.customer_id, c.customer_name,
+       ROUND(SUM(t.amount), 0) AS total_spent
+FROM customers c
+JOIN transactions t ON c.customer_id = t.customer_id
+JOIN segment_assignments sa ON c.customer_id = sa.customer_id
+WHERE sa.segment_name = 'At-Risk Saver'
+GROUP BY c.customer_id, c.customer_name
+ORDER BY total_spent DESC
+LIMIT 1
+chart: {"type": "none", "title": "Top Spender in At-Risk Saver"}
+WRONG: WHERE sa.segment_name = "At-Risk Saver"   ← double quotes = identifier error in DuckDB
+WRONG: WHERE sa.segment_name = \"At-Risk Saver\"  ← escaped quotes = parser error
+
+Q (prior): "Which segment has the highest churn?" → answer mentioned "Digital Trendsetter"
+Q (follow-up): "What products do customers in that segment hold?"
+RIGHT:
+SELECT p.product_name, p.subcategory, COUNT(DISTINCT t.customer_id) AS holders
+FROM transactions t
+JOIN products p ON t.product_id = p.product_id
+JOIN segment_assignments sa ON t.customer_id = sa.customer_id
+WHERE sa.segment_name = 'Digital Trendsetter'
+GROUP BY p.product_name, p.subcategory
+ORDER BY holders DESC LIMIT 10
+chart: {"type": "bar", "x_col": "product_name", "y_col": "holders", "title": "Products Held by Digital Trendsetter"}
+
+STRING LITERAL RULE FOR CONTEXT QUERIES — ABSOLUTE:
+When embedding a segment name, product name, or any string from conversation history into SQL:
+  CORRECT: WHERE sa.segment_name = 'At-Risk Saver'
+  WRONG:   WHERE sa.segment_name = "At-Risk Saver"
+  WRONG:   WHERE sa.segment_name = \"At-Risk Saver\"
+Use ONLY single quotes for ALL string literals in SQL.
+
 CONTEXT CARRY-FORWARD — "these customers / those customers / these top N" queries:
 When the user says "these customers", "those top N customers", "for these customers", or any phrase that refers
 back to a prior result set, you MUST re-derive that same set inside a subquery or CTE — do NOT query the full
@@ -477,17 +652,6 @@ RIGHT: WITH top10 AS (
        WHERE c.customer_id IN (SELECT customer_id FROM top10)
        GROUP BY c.channel_preference
        ORDER BY customer_count DESC
-
-Q (prior): "Show me at-risk customers with churn probability > 0.7"
-Q (follow-up): "What products do these at-risk customers hold?"
-RIGHT: WITH at_risk AS (
-           SELECT customer_id FROM customers WHERE churn_probability > 0.7
-       )
-       SELECT p.product_name, COUNT(*) AS holders
-       FROM wishlist w
-       JOIN products p ON w.product_id = p.product_id
-       WHERE w.customer_id IN (SELECT customer_id FROM at_risk)
-       GROUP BY p.product_name ORDER BY holders DESC
 
 RULE: The subquery in the CTE must exactly mirror the WHERE / ORDER BY / LIMIT from the prior question's logic.
 NEVER drop the LIMIT or change the filter — the user is asking about a specific subset.
@@ -557,6 +721,20 @@ RIGHT: SELECT life_stage, ROUND(AVG(income),0) AS avg_income FROM customers GROU
 Q: "Monthly spend trend"
 WRONG: SELECT month, channel, spend_usd FROM ad_spend ORDER BY month
 RIGHT: SELECT CAST(year AS VARCHAR)||'-'||LPAD(CAST(month AS VARCHAR),2,'0') AS month_key, ROUND(SUM(spend_usd),0) AS total_spend FROM ad_spend GROUP BY year, month, month_key ORDER BY year, month LIMIT 24
+
+Q: "Which channel had highest cumulative ROAS?" / "2025 spend and revenue by channel" / "which marketing channel had highest ROAS this year?" / "show total spend, revenue, and ROAS by channel"
+RIGHT: SELECT channel,
+              ROUND(SUM(spend_usd), 0) AS total_spend,
+              ROUND(SUM(revenue_usd), 0) AS total_revenue,
+              ROUND(SUM(revenue_usd)/NULLIF(SUM(spend_usd),0), 2) AS cumulative_roas
+       FROM ad_spend
+       WHERE year = 2025
+       GROUP BY channel
+       ORDER BY cumulative_roas DESC
+chart: {"type": "bar", "x_col": "channel", "y_col": "total_spend", "title": "2025 Total Ad Spend by Channel"}
+— NEVER add month/month_key to this query. Combining month AND channel produces 48 rows (12 months × 4 channels).
+— The narrative LLM only receives the first 10 rows — it will describe January data only and produce wrong answers.
+— For "by channel" ROAS / spend / revenue questions: GROUP BY channel only. 4 rows. Always correct.
 
 Q: "What products are customers wishlisting but not applying for?"
 WRONG: SELECT ... FROM wishlist w JOIN incomplete_applications i ON w.customer_id=i.customer_id AND w.product_id=i.product_id ...
@@ -845,11 +1023,15 @@ RIGHT: SELECT p.product_name, p.subcategory, p.avg_rating,
            OR (p.credit_tier_required = 'excellent' AND c.credit_score >= 740))
        ORDER BY p.avg_rating DESC LIMIT 10
 
-Q: "Which products are best for high-churn customers?" / "Recommend products for at-risk customers"
-RIGHT: SELECT p.product_name, COUNT(DISTINCT c.customer_id) AS eligible_customers,
-              ROUND(AVG(p.avg_rating),2) AS avg_rating
-       FROM customers c CROSS JOIN products p
-       WHERE c.churn_risk_category = 'High'
+Q: "Which products are best for high-churn / low-engagement / at-risk customers?" / "Recommend products for at-risk segment"
+RIGHT: SELECT p.product_name, p.subcategory,
+              COUNT(DISTINCT c.customer_id) AS eligible_customers,
+              ROUND(AVG(p.avg_rating), 2) AS avg_rating,
+              ROUND(AVG(c.churn_probability), 3) AS avg_churn_prob
+       FROM customers c
+       JOIN segment_assignments sa ON c.customer_id = sa.customer_id
+       CROSS JOIN products p
+       WHERE sa.segment_name = 'At-Risk Saver'
          AND c.income >= p.min_income
          AND c.credit_score >= p.min_credit_score
          AND (p.credit_tier_required = 'any'
@@ -857,7 +1039,32 @@ RIGHT: SELECT p.product_name, COUNT(DISTINCT c.customer_id) AS eligible_customer
            OR (p.credit_tier_required = 'good'      AND c.credit_score >= 670)
            OR (p.credit_tier_required = 'excellent' AND c.credit_score >= 740))
          AND p.category = 'Personal'
-       GROUP BY p.product_name ORDER BY eligible_customers DESC LIMIT 10
+       GROUP BY p.product_name, p.subcategory ORDER BY eligible_customers DESC LIMIT 10
+
+Q: "Which products should I recommend to low-engagement customers for a retention campaign?"
+RIGHT: SELECT p.product_name, p.subcategory,
+              COUNT(DISTINCT c.customer_id) AS eligible_customers,
+              ROUND(AVG(p.avg_rating), 2) AS avg_rating
+       FROM customers c
+       CROSS JOIN products p
+       WHERE c.digital_engagement_score < 0.5
+         AND c.income >= p.min_income
+         AND c.credit_score >= p.min_credit_score
+         AND (p.credit_tier_required = 'any'
+           OR (p.credit_tier_required = 'fair'      AND c.credit_score >= 580)
+           OR (p.credit_tier_required = 'good'      AND c.credit_score >= 670)
+           OR (p.credit_tier_required = 'excellent' AND c.credit_score >= 740))
+         AND p.category = 'Personal'
+         AND p.complexity_score <= 2
+       GROUP BY p.product_name, p.subcategory ORDER BY eligible_customers DESC LIMIT 10
+— Use complexity_score <= 2 for low-engagement customers (simpler products improve adoption).
+
+SEGMENT → PRODUCT MAPPING (use as narrative context, not SQL logic):
+- At-Risk Saver (credit ~568, income ~$35K): Meridian Essential Checking, Meridian Secured Card, Meridian Basic Savings
+- Everyday Essential (credit ~708, income ~$73K): Meridian Plus Checking, Meridian Cash Back Card, Meridian Basic Savings
+- Digital Trendsetter (credit ~698, income ~$83K, digital 0.91): Meridian Cash Back Card, Meridian Rewards Visa, Meridian High-Yield Savings
+- Retiree Depositor (credit ~779, income ~$62K, deposits $184K): Meridian 24-Month CD, Meridian Money Market, Meridian Traditional IRA
+- Wealth Accumulator (credit ~808, income ~$195K): Meridian Platinum Card, Meridian Prestige Checking, Meridian HELOC
 
 NEVER use CROSS JOIN without a compatibility WHERE clause — it produces ineligible recommendations.
 
@@ -868,6 +1075,66 @@ Triggers for chart type "none":
 - "which customers started...", "customers who...", "find customers..."
 - "show incomplete applications", "show wishlist customers", "which transactions..."
 - Any query where x_col would be customer_id, customer_name, or transaction_id
+
+Q: "Top N customers by total transaction value" / "highest spending customers" / "most valuable customers by transactions" / "top 20 customers by transaction value"
+— customers.annual_transaction_value is PRE-COMPUTED — use it directly, DO NOT join transactions.
+RIGHT: SELECT c.customer_id, c.customer_name,
+              COALESCE(sa.segment_name, 'Unassigned') AS segment_name,
+              c.clv_tier,
+              ROUND(c.annual_transaction_value, 0) AS total_transaction_value
+       FROM customers c
+       LEFT JOIN segment_assignments sa ON c.customer_id = sa.customer_id
+       ORDER BY c.annual_transaction_value DESC
+       LIMIT 20
+chart: {"type": "none", "x_col": "customer_name", "y_col": "total_transaction_value", "title": "Top 20 Customers by Transaction Value"}
+WRONG: SELECT ... FROM customers c JOIN transactions t ON ... GROUP BY ... ORDER BY SUM(t.amount) DESC
+— annual_transaction_value (on customers table) already contains the aggregated total — no need for transactions JOIN.
+— NEVER use CURRENT_DATE, DATEADD, DATE_SUB, or DATEDIFF — these are unsupported in DuckDB and will crash the query.
+
+Q: "High-value dormant customers" / "CLV customers who haven't transacted recently" / "Platinum/Gold digital customers not active" / "dormant digital re-engagement"
+RIGHT: SELECT c.customer_id, c.customer_name, c.clv_tier,
+              c.days_since_last_transaction, c.channel_preference,
+              COALESCE(sa.segment_name, 'Unassigned') AS segment_name,
+              ROUND(c.customer_lifetime_value, 0) AS clv
+       FROM customers c
+       LEFT JOIN segment_assignments sa ON c.customer_id = sa.customer_id
+       WHERE c.clv_tier IN ('Platinum', 'Gold')
+         AND c.channel_preference IN ('Digital', 'Hybrid')
+         AND c.days_since_last_transaction >= 30
+       ORDER BY c.customer_lifetime_value DESC
+       LIMIT 25
+chart: {"type": "none", "x_col": "customer_name", "y_col": "days_since_last_transaction", "title": "Dormant High-Value Digital Customers"}
+— CRITICAL: days_since_last_transaction max value is ~48 in this dataset. NEVER filter >= 90 (zero rows guaranteed).
+— Use >= 30 as the dormancy threshold — returns ~145 Platinum/Gold customers with digital channel preference.
+— Include BOTH 'Digital' AND 'Hybrid' in channel_preference — both groups prefer digital interactions.
+— USE c.days_since_last_transaction for dormancy — NEVER compute from CURRENT_DATE or join transactions.
+— clv_tier values: 'Platinum', 'Gold', 'Silver', 'Bronze' — use exact strings with single quotes.
+
+Q: "ad spend by channel and ROAS" / "which marketing channel has the highest ROAS" / "channel performance"
+RIGHT: SELECT channel,
+              SUM(spend_usd)    AS total_spend,
+              SUM(revenue_usd)  AS total_revenue,
+              ROUND(SUM(revenue_usd) / NULLIF(SUM(spend_usd), 0), 2) AS roas,
+              ROUND(AVG(cpa), 2) AS avg_cpa,
+              SUM(sent)          AS total_contacts
+       FROM ad_spend
+       GROUP BY channel
+       ORDER BY roas DESC
+chart: {"type": "bar", "x_col": "channel", "y_col": "roas", "title": "ROAS by Marketing Channel"}
+— ad_spend has NO customer_id, product_id, or date column. GROUP by channel, persona, month, or year only.
+— "impressions" does NOT exist in ad_spend — use sent (contacts reached) instead.
+— ad_spend covers 2025 only (year=2025, months 1–12). For "last 6 months": WHERE year = 2025 AND month >= 7
+
+Q: "monthly ad spend trend" / "spend by month" / "monthly channel performance"
+RIGHT: SELECT month, month_name, channel, SUM(spend_usd) AS spend, SUM(revenue_usd) AS revenue,
+              ROUND(SUM(revenue_usd)/NULLIF(SUM(spend_usd),0), 2) AS roas
+       FROM ad_spend
+       WHERE year = 2025
+       GROUP BY month, month_name, channel
+       ORDER BY month, channel
+chart: {"type": "line", "x_col": "month_name", "y_col": "spend", "title": "Monthly Ad Spend by Channel"}
+— ad_spend has INTEGER year and month columns (not a date). Use WHERE year = 2025 to get all 2025 data.
+— For "last 6 months" use WHERE year = 2025 AND month >= 7
 
 Q: "Which customers started an application but never completed it?" / "Show incomplete applications"
 RIGHT: SELECT c.customer_id, c.customer_name,
@@ -889,6 +1156,24 @@ RIGHT: SELECT p.product_name, COUNT(*) AS incomplete_count,
        JOIN products p ON i.product_id = p.product_id
        GROUP BY p.product_name ORDER BY incomplete_count DESC LIMIT 15
 chart: {"type": "bar", "x_col": "product_name", "y_col": "incomplete_count", "title": "Incomplete Applications by Product"}
+
+Q: "What are the most common reasons for incomplete applications?" / "Where do customers abandon?" / "Which step has the most drop-off?"
+RIGHT: SELECT last_step, COUNT(*) AS count
+       FROM incomplete_applications
+       GROUP BY last_step
+       ORDER BY count DESC
+chart: {"type": "bar", "x_col": "last_step", "y_col": "count", "title": "Application Abandonment by Step"}
+— last_step EXACT values: 'personal_info', 'financial_details', 'review', 'sign', 'document_upload'
+— NEVER rename these to "Income Verification", "Identity Verification", or any human-readable label not in the data.
+— The narrative MUST use the exact last_step string values from the result rows (e.g. "**personal_info** has the most drop-off with **45** abandonments").
+
+Q: "Which segment has the most incomplete applications?" / "Incomplete applications by segment"
+RIGHT: SELECT sa.segment_name, COUNT(*) AS incomplete_count
+       FROM incomplete_applications i
+       JOIN customers c ON i.customer_id = c.customer_id
+       JOIN segment_assignments sa ON c.customer_id = sa.customer_id
+       GROUP BY sa.segment_name ORDER BY incomplete_count DESC
+chart: {"type": "bar", "x_col": "segment_name", "y_col": "incomplete_count", "title": "Incomplete Applications by Segment"}
 
 INDIVIDUAL CUSTOMER LOOKUP — name-based queries (e.g. "George Davis is from which segment?"):
 When the user mentions a specific customer name, use LIKE for fuzzy matching then return their segment, profile, or other data.
@@ -930,6 +1215,9 @@ chart: {"type": "none", "title": "Customer Profile"}
 
 CHART RULES:
 - none: Use for customer-listing queries (x-axis would be customer_id or names) — table is more useful
+- none: Use when SQL returns exactly 1 row (a single COUNT, SUM, or AVG). ONE bar is meaningless — state the number boldly in the narrative instead. e.g. "**800 customers** are in the At-Risk Saver segment."
+- none: Use for strategy/advisory answers (sql=null)
+- none: Use for customer profile lookups (single customer, ID-based)
 - bar: categorical comparisons (channels, segments, products) — 5–15 groups
 - line: time-series (monthly, yearly) — x_col must be a date/month/year column
 - area: cumulative trends over time
@@ -997,14 +1285,26 @@ def _call_llm(prompt: str) -> str:
 # ── Grounded narrative generator (second-stage LLM call) ─────────────────────
 
 _NARRATIVE_SYSTEM = (
-    "You are a banking data analyst writing one short paragraph (3-5 sentences) about a query result.\n"
+    "You are a banking data analyst writing a short narrative (3-5 sentences) about a query result.\n"
     "Rules:\n"
     "1. Open with the single most important finding in **bold** (name + value).\n"
-    "2. Use **bold** for EVERY number, name, product, and segment you mention.\n"
-    "3. ONLY cite values that appear in the provided table rows — NEVER invent or estimate data.\n"
-    "4. End with one sentence starting '**Recommendation:**' that names a specific action.\n"
-    "5. No section headers. No bullet lists. Plain prose only.\n"
-    "6. Output plain text — NOT JSON."
+    "2. Use **bold** for EVERY number, name, product, segment, and category you mention.\n"
+    "3. ONLY cite values that appear in the provided table rows — NEVER invent, rename, or paraphrase them.\n"
+    "   If a column shows 'personal_info', say **personal_info** — do NOT rename it to 'Personal Information'.\n"
+    "   If a column shows 'financial_details', say **financial_details** — not 'Financial Verification'.\n"
+    "4. NEVER cite a number that is not in the table. NEVER compute percentages unless the table has them.\n"
+    "5. Add a '**Recommendation:**' sentence ONLY when the answer involves segment strategy, product fit, campaign targeting, customer behaviour patterns, or risk/retention. OMIT it for simple factual lookups (how many, count, list, name queries).\n"
+    "6. No section headers. Use bullet points only if listing 3+ items. Output plain text — NOT JSON.\n"
+    "7. Format ALL monetary values (revenue, spend, income, balance, deposit, cost, amount) as **$X.XK** / **$X.XM** / **$X.XB** — NEVER write raw decimals. Examples: 135600.0 → **$135.6K**, 2300000 → **$2.3M**. Non-monetary metrics (ROAS, scores, counts) use bold without $: **5.69 ROAS**, **1,247 customers**.\n"
+    "FORBIDDEN phrases — NEVER write these (they signal hallucination and will be rejected):\n"
+    "  'the data suggests', 'we can infer', 'it appears that', 'it seems that', 'may indicate',\n"
+    "  'could indicate', 'further analysis', 'based on available data', 'the results indicate',\n"
+    "  'industry average', 'typical bank', 'generally speaking', 'it is worth noting',\n"
+    "  'a significant number', 'many customers', 'most customers' (without citing exact count),\n"
+    "  'the query identifies', 'this query returns', 'the query retrieves', 'the query filters',\n"
+    "  'are at risk of churn if not re-engaged', 'have a high lifetime value and are'.\n"
+    "NEVER describe what the query does — describe what the DATA shows. Do not open with 'The query identifies...' or 'This query returns...' — open with the actual finding: how many customers, who they are, and what their values are.\n"
+    "If you cannot find a specific value in the table rows, say 'not available in this result' — do NOT guess."
 )
 
 
@@ -1103,32 +1403,115 @@ _UNSAFE = re.compile(
 def _sanitize_sql(sql: str) -> str:
     """
     Fix common LLM SQL generation mistakes before execution.
-    - Converts escaped double-quotes (\\") back to single quotes for string literals.
-      LLMs sometimes produce  WHERE col = \"value\"  when embedding SQL in JSON;
-      the JSON parser strips the outer backslash leaving  WHERE col = "value"
-      which DuckDB treats as an identifier, causing a Parser Error.
+    Handles escaped/double-quoted string literals that DuckDB rejects.
     """
     if not sql:
         return sql
-    # Replace remaining literal backslash-quote sequences that survived JSON parsing
+    # Step 1: literal backslash-quote sequences (\") → single quote
     sql = sql.replace('\\"', "'")
-    # Replace double-quoted string VALUES with single-quoted equivalents.
-    # Only target values that appear after comparison/IN operators (not column identifiers).
-    # Pattern: operator token, optional whitespace, then "value in double quotes"
-    # This avoids converting double-quoted column/table identifiers (e.g. SELECT "col" FROM ...)
+    # Step 2: double-quoted VALUES after comparison operators → single-quoted
     sql = re.sub(
         r'([=!<>])\s{0,6}"([A-Za-z][A-Za-z0-9 _\-]*)"',
         lambda m: f"{m.group(1)} '{m.group(2)}'",
         sql,
     )
-    # Also handle: IN ("val1", "val2") → IN ('val1', 'val2')
+    # Step 3: LIKE "value" → LIKE 'value'
+    sql = re.sub(
+        r'\bLIKE\s+"([^"]+)"',
+        lambda m: f"LIKE '{m.group(1)}'",
+        sql, flags=re.IGNORECASE,
+    )
+    # Step 4: IN ("val1", "val2") → IN ('val1', 'val2')
     sql = re.sub(
         r'\bIN\s*\(([^)]+)\)',
         lambda m: 'IN (' + re.sub(r'"([^"]+)"', lambda n: f"'{n.group(1)}'", m.group(1)) + ')',
-        sql,
-        flags=re.IGNORECASE,
+        sql, flags=re.IGNORECASE,
     )
     return sql
+
+
+def _aggressive_sanitize_sql(sql: str) -> str:
+    """
+    Second-pass sanitizer for SQL that failed with a parser/syntax error.
+    Converts ALL remaining double-quoted strings that look like values to single quotes.
+    Less conservative than _sanitize_sql — only used on retry.
+    """
+    if not sql:
+        return sql
+    sql = _sanitize_sql(sql)
+    # Convert any remaining "Text Value" after WHERE/AND/OR/ON clauses
+    sql = re.sub(
+        r'(?<=\bWHERE\b.{0,120})"([^"]{2,60})"',
+        lambda m: f"'{m.group(1)}'",
+        sql, flags=re.IGNORECASE | re.DOTALL,
+    )
+    sql = re.sub(
+        r'(?<=\bAND\b.{0,60})"([^"]{2,60})"',
+        lambda m: f"'{m.group(1)}'",
+        sql, flags=re.IGNORECASE | re.DOTALL,
+    )
+    sql = re.sub(
+        r'(?<=\bOR\b.{0,60})"([^"]{2,60})"',
+        lambda m: f"'{m.group(1)}'",
+        sql, flags=re.IGNORECASE | re.DOTALL,
+    )
+    return sql
+
+
+# ── Domain guardrail ──────────────────────────────────────────────────────────
+
+_OUT_OF_SCOPE_RE = re.compile(
+    r'\b(recipe|ingredient|how to cook|how to bake|how to make\b|cuisine|'
+    r'\bfood\b|\bdish\b|\bmeal\b|restaurant|menu|calories|nutrition|diet|'
+    r'weather|forecast|temperature|climate|'
+    r'\bsport\b|football|soccer|cricket|basketball|tennis|baseball|golf|rugby|'
+    r'movie|film|\bshow\b|series|episode|\bactor\b|\bactress\b|celebrity|'
+    r'singer|musician|\bsong\b|\bmusic\b|album|playlist|'
+    r'\bjoke\b|funny|humor|laugh|meme|'
+    r'\bpoem\b|poetry|\bessay\b|\bstory\b|fiction|novel|'
+    r'translate|translation|\bgrammar\b|'
+    r'\bcrypto\b|bitcoin|ethereum|\bnft\b|'
+    r'who invented|when was.*born|what country|capital city|'
+    r'workout|\bgym\b|exercise|fitness|'
+    r'\bhotel\b|\bflight\b|airline|vacation|holiday|tourist|destination)',
+    re.IGNORECASE,
+)
+
+_IN_SCOPE_RE = re.compile(
+    r'\b(customer|segment|product|loan|credit|mortgage|deposit|banking|'
+    r'churn|transaction|revenue|clv|income|score|campaign|recommend|'
+    r'meridian|synapse|agent|persona|offer|channel|digital|engagement|'
+    r'saver|accumulator|trendsetter|at.risk|retiree|depositor|'
+    r'portfolio|account|balance|interest|apr|savings|checking|card|'
+    r'wealth|analytics|dashboard|incomplete|application|wishlist|'
+    r'how many|average|total|top \d|which segment|which product|show me|'
+    r'ad.spend|roas|conversion|impression|click|churn.prob|clv.tier)\b',
+    re.IGNORECASE,
+)
+
+_OUT_OF_SCOPE_REPLY = {
+    "success": True,
+    "narrative": (
+        "I'm **Segment AI**, the intelligence assistant for the **Synapse Finance Platform**. "
+        "I'm built specifically to answer questions about Meridian Bank's customer segments, "
+        "products, transactions, churn risk, ad spend, and agent pipeline data.\n\n"
+        "I can't help with questions outside the Synapse platform scope. Here are some things I can do:\n\n"
+        "- *Which segment has the highest churn risk?*\n"
+        "- *How many customers are in the At-Risk Saver segment?*\n"
+        "- *What products should I recommend to low-engagement customers?*\n"
+        "- *Show me incomplete applications by product*\n"
+        "- *Which channel has the best ROAS this year?*"
+    ),
+    "sql": None,
+    "table": None,
+    "chart": {"type": "none"},
+    "follow_ups": [
+        "Which segment has the highest churn probability?",
+        "What are the key characteristics of each customer segment?",
+        "Which products are most popular among Wealth Accumulator customers?",
+    ],
+    "sql_error": None,
+}
 
 
 def _safe_sql(sql: str) -> bool:
@@ -1264,6 +1647,10 @@ def _resolve_chart(columns: List[str], rows: List[List], llm_chart: Dict) -> Dic
     numeric_cols = [c for i, c in enumerate(columns) if is_numeric(i)]
     label_cols = [c for c in columns if c not in numeric_cols]
 
+    # No numeric columns → nothing meaningful to plot; show table only
+    if not numeric_cols:
+        return {"type": "none"}
+
     x_col = llm_chart.get("x_col")
     if x_col not in columns:
         x_col = label_cols[0] if label_cols else columns[0]
@@ -1347,6 +1734,11 @@ def ask_chatbot(
     """
     history = history or []
 
+    # Domain guardrail — reject questions outside Synapse/banking scope before calling LLM
+    if _OUT_OF_SCOPE_RE.search(question) and not _IN_SCOPE_RE.search(question):
+        logger.info("Segment AI: out-of-scope question blocked: %.80s", question)
+        return _OUT_OF_SCOPE_REPLY
+
     # Agent A detection — warn when segment/persona questions asked without personas registered
     _segment_keywords = ("segment", "persona", "wealth builder", "digital native", "at risk", "cluster")
     _needs_personas = any(kw in question.lower() for kw in _segment_keywords)
@@ -1414,22 +1806,48 @@ def ask_chatbot(
         narrative = re.sub(r'([^\n])(## )', r'\1\n\2', narrative)
         narrative = re.sub(r'([^\n])(### )', r'\1\n\2', narrative)
         narrative = re.sub(r'([.!?])\s+(\*\*Recommendation)', r'\1\n\n\2', narrative)
-        # Format large bold numbers with K/M suffixes  e.g. **43000** → **43K**
+        # ── Pass 1: auto-bold bare numbers ≥ 1,000 (not already in ** markers) ──
+        _MONEY_KW = re.compile(
+            r'\b(revenue|spend(?:ing)?|income|salary|balance|deposit(?:s)?|clv|'
+            r'cost(?:s)?|value|amount|budget|lifetime\s+value|roas|return\s+on|'
+            r'total\s+spend|total\s+revenue|ad\s+spend|marketing|profit(?:ability)?)\b',
+            re.IGNORECASE,
+        )
+
+        def _bold_bare(mb: re.Match) -> str:
+            raw = mb.group(1).replace(',', '')
+            try:
+                return f'**{mb.group(1)}**' if abs(float(raw)) >= 1_000 else mb.group(1)
+            except ValueError:
+                return mb.group(1)
+
+        narrative = re.sub(r'(?<!\*)\b(\d[\d,]*(?:\.\d+)?)\b(?!\*)', _bold_bare, narrative)
+
+        # ── Pass 2: K/M/B formatting + context-aware $ sign for bolded numbers ──
         def _fmt_bold_num(m: re.Match) -> str:
-            raw = m.group(1).replace(',', '')
+            inner = m.group(1)
+            has_dollar = inner.startswith('$')
+            raw = inner.lstrip('$').replace(',', '')
             try:
                 n = float(raw)
             except ValueError:
                 return m.group(0)
             a = abs(n)
+            # Add $ when a money-context keyword appears within 100 chars before this number
+            if not has_dollar and a >= 100:
+                ctx_start = max(0, m.start() - 100)
+                if _MONEY_KW.search(narrative[ctx_start:m.start()]):
+                    has_dollar = True
+            prefix = '$' if has_dollar else ''
             if a >= 1_000_000_000:
-                return f'**{n/1_000_000_000:.1f}B**'
+                return f'**{prefix}{n/1_000_000_000:.1f}B**'
             if a >= 1_000_000:
-                return f'**{n/1_000_000:.1f}M**'
-            if a >= 10_000:
-                return f'**{n/1_000:.0f}K**'
+                return f'**{prefix}{n/1_000_000:.1f}M**'
+            if a >= 1_000:
+                return f'**{prefix}{n/1_000:.1f}K**'
             return m.group(0)
-        narrative = re.sub(r'\*\*([\d,]+(?:\.\d+)?)\*\*', _fmt_bold_num, narrative)
+
+        narrative = re.sub(r'\*\*(\$?[\d,]+(?:\.\d+)?)\*\*', _fmt_bold_num, narrative)
 
     table = None
     chart = None
@@ -1495,17 +1913,78 @@ def ask_chatbot(
 
                         # Auto-aggregate if the LLM returned ungrouped rows (safety net)
                         table = _auto_aggregate(table, llm_chart)
-                        chart = chart or _resolve_chart(table["columns"], rows, llm_chart)
+
+                        # Single-row chart suppression — 1 bar is never useful; show as text
+                        if len(table.get("rows", [])) == 1:
+                            chart = {"type": "none"}
+                        else:
+                            chart = chart or _resolve_chart(table["columns"], rows, llm_chart)
             except Exception as e:
-                sql_error = str(e)
+                _raw_error = str(e)
                 logger.warning("SQL execution failed: %s\nSQL: %s", e, sql[:400])
-                # Always clear LLM narrative on SQL failure — numbers were written before
-                # the query ran, so they are hallucinated and must not be shown.
-                narrative = (
-                    "The data query encountered an error — any numbers shown above are **not real data**.\n\n"
-                    f"**Error:** `{sql_error[:300]}`\n\n"
-                    "**Try:** rephrasing the question, or run **Agent A** first to register persona assignments."
-                )
+
+                # Auto-retry with aggressive sanitization on parser/syntax errors
+                # (covers escaped-quote issues in context follow-up questions)
+                _retried = False
+                if any(kw in _raw_error.lower() for kw in ("syntax error", "parser error", "near \"\\")):
+                    try:
+                        _sql_retry = _aggressive_sanitize_sql(sql)
+                        if _sql_retry != sql:
+                            logger.info("Segment AI: retrying with aggressive sanitization")
+                            table = _exec_sql(_sql_retry)
+                            sql = _sql_retry
+                            _retried = True
+                            if table and table.get("columns"):
+                                rows = table.get("rows", [])
+                                table = _auto_aggregate(table, llm_chart)
+                                if len(table.get("rows", [])) == 1:
+                                    chart = {"type": "none"}
+                                else:
+                                    chart = _resolve_chart(table["columns"], rows, llm_chart)
+                    except Exception as _e2:
+                        logger.warning("Retry also failed: %s", _e2)
+                        _raw_error = str(_e2)
+
+                if not _retried:
+                    sql_error = _raw_error
+                    # User-friendly fallback — never show raw DuckDB error messages
+                    _is_quote_error   = any(kw in _raw_error.lower() for kw in ("syntax error", "parser error", "near"))
+                    _is_join_error    = "join" in _raw_error.lower() or "no such column" in _raw_error.lower()
+                    _is_schema_error  = any(kw in _raw_error.lower() for kw in (
+                        "catalog error", "binder error", "does not exist",
+                        "no such table", "dateadd", "date_sub", "datediff",
+                        "unknown function", "function.*not.*found", "scalar function",
+                    ))
+                    if _is_quote_error:
+                        narrative = (
+                            "I wasn't able to retrieve data for this question — the query contained a formatting issue.\n\n"
+                            "**Try rephrasing** with the full segment name, e.g.: "
+                            "*\"Which customer in the At-Risk Saver segment spent the most?\"*\n\n"
+                            "**Recommendation:** Providing the specific segment or customer ID directly helps me generate an accurate query."
+                        )
+                    elif _is_join_error:
+                        narrative = (
+                            "I couldn't find matching data for this question. This may mean **Agent A** hasn't been run yet "
+                            "(persona assignments are empty), or the filter conditions returned no matching rows.\n\n"
+                            "**Recommendation:** Run **Agent A** to generate persona assignments, then retry."
+                        )
+                    elif _is_schema_error:
+                        narrative = (
+                            "The query used a function or column name that isn't supported in this database.\n\n"
+                            "**Common causes:** unsupported date functions (`DATEADD`, `DATE_SUB`, `DATEDIFF`), "
+                            "or a column name that doesn't exist in the table.\n\n"
+                            "**Recommendation:** Try rephrasing — for example: "
+                            "*\"Who are the top 20 customers by transaction value?\"*"
+                        )
+                    else:
+                        narrative = (
+                            "I wasn't able to answer this question with the available data.\n\n"
+                            "**Possible reasons:** the filter conditions matched no records, or the question references "
+                            "data that hasn't been loaded yet.\n\n"
+                            "**Recommendation:** Try rephrasing, or ask a related question like "
+                            "*\"Show me all customers in the At-Risk Saver segment\"* to explore the data first."
+                        )
+                    chart = {"type": "none"}
 
     # Detect "hollow" narratives: hallucinated or circular text written before SQL ran.
     # When table data is available, validate the narrative is grounded in real values.
@@ -1522,16 +2001,46 @@ def ask_chatbot(
             r'|are critical for targeted|given the segment.s moderate'
             r'|would need to be analyzed|would require further analysis'
             r'|we would need to look at|it is important to note that'
-            r'|analyzing these|to develop targeted',
+            r'|analyzing these|to develop targeted'
+            # Speculative estimation without data
+            r'|can be estimated by|would need to consider|actual profit'
+            r'|cost of servicing|revenue generated from their|additional factors such as'
+            r'|to determine the actual|profitability.*consider|consider.*profitability'
+            r'|cannot be directly calculated|not directly available|would require additional'
+            r'|based on general banking|industry average|typical bank'
+            # Hedging / inference language (LLM pretending to know without data)
+            r'|the data suggests|this suggests|these results suggest|the analysis suggests'
+            r'|we can infer|we can observe|we can see that|as we can see'
+            r'|it appears that|it seems that|appears to indicate|seems to indicate'
+            r'|may indicate|could indicate|might indicate|may suggest|could suggest'
+            r'|further investigation|further analysis|deeper analysis|additional analysis'
+            r'|a significant number of customers|many customers|most customers'
+            r'|generally speaking|in general terms|on average.*customers'
+            r'|it is worth noting|it should be noted|note that|notably'
+            r'|based on available data|based on the data|based on this data'
+            r'|the query result|the sql result|as shown in the query'
+            r'|the results indicate|the results show|the table shows'
+            r'|according to the data|from the data we can'
+            # Query-description masquerading as insight (pre-execution hallucination)
+            r'|the query identifies|this query identifies|the query retrieves|the query filters'
+            r'|the query returns|this query returns|the query selects|the query finds'
+            r'|customers who prefer digital|customers who have not transacted'
+            r'|have a high lifetime value and are|lifetime value and are at risk'
+            r'|are at risk of churn if not re|if not re-engaged',
             re.IGNORECASE,
         )
-        _has_bold_number = bool(re.search(r'\*\*[\d,.%$]+', narrative))
-        _is_hollow = _HOLLOW_RE.search(narrative) and not _has_bold_number
+        # Hollow patterns are specific enough — flag regardless of bold numbers present
+        _is_hollow = bool(_HOLLOW_RE.search(narrative))
 
         # Also catch narratives that describe what data "would show" without showing it
         _SPECULATIVE_RE = re.compile(
             r'\blikely\b.*\bproduct|\bprobably\b|\bwould be\b.*\bthose\b'
-            r'|\bexact\b.*\bnames?\b|\bcorresponding\b.*\bcounts?\b',
+            r'|\bexact\b.*\bnames?\b|\bcorresponding\b.*\bcounts?\b'
+            r'|\bmight be\b.*\bthose\b|\bcould be\b.*\bthose\b'
+            r'|\bappears to be\b|\bseems to be\b'
+            r'|\btypically\b.*\bsegment|\bgenerally\b.*\bcustomer'
+            r'|\bwe expect\b|\bwe anticipate\b'
+            r'|\bit is likely\b|\bit is possible\b|\bit may be\b',
             re.IGNORECASE,
         )
         if not _is_hollow and _SPECULATIVE_RE.search(narrative):
@@ -1568,10 +2077,41 @@ def ask_chatbot(
                         _bold_categories[:4],
                     )
 
+        # Single-row number validation: bold numbers in narrative must match the one result row.
+        # Catches "1429 customers" in narrative when table says 766.
+        if not _is_hollow:
+            _rows = table.get('rows', [])
+            if len(_rows) == 1:
+                _result_nums = set()
+                for _v in _rows[0]:
+                    if _v is not None:
+                        try:
+                            _result_nums.add(str(int(float(str(_v).replace(',', '')))))
+                        except (ValueError, TypeError):
+                            pass
+                _bold_nums = re.findall(r'\*\*([\d,]+)\*\*', narrative)
+                if _bold_nums and _result_nums:
+                    _num_match = any(bn.replace(',', '') in _result_nums for bn in _bold_nums)
+                    if not _num_match:
+                        _is_hollow = True
+                        logger.info(
+                            "Segment AI: narrative numbers %s don't match 1-row result %s — triggering grounded replacement.",
+                            _bold_nums[:4], list(_result_nums)[:4],
+                        )
+
         if _is_hollow:
             logger.info("Segment AI: hollow narrative detected — generating grounded replacement.")
             grounded = _generate_grounded_narrative(question, table)
-            narrative = grounded if grounded else ""
+            if grounded:
+                narrative = grounded
+            else:
+                # Grounded LLM call also failed — show a safe static fallback so the user
+                # at least sees the table with a neutral header instead of a blank narrative
+                _n_rows = len(table.get("rows", []))
+                narrative = (
+                    f"The query returned **{_n_rows} row{'s' if _n_rows != 1 else ''}**. "
+                    "Please review the table below for the full results."
+                )
 
     if not follow_ups:
         follow_ups = _default_follow_ups(question)

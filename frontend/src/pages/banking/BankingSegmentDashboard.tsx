@@ -1,5 +1,4 @@
 import React, { useState, useEffect, useRef } from 'react';
-import SegmentAIPanel from '../../components/SegmentAIPanel';
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 interface Rec { rank: number; name: string; type: string; desc: string }
@@ -376,9 +375,6 @@ export default function BankingSegmentDashboard() {
 
         </div>
       </main>
-
-      {/* ══ RIGHT AI PANEL ══════════════════════════════════════════════ */}
-      <SegmentAIPanel />
 
     </div>
   );

@@ -108,7 +108,9 @@
       "Bash(curl -s http://localhost:8002/api/banking/chat/anomalies)",
       "Bash(python3 -c \"import json,sys; d=json.load\\(sys.stdin\\); print\\(list\\(d.keys\\(\\)\\)\\); a=d.get\\('anomalies',[]\\); print\\(f'{len\\(a\\)} anomalies'\\); print\\(a[0] if a else 'empty'\\)\")",
       "Bash(curl -s http://localhost:8002/api/banking/chat/trends)",
-      "Bash(python3 -c \"import json,sys; d=json.load\\(sys.stdin\\); print\\(list\\(d.keys\\(\\)\\)\\); t=d.get\\('trends',[]\\); print\\(f'{len\\(t\\)} trends'\\); print\\(t[0] if t else 'empty'\\)\")"
+      "Bash(python3 -c \"import json,sys; d=json.load\\(sys.stdin\\); print\\(list\\(d.keys\\(\\)\\)\\); t=d.get\\('trends',[]\\); print\\(f'{len\\(t\\)} trends'\\); print\\(t[0] if t else 'empty'\\)\")",
+      "Bash(awk -F',' 'NR>1 {v=$16; if\\(v+0>max\\) max=v; if\\(v+0>=30\\) c30++; if\\(v+0>=60\\) c60++; if\\(v+0>=90\\) c90++; total++} END{print \"total=\"total, \"max=\"max, \">=30=\"c30, \">=60=\"c60, \">=90=\"c90}' data/preloaded/meridian_bank/customers.csv)",
+      "Bash(awk -F, 'NR>1 { *)"
     ]
   }
 }

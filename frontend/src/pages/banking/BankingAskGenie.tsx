@@ -4,7 +4,7 @@ import {
   BarChart2, Table2, X, Send, ChevronDown, Plus, Sparkles,
   Download, Copy, Check, TrendingUp, PieChart as PieIcon, Activity,
   Trash2, Database, AlertTriangle, TrendingDown, Minus, Bot,
-  FileText, Zap, Package,
+  FileText, Zap, Package, Megaphone, Users,
 } from 'lucide-react';
 import {
   BarChart, Bar, LineChart, Line, AreaChart, Area,
@@ -125,7 +125,74 @@ const QUESTION_COLORS: Record<string, {
   amber:   { accent: '#F59E0B', chipBg: 'bg-amber-50',   chipText: 'text-amber-700',   chipBorder: 'border-amber-200',   iconBg: 'bg-amber-100',   iconText: 'text-amber-600',   hoverBorder: 'hover:border-amber-300',   hoverBg: 'hover:bg-amber-50/40'   },
   indigo:  { accent: '#6366F1', chipBg: 'bg-indigo-50',  chipText: 'text-indigo-700',  chipBorder: 'border-indigo-200',  iconBg: 'bg-indigo-100',  iconText: 'text-indigo-600',  hoverBorder: 'hover:border-indigo-300',  hoverBg: 'hover:bg-indigo-50/40'  },
   sky:     { accent: '#0EA5E9', chipBg: 'bg-sky-50',     chipText: 'text-sky-700',     chipBorder: 'border-sky-200',     iconBg: 'bg-sky-100',     iconText: 'text-sky-600',     hoverBorder: 'hover:border-sky-300',     hoverBg: 'hover:bg-sky-50/40'     },
+  rose:    { accent: '#F43F5E', chipBg: 'bg-rose-50',   chipText: 'text-rose-700',   chipBorder: 'border-rose-200',   iconBg: 'bg-rose-100',   iconText: 'text-rose-600',   hoverBorder: 'hover:border-rose-300',   hoverBg: 'hover:bg-rose-50/40'   },
 };
+
+const MARKETING_QUESTIONS = [
+  {
+    q: 'Which marketing channel has the highest ROAS — show spend, revenue, and return ratio by channel?',
+    category: 'Channel ROI',
+    desc: 'Full attribution: spend vs. revenue by channel',
+    color: 'rose',
+  },
+  {
+    q: 'Which customer segment should we target for a credit card acquisition campaign this quarter — show segment size, avg income, and credit score?',
+    category: 'Campaign Targeting',
+    desc: 'Identifies the highest-opportunity segment for card products',
+    color: 'amber',
+  },
+  {
+    q: 'Which marketing channel had the highest cumulative ROAS in 2025? Show total spend, total revenue, and ROAS by channel.',
+    category: 'Spend Trend',
+    desc: '2025 full-year spend, revenue, and ROAS comparison across all 4 channels',
+    color: 'violet',
+  },
+  {
+    q: 'What is the cost per acquisition (CPA) and total contacts reached by each marketing channel?',
+    category: 'Efficiency',
+    desc: 'Measures how efficiently each channel converts spend to customers',
+    color: 'emerald',
+  },
+  {
+    q: 'Which Platinum and Gold CLV customers prefer digital channels but have not transacted in the last 30 days?',
+    category: 'Re-engagement',
+    desc: 'High-value dormant customers — prime digital re-activation targets',
+    color: 'blue',
+  },
+];
+
+const CUSTOMER_INSIGHTS_QUESTIONS = [
+  {
+    q: 'What are the financial characteristics of each customer segment — avg income, credit score, and deposit balance?',
+    category: 'Segment Profiles',
+    desc: 'Full financial profile comparison across all 5 segments',
+    color: 'violet',
+  },
+  {
+    q: 'Show the churn risk distribution across all 5 segments — which segment has the most at-risk customers?',
+    category: 'Retention Risk',
+    desc: 'Quantifies retention pressure by segment for proactive outreach',
+    color: 'amber',
+  },
+  {
+    q: 'Which customers have the highest CLV but the lowest digital engagement score?',
+    category: 'Untapped Value',
+    desc: 'High-value customers not yet activated on digital channels',
+    color: 'emerald',
+  },
+  {
+    q: 'Which customers started a product application but abandoned it — and which segments do they belong to?',
+    category: 'Abandonment',
+    desc: 'Incomplete application recovery — revenue within reach',
+    color: 'rose',
+  },
+  {
+    q: 'Who are the top 20 customers by total transaction value across all data, and what segments are they in?',
+    category: 'Top Customers',
+    desc: 'Identifies the highest-revenue relationships for priority servicing',
+    color: 'blue',
+  },
+];
 
 const STORAGE_KEY = 'segment_ai_history_v2';
 
@@ -919,6 +986,82 @@ const SEVERITY_STYLE: Record<string, { bg: string; text: string; border: string;
   info:     { bg: 'bg-blue-50',   text: 'text-blue-700',   border: 'border-blue-200',   dot: 'bg-blue-400' },
 };
 
+// ── Question Picker Panel (Marketing / Customer Insights) ────────────────────
+
+interface QuestionItem { q: string; category: string; desc: string; color: string; }
+
+function QuestionPickerPanel({
+  title, subtitle, icon, headerAccent, questions, onClose, onSelect,
+}: {
+  title: string;
+  subtitle: string;
+  icon: React.ReactNode;
+  headerAccent: string;
+  questions: QuestionItem[];
+  onClose: () => void;
+  onSelect: (q: string) => void;
+}) {
+  return (
+    <div className="fixed inset-y-0 right-0 w-full max-w-lg bg-white shadow-2xl border-l border-slate-200 flex flex-col z-50">
+      {/* Header */}
+      <div className="flex items-center justify-between px-5 py-4 border-b border-slate-200">
+        <div className="flex items-center gap-3">
+          <div className={`w-9 h-9 rounded-xl flex items-center justify-center ${headerAccent}`}>
+            {icon}
+          </div>
+          <div>
+            <h2 className="font-semibold text-slate-900 text-sm leading-tight">{title}</h2>
+            <p className="text-[11px] text-slate-400 mt-0.5">{subtitle}</p>
+          </div>
+        </div>
+        <button onClick={onClose} className="text-slate-400 hover:text-slate-600 transition-colors">
+          <X className="w-4 h-4" />
+        </button>
+      </div>
+
+      {/* Instructions */}
+      <div className="px-5 pt-4 pb-2">
+        <p className="text-[11px] font-semibold text-slate-400 uppercase tracking-widest flex items-center gap-1.5">
+          <Sparkles className="w-3 h-3 text-violet-400" />
+          Click any question to ask Segment AI
+        </p>
+      </div>
+
+      {/* Question cards */}
+      <div className="flex-1 overflow-y-auto px-5 pb-5 flex flex-col gap-2.5">
+        {questions.map((item, i) => {
+          const c = QUESTION_COLORS[item.color] ?? QUESTION_COLORS.violet;
+          return (
+            <button
+              key={i}
+              type="button"
+              onClick={() => { onClose(); onSelect(item.q); }}
+              className="group text-left bg-white border border-slate-100 rounded-xl px-4 py-3.5 hover:border-slate-300 hover:shadow-md transition-all duration-150"
+              style={{ borderLeft: `3px solid ${c.accent}` }}
+            >
+              <div className="flex items-start justify-between gap-2 mb-1.5">
+                <span className={`text-[10px] font-bold uppercase tracking-widest ${c.chipText} ${c.chipBg} px-2 py-0.5 rounded-full border ${c.chipBorder}`}>
+                  {item.category}
+                </span>
+                <span className="text-slate-300 text-sm group-hover:text-slate-500 transition-colors flex-shrink-0 mt-0.5">→</span>
+              </div>
+              <p className="text-[13px] font-semibold text-slate-800 leading-snug mb-1.5">{item.q}</p>
+              <p className="text-[11px] text-slate-400 leading-snug">{item.desc}</p>
+            </button>
+          );
+        })}
+      </div>
+
+      {/* Footer */}
+      <div className="px-5 py-3 border-t border-slate-100 bg-slate-50 flex-shrink-0">
+        <p className="text-[11px] text-slate-400 text-center">
+          Stakeholder-ready insights backed by live customer data
+        </p>
+      </div>
+    </div>
+  );
+}
+
 function AnomaliesPanel({ anomalies, onClose }: { anomalies: AnomalyResult[]; onClose: () => void }) {
   const [active, setActive] = React.useState(anomalies[0]?.id ?? '');
   const current = anomalies.find(a => a.id === active);
@@ -1492,6 +1635,8 @@ export default function BankingAskGenie() {
   const [productPulse, setProductPulse] = React.useState<ProductPulseItem[] | null>(null);
   const [productPulseLoading, setProductPulseLoading] = React.useState(false);
   const [showProductPulse, setShowProductPulse] = React.useState(false);
+  const [showMarketing, setShowMarketing] = React.useState(false);
+  const [showCustomerInsights, setShowCustomerInsights] = React.useState(false);
 
   const bottomRef = React.useRef<HTMLDivElement>(null);
   const textareaRef = React.useRef<HTMLTextAreaElement>(null);
@@ -1626,6 +1771,28 @@ export default function BankingAskGenie() {
       {showProductPulse && productPulse && (
         <ProductPulsePanel products={productPulse} onClose={() => setShowProductPulse(false)} />
       )}
+      {showMarketing && (
+        <QuestionPickerPanel
+          title="Marketing Questions"
+          subtitle="5 stakeholder-ready campaign & channel insights"
+          icon={<Megaphone className="w-4 h-4 text-rose-600" />}
+          headerAccent="bg-rose-100"
+          questions={MARKETING_QUESTIONS}
+          onClose={() => setShowMarketing(false)}
+          onSelect={sendQuestion}
+        />
+      )}
+      {showCustomerInsights && (
+        <QuestionPickerPanel
+          title="Customer Insights"
+          subtitle="5 stakeholder-ready segment & behaviour insights"
+          icon={<Users className="w-4 h-4 text-blue-600" />}
+          headerAccent="bg-blue-100"
+          questions={CUSTOMER_INSIGHTS_QUESTIONS}
+          onClose={() => setShowCustomerInsights(false)}
+          onSelect={sendQuestion}
+        />
+      )}
 
       {/* Header */}
       <div className="flex items-start justify-between gap-4">
@@ -1671,6 +1838,24 @@ export default function BankingAskGenie() {
           >
             <Package className="w-3.5 h-3.5" />
             {productPulseLoading ? 'Loading…' : 'Product Pulse'}
+          </button>
+          {/* Marketing questions button */}
+          <button
+            type="button"
+            onClick={() => { setShowCustomerInsights(false); setShowMarketing(v => !v); }}
+            className={`inline-flex items-center gap-1.5 px-3 py-2 rounded-lg border text-sm font-medium transition-colors ${showMarketing ? 'border-rose-400 text-rose-800 bg-rose-100' : 'border-rose-200 text-rose-700 bg-rose-50 hover:bg-rose-100'}`}
+          >
+            <Megaphone className="w-3.5 h-3.5" />
+            Marketing
+          </button>
+          {/* Customer Insights questions button */}
+          <button
+            type="button"
+            onClick={() => { setShowMarketing(false); setShowCustomerInsights(v => !v); }}
+            className={`inline-flex items-center gap-1.5 px-3 py-2 rounded-lg border text-sm font-medium transition-colors ${showCustomerInsights ? 'border-blue-400 text-blue-800 bg-blue-100' : 'border-blue-200 text-blue-700 bg-blue-50 hover:bg-blue-100'}`}
+          >
+            <Users className="w-3.5 h-3.5" />
+            Customer Insights
           </button>
           {chatEntries.length > 0 && (
             <>
