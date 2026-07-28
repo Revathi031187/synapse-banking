@@ -1,0 +1,9 @@
+{
+  "name": "personalization-agent-banking",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Root package for Databricks Apps: builds frontend and backend runs via app.yaml",
+  "scripts": {
+    "build": "cd frontend && npm install && npm run build:single-port"
+  }
+}

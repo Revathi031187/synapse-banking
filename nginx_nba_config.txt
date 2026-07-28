@@ -1,0 +1,29 @@
+# NBA Platform - Complete Nginx Configuration
+# Add this to your /etc/nginx/sites-available/default inside the server {} block
+
+    # Serve NBA Platform Frontend
+    location /nba/ {
+        alias /home/aipenpaladm/personalization-agent/frontend/dist/;
+        try_files $uri $uri/ /nba/index.html;
+        index index.html;
+        
+        # Cache static assets
+        location ~* \.(js|css|png|jpg|jpeg|gif|ico|svg|woff|woff2|ttf|eot)$ {
+            expires 1y;
+            add_header Cache-Control "public, immutable";
+        }
+    }
+    
+    # NBA Platform API - Proxy to backend
+    location /nba/api/ {
+        proxy_pass http://localhost:8002/api/;
+        proxy_http_version 1.1;
+        proxy_set_header Upgrade $http_upgrade;
+        proxy_set_header Connection 'upgrade';
+        proxy_set_header Host $host;
+        proxy_cache_bypass $http_upgrade;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+    }
+

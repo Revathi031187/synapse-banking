@@ -1,0 +1,106 @@
+product_id,product_name,category,subcategory,brand,price,rating,reviews_count,in_stock,discount_percent,tags,is_featured,is_new
+PROD_000001,Wireless Headphones,Electronics,Audio,Sony,149.99,4.5,64,True,0,"tech,gadgets,recommended",False,False
+PROD_000002,Smart Watch,Electronics,Wearables,Apple,299.99,4.3,101,True,0,"tech,gadgets,gift",False,False
+PROD_000003,Laptop Computer,Electronics,Computers,Dell,899.99,4.7,250,True,10,"premium,tech,gadgets,recommended",False,False
+PROD_000004,Tablet Device,Electronics,Computers,Samsung,449.99,4.4,301,True,15,"premium,tech,gadgets,bestseller",False,False
+PROD_000005,Wireless Speaker,Electronics,Audio,JBL,79.99,4.2,448,True,0,"tech,gadgets,gift",False,False
+PROD_000006,Gaming Console,Electronics,Gaming,Sony,499.99,4.8,259,True,10,"premium,tech,gadgets,trending",False,False
+PROD_000007,Smartphone,Electronics,Mobile,Apple,799.99,4.6,95,True,0,"premium,tech,gadgets,trending",False,False
+PROD_000008,Fitness Tracker,Electronics,Wearables,Fitbit,129.99,4.1,352,True,0,"tech,gadgets,gift",False,False
+PROD_000009,Wireless Earbuds,Electronics,Audio,Samsung,179.99,4.4,203,True,20,"tech,gadgets,trending",False,False
+PROD_000010,Portable Charger,Electronics,Accessories,Anker,39.99,4.3,558,True,0,"budget,tech,gadgets,trending",False,True
+PROD_000011,4K Monitor,Electronics,Displays,LG,349.99,4.5,63,True,10,"premium,tech,gadgets,trending",True,False
+PROD_000012,Webcam HD,Electronics,Accessories,Logitech,89.99,4.2,265,False,15,"tech,gadgets,recommended",False,False
+PROD_000013,Mechanical Keyboard,Electronics,Accessories,Razer,119.99,4.6,481,True,15,"tech,gadgets,bestseller",False,True
+PROD_000014,Gaming Mouse,Electronics,Accessories,Logitech,69.99,4.4,775,False,10,"tech,gadgets,recommended",True,False
+PROD_000015,USB-C Hub,Electronics,Accessories,Anker,49.99,4.1,389,True,20,"budget,tech,gadgets,trending",False,True
+PROD_000016,Designer Jeans,Fashion,Pants,Levi's,89.99,4.3,97,True,0,"clothing,style,trending",False,True
+PROD_000017,Leather Jacket,Fashion,Outerwear,AllSaints,299.99,4.6,165,False,0,"clothing,style,popular",False,False
+PROD_000018,Running Shoes,Fashion,Footwear,Nike,119.99,4.5,115,False,0,"clothing,style,gift",False,False
+PROD_000019,Casual Sneakers,Fashion,Footwear,Adidas,79.99,4.4,109,True,0,"clothing,style,bestseller",False,False
+PROD_000020,Winter Coat,Fashion,Outerwear,North Face,179.99,4.5,507,False,0,"clothing,style,trending",False,False
+PROD_000021,Dress Shirt,Fashion,Tops,Ralph Lauren,59.99,4.2,182,True,0,"clothing,style,gift",False,False
+PROD_000022,Yoga Pants,Fashion,Bottoms,Lululemon,49.99,4.3,190,True,0,"budget,clothing,style,gift",True,False
+PROD_000023,Summer Dress,Fashion,Dresses,Zara,69.99,4.4,879,False,0,"clothing,style,trending",False,True
+PROD_000024,Denim Jacket,Fashion,Outerwear,Levi's,89.99,4.2,308,True,0,"clothing,style,trending",False,False
+PROD_000025,Leather Boots,Fashion,Footwear,Timberland,149.99,4.5,204,False,0,"clothing,style,recommended",False,False
+PROD_000026,Wool Sweater,Fashion,Tops,J.Crew,79.99,4.3,184,True,0,"clothing,style,bestseller",False,False
+PROD_000027,Athletic Shorts,Fashion,Bottoms,Under Armour,39.99,4.1,442,True,0,"budget,clothing,style,trending",False,False
+PROD_000028,Formal Suit,Fashion,Formal,Hugo Boss,399.99,4.6,517,True,0,"premium,clothing,style,recommended",False,False
+PROD_000029,Casual T-Shirt,Fashion,Tops,H&M,29.99,4.0,184,True,0,"budget,clothing,style,popular",False,False
+PROD_000030,Silk Scarf,Fashion,Accessories,Burberry,59.99,4.4,78,True,0,"clothing,style,popular",False,False
+PROD_000031,Coffee Maker,Home & Garden,Kitchen,Keurig,129.99,4.6,517,True,0,"home,lifestyle,recommended",False,False
+PROD_000032,Vacuum Cleaner,Home & Garden,Appliances,Dyson,249.99,4.5,108,True,10,"home,lifestyle,trending",False,True
+PROD_000033,Air Purifier,Home & Garden,Home,Honeywell,199.99,4.4,367,True,15,"home,lifestyle,popular",False,False
+PROD_000034,Bed Sheets Set,Home & Garden,Bedding,Brooklinen,79.99,4.3,107,True,15,"home,lifestyle,popular",True,False
+PROD_000035,Kitchen Mixer,Home & Garden,Kitchen,KitchenAid,299.99,4.7,327,True,10,"home,lifestyle,popular",False,False
+PROD_000036,Smart Thermostat,Home & Garden,Smart Home,Nest,179.99,4.5,557,True,0,"home,lifestyle,recommended",False,False
+PROD_000037,Garden Tool Set,Home & Garden,Garden,Fiskars,89.99,4.2,228,False,10,"home,lifestyle,recommended",False,False
+PROD_000038,Dining Table,Home & Garden,Furniture,IKEA,499.99,4.4,162,True,0,"premium,home,lifestyle,bestseller",False,False
+PROD_000039,Office Chair,Home & Garden,Furniture,Herman Miller,299.99,4.6,179,True,10,"home,lifestyle,gift",True,False
+PROD_000040,Floor Lamp,Home & Garden,Lighting,Target,79.99,4.1,240,True,0,"home,lifestyle,bestseller",False,False
+PROD_000041,Cookware Set,Home & Garden,Kitchen,All-Clad,149.99,4.5,115,True,10,"home,lifestyle,bestseller",False,False
+PROD_000042,Bath Towel Set,Home & Garden,Bath,Parachute,59.99,4.2,169,True,0,"home,lifestyle,bestseller",False,False
+PROD_000043,Area Rug,Home & Garden,Decor,Ruggable,199.99,4.3,91,True,15,"home,lifestyle,gift",False,False
+PROD_000044,Wall Art,Home & Garden,Decor,West Elm,89.99,4.0,327,True,0,"home,lifestyle,gift",False,False
+PROD_000045,Storage Organizer,Home & Garden,Storage,Container Store,49.99,4.2,410,True,15,"budget,home,lifestyle,trending",False,False
+PROD_000046,Yoga Mat,Sports,Fitness,Manduka,39.99,4.5,116,True,0,"budget,fitness,outdoors,gift",False,True
+PROD_000047,Dumbbell Set,Sports,Fitness,Bowflex,149.99,4.6,591,False,10,"fitness,outdoors,popular",False,False
+PROD_000048,Tennis Racket,Sports,Sports,Wilson,179.99,4.4,243,True,0,"fitness,outdoors,recommended",False,False
+PROD_000049,Golf Clubs Set,Sports,Golf,Callaway,599.99,4.7,711,True,0,"premium,fitness,outdoors,popular",False,False
+PROD_000050,Basketball,Sports,Sports,Spalding,29.99,4.3,366,True,0,"budget,fitness,outdoors,popular",False,True
+PROD_000051,Soccer Ball,Sports,Sports,Adidas,34.99,4.2,134,True,0,"budget,fitness,outdoors,bestseller",False,False
+PROD_000052,Exercise Bike,Sports,Fitness,Peloton,399.99,4.5,62,True,15,"premium,fitness,outdoors,bestseller",False,False
+PROD_000053,Camping Tent,Sports,Camping,Coleman,199.99,4.4,169,True,0,"fitness,outdoors,trending",False,True
+PROD_000054,Hiking Backpack,Sports,Outdoor,Osprey,129.99,4.5,258,True,15,"fitness,outdoors,trending",False,False
+PROD_000055,Fishing Rod,Sports,Fishing,Shimano,89.99,4.2,356,True,15,"fitness,outdoors,gift",False,False
+PROD_000056,Ski Goggles,Sports,Accessories,Oakley,79.99,4.3,481,True,0,"fitness,outdoors,popular",False,False
+PROD_000057,Baseball Glove,Sports,Sports,Rawlings,69.99,4.4,165,True,0,"fitness,outdoors,trending",False,False
+PROD_000058,Surfboard,Sports,Water Sports,Channel Islands,449.99,4.6,75,True,15,"premium,fitness,outdoors,recommended",False,False
+PROD_000059,Boxing Gloves,Sports,Sports,Everlast,59.99,4.1,231,True,0,"fitness,outdoors,bestseller",False,True
+PROD_000060,Resistance Bands,Sports,Fitness,TRX,24.99,4.0,134,True,15,"budget,fitness,outdoors,popular",False,True
+PROD_000061,Face Cream,Beauty,Skincare,La Mer,89.99,4.6,290,False,0,"cosmetics,skincare,trending",False,False
+PROD_000062,Makeup Palette,Beauty,Cosmetics,Urban Decay,59.99,4.5,352,True,0,"cosmetics,skincare,trending",False,False
+PROD_000063,Hair Dryer,Beauty,Hair Care,Dyson,129.99,4.4,98,True,20,"cosmetics,skincare,bestseller",False,False
+PROD_000064,Perfume,Beauty,Fragrance,Chanel,99.99,4.7,448,True,10,"cosmetics,skincare,popular",False,False
+PROD_000065,Shampoo Set,Beauty,Hair Care,Olaplex,49.99,4.3,607,True,0,"budget,cosmetics,skincare,popular",False,False
+PROD_000066,Nail Polish Set,Beauty,Nails,OPI,34.99,4.2,135,False,0,"budget,cosmetics,skincare,popular",True,False
+PROD_000067,Skincare Set,Beauty,General,Drunk Elephant,79.99,4.5,220,True,20,"cosmetics,skincare,bestseller",False,False
+PROD_000068,Face Serum,Beauty,Skincare,The Ordinary,69.99,4.6,179,True,15,"cosmetics,skincare,recommended",False,False
+PROD_000069,Lipstick Set,Beauty,Cosmetics,MAC,44.99,4.3,83,True,0,"budget,cosmetics,skincare,bestseller",False,False
+PROD_000070,Body Lotion,Beauty,Body Care,Cetaphil,39.99,4.2,80,True,0,"budget,cosmetics,skincare,recommended",False,False
+PROD_000071,Sunscreen,Beauty,Skincare,Neutrogena,29.99,4.4,75,True,15,"budget,cosmetics,skincare,trending",False,False
+PROD_000072,Eye Cream,Beauty,Skincare,Kiehl's,59.99,4.5,154,True,0,"cosmetics,skincare,gift",False,False
+PROD_000073,Facial Cleanser,Beauty,Skincare,CeraVe,34.99,4.3,64,True,10,"budget,cosmetics,skincare,popular",False,False
+PROD_000074,Hair Straightener,Beauty,Hair Care,GHD,89.99,4.4,65,False,10,"cosmetics,skincare,gift",False,False
+PROD_000075,Makeup Brushes,Beauty,Cosmetics,Morphe,49.99,4.1,127,False,0,"budget,cosmetics,skincare,recommended",False,False
+PROD_000076,Fiction Bestseller,Books,Fiction,Penguin,19.99,4.6,156,True,0,"budget,reading,literature,trending",False,False
+PROD_000077,Self-Help Book,Books,Self-Help,Simon & Schuster,24.99,4.5,212,True,0,"budget,reading,literature,popular",False,False
+PROD_000078,Cookbook,Books,Cooking,Williams Sonoma,29.99,4.7,297,True,0,"budget,reading,literature,gift",False,False
+PROD_000079,Business Book,Books,Business,HarperCollins,27.99,4.4,99,True,20,"budget,reading,literature,popular",False,False
+PROD_000080,Children's Book,Books,Kids,Scholastic,14.99,4.8,329,True,0,"budget,reading,literature,trending",True,False
+PROD_000081,Mystery Novel,Books,Fiction,Random House,16.99,4.3,498,True,0,"budget,reading,literature,recommended",True,False
+PROD_000082,Biography,Books,Non-Fiction,Knopf,22.99,4.6,342,True,0,"budget,reading,literature,trending",False,False
+PROD_000083,Science Book,Books,Science,National Geographic,31.99,4.5,220,True,0,"budget,reading,literature,gift",False,False
+PROD_000084,Travel Guide,Books,Travel,Lonely Planet,19.99,4.2,128,True,10,"budget,reading,literature,bestseller",False,False
+PROD_000085,Art Book,Books,Art,Taschen,39.99,4.4,636,True,15,"budget,reading,literature,popular",False,False
+PROD_000086,History Book,Books,History,Vintage,26.99,4.3,1258,True,10,"budget,reading,literature,popular",False,False
+PROD_000087,Poetry Collection,Books,Poetry,FSG,18.99,4.1,89,True,15,"budget,reading,literature,gift",False,False
+PROD_000088,Graphic Novel,Books,Comics,DC Comics,24.99,4.6,349,True,15,"budget,reading,literature,trending",False,False
+PROD_000089,Textbook,Books,Educational,McGraw-Hill,89.99,4.0,67,True,15,"reading,literature,trending",False,False
+PROD_000090,Audio Book,Books,Audiobooks,Audible,29.99,4.5,131,True,0,"budget,reading,literature,trending",False,True
+PROD_000091,LEGO Set,Toys,Building,LEGO,79.99,4.8,79,True,20,"kids,family,trending",False,False
+PROD_000092,Board Game,Toys,Games,Hasbro,39.99,4.6,220,True,0,"budget,kids,family,trending",False,False
+PROD_000093,Action Figure,Toys,Figures,Mattel,24.99,4.5,125,False,10,"budget,kids,family,trending",False,False
+PROD_000094,Puzzle,Toys,Puzzles,Ravensburger,19.99,4.4,114,False,0,"budget,kids,family,gift",False,False
+PROD_000095,Doll House,Toys,Dolls,KidKraft,89.99,4.7,93,True,0,"kids,family,popular",False,False
+PROD_000096,Remote Control Car,Toys,Vehicles,Traxxas,49.99,4.5,101,True,0,"budget,kids,family,recommended",True,True
+PROD_000097,Building Blocks,Toys,Building,Mega Bloks,34.99,4.6,246,True,0,"budget,kids,family,recommended",True,False
+PROD_000098,Educational Toy,Toys,Learning,LeapFrog,29.99,4.4,185,True,0,"budget,kids,family,recommended",False,False
+PROD_000099,Stuffed Animal,Toys,Plush,Jellycat,24.99,4.3,98,True,0,"budget,kids,family,recommended",False,False
+PROD_000100,Play Kitchen,Toys,Pretend Play,Step2,99.99,4.6,112,True,0,"kids,family,popular",False,True
+PROD_000101,Toy Train Set,Toys,Vehicles,Thomas & Friends,59.99,4.5,225,True,15,"kids,family,gift",False,False
+PROD_000102,Science Kit,Toys,Science,National Geographic,44.99,4.7,484,True,0,"budget,kids,family,popular",False,True
+PROD_000103,Art Supplies,Toys,Creative,Crayola,29.99,4.2,466,True,10,"budget,kids,family,bestseller",False,False
+PROD_000104,Musical Toy,Toys,Music,Baby Einstein,39.99,4.3,263,True,0,"budget,kids,family,gift",False,False
+PROD_000105,Outdoor Playset,Toys,Outdoor,Little Tikes,199.99,4.6,1030,True,0,"kids,family,trending",False,True

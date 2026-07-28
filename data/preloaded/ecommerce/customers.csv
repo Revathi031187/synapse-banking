@@ -1,0 +1,21 @@
+customer_id,name,email,age,gender,income,location,join_date,customer_segment,lifetime_value,acquisition_channel,preferred_contact,loyalty_score
+CUST_000001,Alice Johnson,alice.johnson@email.com,34,Female,85000,Urban,2023-06-15,Premium,12450.50,Social Media,Email,8.5
+CUST_000002,Bob Smith,bob.smith@email.com,28,Male,52000,Suburban,2023-08-22,Regular,3240.20,Search,SMS,6.2
+CUST_000003,Carol White,carol.white@email.com,42,Female,125000,Urban,2023-02-10,VIP,28900.75,Referral,Email,9.8
+CUST_000004,David Brown,david.brown@email.com,55,Male,38000,Rural,2022-11-30,Budget,890.40,Organic,Phone,4.1
+CUST_000005,Emma Davis,emma.davis@email.com,31,Female,68000,Suburban,2023-04-18,Regular,5620.30,Social Media,Email,7.3
+CUST_000006,Frank Miller,frank.miller@email.com,45,Male,95000,Urban,2023-01-12,Premium,15230.60,Paid Ads,Email,8.9
+CUST_000007,Grace Wilson,grace.wilson@email.com,26,Female,45000,Urban,2023-09-05,Regular,2180.90,Influencer,SMS,5.8
+CUST_000008,Henry Moore,henry.moore@email.com,38,Male,72000,Suburban,2023-03-28,Regular,6840.20,Search,Email,7.1
+CUST_000009,Ivy Taylor,ivy.taylor@email.com,29,Female,41000,Rural,2023-07-14,Budget,1450.80,Organic,Phone,4.8
+CUST_000010,Jack Anderson,jack.anderson@email.com,52,Male,110000,Urban,2022-12-20,VIP,22100.40,Referral,Email,9.2
+CUST_000011,Kelly Martinez,kelly.martinez@email.com,36,Female,78000,Suburban,2023-05-10,Premium,9870.30,Social Media,Email,8.1
+CUST_000012,Liam Garcia,liam.garcia@email.com,44,Male,88000,Urban,2023-02-28,Premium,11540.60,Paid Ads,SMS,8.4
+CUST_000013,Mia Rodriguez,mia.rodriguez@email.com,27,Female,49000,Urban,2023-08-15,Regular,3890.20,TikTok,SMS,6.5
+CUST_000014,Noah Lee,noah.lee@email.com,33,Male,64000,Suburban,2023-06-22,Regular,5230.40,YouTube,Email,7.0
+CUST_000015,Olivia Kim,olivia.kim@email.com,41,Female,102000,Urban,2023-01-18,Premium,18760.80,Referral,Email,9.0
+CUST_000016,Peter Chen,peter.chen@email.com,58,Male,135000,Urban,2022-10-05,VIP,31240.90,Word of Mouth,Phone,9.5
+CUST_000017,Quinn Taylor,quinn.taylor@email.com,25,Female,39000,Rural,2023-09-20,Budget,1820.30,Instagram,SMS,5.2
+CUST_000018,Ryan Wilson,ryan.wilson@email.com,47,Male,91000,Suburban,2023-03-15,Premium,13680.50,LinkedIn,Email,8.6
+CUST_000019,Sophia Anderson,sophia.anderson@email.com,30,Female,58000,Urban,2023-07-08,Regular,4560.70,Facebook,Email,6.9
+CUST_000020,Thomas Martin,thomas.martin@email.com,50,Male,98000,Urban,2023-01-25,Premium,16890.20,Referral,Email,8.8

@@ -1,0 +1,16 @@
+[Unit]
+Description=Personalization Agent Banking Backend
+After=network.target
+
+[Service]
+Type=simple
+User=aipenpaladm
+Group=aipenpaladm
+WorkingDirectory=/home/aipenpaladm/personalization-agent-banking
+Environment="PATH=/home/aipenpaladm/personalization-agent-banking/venv/bin"
+ExecStart=/home/aipenpaladm/personalization-agent-banking/venv/bin/uvicorn api.main_unified_chromadb:app --host 0.0.0.0 --port 8001
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target

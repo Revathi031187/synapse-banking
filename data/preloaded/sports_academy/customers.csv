@@ -1,0 +1,12 @@
+customer_id,name,email,age,gender,skill_level,join_date,location
+STU_00001,James Rodriguez,james.r@academy.com,14,Male,Beginner,2023-01-15,North
+STU_00002,Maria Garcia,maria.g@academy.com,22,Female,Intermediate,2023-03-20,South
+STU_00003,Michael Chen,michael.c@academy.com,35,Male,Advanced,2022-09-10,East
+STU_00004,Sarah Williams,sarah.w@academy.com,10,Female,Beginner,2023-06-05,West
+STU_00005,Daniel Kim,daniel.k@academy.com,28,Male,Intermediate,2023-02-18,North
+STU_00006,Emily Johnson,emily.j@academy.com,16,Female,Beginner,2023-04-22,South
+STU_00007,Christopher Lee,chris.l@academy.com,42,Male,Advanced,2022-11-30,East
+STU_00008,Jessica Martinez,jessica.m@academy.com,19,Female,Intermediate,2023-05-14,West
+STU_00009,David Thompson,david.t@academy.com,12,Male,Beginner,2023-07-08,North
+STU_00010,Ashley Brown,ashley.b@academy.com,31,Female,Advanced,2023-01-25,South
+

@@ -1,0 +1,21 @@
+product_id,product_name,category,annual_fee,min_balance
+PROD_001,Premium Checking,Checking,0,5000
+PROD_002,Basic Checking,Checking,0,0
+PROD_003,High-Yield Savings,Savings,0,1000
+PROD_004,Money Market Account,Savings,0,10000
+PROD_005,Platinum Rewards Card,Credit_Card,95,0
+PROD_006,Cash Back Card,Credit_Card,0,0
+PROD_007,Travel Rewards Card,Credit_Card,450,0
+PROD_008,Personal Loan,Loan,0,0
+PROD_009,Auto Loan,Loan,0,0
+PROD_010,Mortgage,Mortgage,0,0
+PROD_011,Home Equity Line,Mortgage,0,0
+PROD_012,Brokerage Account,Investment,0,5000
+PROD_013,Retirement IRA,Investment,0,1000
+PROD_014,Wealth Management,Investment,500,100000
+PROD_015,Business Checking,Business,0,2500
+PROD_016,Business Credit Card,Business,150,0
+PROD_017,Business Line of Credit,Business,0,0
+PROD_018,12-Month CD,CD,0,1000
+PROD_019,5-Year CD,CD,0,5000
+PROD_020,Life Insurance,Insurance,600,0
