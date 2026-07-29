@@ -15,7 +15,7 @@ import re
 import json
 import logging
 from pathlib import Path
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Tuple
 
 import duckdb
 import pandas as pd
@@ -319,6 +319,8 @@ def build_schema_context() -> str:
         "  - ad_spend.sent = total contacts/reach for that campaign row (email sent, SMS sent, etc.) — NOT a product impression count. NEVER call it 'impressions'.\n"
         "  - customers.clv_tier values: 'Platinum', 'Gold', 'Silver', 'Bronze' — use these exact strings.\n"
         "  - customers.days_since_last_transaction: PRE-COMPUTED integer, use it directly for dormancy queries. Max value in this dataset is ~48. Use >= 30 for dormancy targeting (yields meaningful cohort). NEVER use >= 90 (returns 0 rows — no customer exceeds 48 days). NEVER compute it from CURRENT_DATE.\n"
+        "  - customers.txn_frequency_trend and customers.balance_trend are CATEGORICAL TEXT ('Increasing'/'Decreasing'/'Stable', 'growing'/'declining'/'stable') — NEVER use AVG()/SUM() on them, only GROUP BY/COUNT.\n"
+        "  - For a NUMERIC 'transaction frequency' or 'how often do they transact' metric, use customers.monthly_transaction_volume, customers.recent_txn_count, or customers.previous_txn_count — NOT txn_frequency_trend.\n"
         "CRITICAL — DATE REFERENCE RULE (transaction data is STATIC, max date 2025-06-04):\n"
         "  NEVER use CURRENT_DATE, NOW(), TODAY(), or GETDATE() for time-range filters on transactions.\n"
         "  Instead use: (SELECT MAX(CAST(transaction_date AS DATE)) FROM transactions) as the anchor date.\n"
@@ -354,6 +356,7 @@ Rules:
 - **Open with the key metric in bold**: e.g., "**247 customers** (4.9% of the base) have incomplete applications — a significant missed revenue opportunity."
 - Use `**bold**` for ALL numbers, percentages, dollar amounts, and key metrics throughout
 - Format ALL monetary values (revenue, spend, income, balance, deposit, cost, amount, budget) as **$X.XK** / **$X.XM** / **$X.XB** — NEVER write raw decimals like 135600.0 or 23824.0. Examples: 135600 → **$135.6K**, 2300000 → **$2.3M**. Non-monetary metrics (ROAS, scores, rates, counts) use bold without $: **5.69 ROAS**, **1,247 customers**, **720 credit score**.
+- TRUST THE EXACT NUMBER FROM THE QUERY RESULT — never rescale it to match what you'd "expect" for that metric. If monthly marketing spend sums to 11606.40, that's **$11.6K** — do NOT inflate it to $1.1M just because a bank's spend "sounds like" it should be in the millions. Divide by exactly 1,000 for K or 1,000,000 for M — never add an extra, intuition-based factor of 10/100/1000.
 - Use `- bullet points` when listing 3+ data points or breakdowns (e.g., top products, top segments) — EACH bullet on its OWN LINE using \n
 - Add "**Recommendation:** ..." ONLY when the answer involves segment strategy, product fit, campaign targeting, customer behaviour, or risk/retention analysis. SKIP the Recommendation entirely for simple factual lookups (e.g. "how many", "list the segments", "what is the definition of", pure count or name queries). When included, place it on its own line preceded by \n\n.
 - Use `## Section` headers only when the answer has 2+ clearly distinct parts — each header on its own line
@@ -362,6 +365,7 @@ Rules:
 - When listing customers, explain WHO they are and WHY it matters for the bank, not just how many
 - NEVER describe characteristics generically (e.g. "High average income") without citing the actual numbers from the query result. Always say "avg income of **$67,400**" not just "high income".
 - When asked about "top N" personas/segments, ALWAYS name them explicitly in the narrative (e.g. "**Wealth Builder** and **Digital Native**").
+- NEVER cite the raw SQL column/field name in the narrative (e.g. "(avg_clv)", "(avg_churn_prob)", "(avg_digital_score)"). Translate every column into a plain business phrase instead: avg_clv → "average customer lifetime value", avg_churn_prob → "average churn risk", avg_digital_score → "average digital engagement".
 
 DATA GROUNDING — ABSOLUTE RULE (no hallucinations):
 Every number, percentage, name, or metric you cite in the narrative MUST come from the SQL SELECT result columns or from earlier messages in the conversation history. NEVER invent supporting details.
@@ -1225,6 +1229,22 @@ CHART RULES:
 - If the question cannot be answered with SQL, set sql to null
 - Always run SQL for any data question — never just give narrative text
 
+CAMPAIGN / AUDIENCE-TARGETING QUESTIONS (e.g. "which segment should I target with my budget for X goal?"):
+- These ALWAYS need real SQL grounding — never set sql=null for this class, even though it sounds like a strategy question. Query persona_stats (or segment_assignments grouped) for avg_churn_prob, avg_clv, avg_income, avg_digital_engagement, and customer_count per segment, plus channel_preference distribution, so the recommendation is backed by real numbers.
+- If the question asks for a RECOMMENDED CHANNEL (it almost always does), your SELECT list MUST include the segment's dominant channel — use DuckDB's MODE() aggregate: `MODE(c.channel_preference) AS dominant_channel`. Do not answer a "which channel" question without this column — there is no data to base a channel recommendation on otherwise.
+  EXAMPLE: SELECT sa.segment_name, COUNT(*) AS customers, ROUND(AVG(c.churn_probability), 3) AS avg_churn_prob, ROUND(AVG(c.digital_engagement_score), 3) AS avg_digital_score, ROUND(AVG(c.customer_lifetime_value), 0) AS avg_clv, MODE(c.channel_preference) AS dominant_channel FROM customers c JOIN segment_assignments sa ON c.customer_id = sa.customer_id GROUP BY sa.segment_name
+- The segment you recommend MUST match the STATED GOAL — do not default to "highest CLV" as a reflex:
+  - Goal is retention / win-back / re-engagement / reduce churn / "at risk": recommend the segment with the HIGHEST avg_churn_prob. These customers are the ones who could actually leave — that's who a retention budget is for.
+  - Goal is engagement / activation / increase usage: recommend the segment with the LOWEST avg_digital_engagement. They have the most room to grow — already-engaged customers don't need an engagement push.
+  - Goal is upsell / cross-sell / growth / premium revenue: recommend the segment with the HIGHEST avg_clv / avg_income.
+  - Goal is acquisition (credit card, loan, new account signup): recommend the segment with the BEST avg_credit_score / avg_income — acquisition campaigns are gated by creditworthiness, not size. NEVER recommend "the largest segment" as the reason — a big segment with below-average income/credit score is a worse acquisition target than a smaller, better-qualified one.
+  - If the goal combines retention AND engagement (as most campaigns do), lead with churn risk (retention is the more urgent/costly problem — losing a customer outweighs a small engagement bump) and use digital-engagement/channel_preference to justify the recommended contact channel.
+  - NEVER recommend the highest-CLV, lowest-churn segment for a stated retention/engagement goal — that segment is already loyal and isn't who the budget is meant to reach.
+- Every follow-up must be answerable with a SELECT query against the tables in the schema above — a concrete lookup, count, ranking, comparison, or trend.
+- NEVER suggest advisory/creative/strategic follow-ups with no data answer — e.g. "What rewards/offers could be designed for these customers?", "How can we improve retention?", "What loyalty program would work best?". These always return 0 rows.
+- Good: "Which segment has the highest average CLV?", "What products do these customers currently hold?", "How does their transaction frequency compare to the overall average?"
+- Bad: "What personalized offers could re-engage these customers?", "How should we design a rewards program for them?"
+
 Respond ONLY with a valid JSON object — no markdown fences:
 {
   "sql": "SELECT ... or null for strategy/advisory questions",
@@ -1296,6 +1316,8 @@ _NARRATIVE_SYSTEM = (
     "5. Add a '**Recommendation:**' sentence ONLY when the answer involves segment strategy, product fit, campaign targeting, customer behaviour patterns, or risk/retention. OMIT it for simple factual lookups (how many, count, list, name queries).\n"
     "6. No section headers. Use bullet points only if listing 3+ items. Output plain text — NOT JSON.\n"
     "7. Format ALL monetary values (revenue, spend, income, balance, deposit, cost, amount) as **$X.XK** / **$X.XM** / **$X.XB** — NEVER write raw decimals. Examples: 135600.0 → **$135.6K**, 2300000 → **$2.3M**. Non-monetary metrics (ROAS, scores, counts) use bold without $: **5.69 ROAS**, **1,247 customers**.\n"
+    "8. TRUST THE EXACT NUMBERS GIVEN — do NOT round or rescale a value to match what you'd 'expect' for that metric. A monthly marketing spend figure like 11606.40 is correctly **$11.6K** — do NOT inflate it to $1.1M just because a bank's total marketing budget 'sounds like' it should be in the millions. Convert the digits exactly as given (divide by 1,000 for K, by 1,000,000 for M) and nothing else — never add or remove a factor of 10, 100, or 1000 based on intuition about what the number 'should' be.\n"
+    "9. NEVER state a population/segment-size count (e.g. \"which includes 5000 total customers\", \"out of 800 customers\") unless that exact count is a column value, a COUNT(*) result, or explicitly given to you as the true total. The number of rows shown is NOT the size of a segment/tier/category unless the table is actually grouped by that segment — if you don't know the true count, omit the sentence rather than inventing a plausible-sounding number.\n"
     "FORBIDDEN phrases — NEVER write these (they signal hallucination and will be rejected):\n"
     "  'the data suggests', 'we can infer', 'it appears that', 'it seems that', 'may indicate',\n"
     "  'could indicate', 'further analysis', 'based on available data', 'the results indicate',\n"
@@ -1308,22 +1330,77 @@ _NARRATIVE_SYSTEM = (
 )
 
 
-def _table_to_text(table: Dict[str, Any], max_rows: int = 10) -> str:
+def _fmt_cell(v: Any) -> str:
+    # Whole-number floats (e.g. month=1.0) read as raw floats when echoed into
+    # narrative text — show them as plain integers instead.
+    if isinstance(v, float) and v.is_integer():
+        return str(int(v))
+    return str(v)
+
+
+def _table_to_text(table: Dict[str, Any], max_rows: int = 20) -> str:
     columns = table.get("columns", [])
     rows = table.get("rows", [])[:max_rows]
     if not columns or not rows:
         return "(no data)"
     header = " | ".join(columns)
     divider = "-" * max(len(header), 40)
-    lines = [header, divider] + [" | ".join(str(v) for v in row) for row in rows]
+    lines = [header, divider] + [" | ".join(_fmt_cell(v) for v in row) for row in rows]
     extra = len(table.get("rows", [])) - max_rows
     if extra > 0:
         lines.append(f"... and {extra} more rows")
     return "\n".join(lines)
 
 
+_DATE_RE = re.compile(r'^\d{4}-\d{2}-\d{2}')
+
+
+def _table_aggregates_text(table: Dict[str, Any]) -> str:
+    """
+    Compute exact aggregate stats (count/min/max/sum/avg for numbers, earliest/latest
+    for ISO dates) over ALL rows — not just the row sample shown in the prompt — so the
+    grounding LLM has real ground truth for range/total claims even when the table is
+    too large to show in full (e.g. "range from X to Y", "dating back to Z").
+    """
+    columns = table.get("columns", [])
+    rows = table.get("rows", [])
+    if not columns or not rows:
+        return ""
+    lines = []
+    for ci, col in enumerate(columns):
+        _nums, _dates = [], []
+        for row in rows:
+            if ci >= len(row) or row[ci] in ("", None):
+                continue
+            v = row[ci]
+            try:
+                _nums.append(float(str(v).replace(',', '')))
+                continue
+            except (ValueError, TypeError):
+                pass
+            if isinstance(v, str) and _DATE_RE.match(v):
+                _dates.append(v)
+        if len(_nums) >= 2:
+            lines.append(
+                f"{col}: count={len(_nums)}, min={min(_nums):.2f}, max={max(_nums):.2f}, "
+                f"sum={sum(_nums):.2f}, avg={sum(_nums)/len(_nums):.2f}"
+            )
+        elif len(_dates) >= 2:
+            lines.append(f"{col}: earliest={min(_dates)[:10]}, latest={max(_dates)[:10]}")
+    if not lines:
+        return ""
+    return (
+        f"EXACT AGGREGATE FACTS (computed over all {len(rows)} rows — use these for any "
+        f"min/max/total/average/range/date-span claim instead of eyeballing the sample rows below):\n"
+        + "\n".join(lines)
+    )
+
+
 def _generate_grounded_narrative(
-    question: str, table: Dict[str, Any], total_count: Optional[int] = None
+    question: str,
+    table: Dict[str, Any],
+    total_count: Optional[int] = None,
+    lead_hint: Optional[str] = None,
 ) -> str:
     """
     Second-stage LLM call: generate a factual narrative from actual query results.
@@ -1333,8 +1410,15 @@ def _generate_grounded_narrative(
     total_count: the true number of matching rows when the visible table was
     truncated by a SQL LIMIT (e.g. 143 total matches, only 25 shown) — lets the
     narrative state the real total instead of confusing it with len(rows).
+
+    lead_hint: for ranking/recommendation questions, tells the LLM which row is
+    actually the answer (the table's first row, sorted by the relevant metric) —
+    otherwise the LLM can still gravitate to whichever row has the biggest raw
+    number in an unrelated column (e.g. highest CLV) instead of the row the query
+    was actually sorted to surface (e.g. highest churn risk, for a retention ask).
     """
     table_text = _table_to_text(table)
+    agg_text = _table_aggregates_text(table)
     n_rows = len(table.get("rows", []))
     count_note = ""
     if total_count is not None and total_count != n_rows:
@@ -1343,10 +1427,12 @@ def _generate_grounded_narrative(
             f"only the top {n_rows} (already sorted) are shown below. If you state a total "
             f"count, use {total_count}, not {n_rows}. Make clear only a subset is listed.\n"
         )
+    lead_note = f"\nNOTE: {lead_hint}\n" if lead_hint else ""
     prompt = (
         f"Question: {question}\n"
-        f"{count_note}\n"
-        f"SQL result ({n_rows} row{'s' if n_rows != 1 else ''}):\n{table_text}\n\n"
+        f"{count_note}{lead_note}\n"
+        + (f"{agg_text}\n\n" if agg_text else "")
+        + f"SQL result ({n_rows} row{'s' if n_rows != 1 else ''}):\n{table_text}\n\n"
         "Write the narrative (3-5 sentences, plain text, no JSON):"
     )
     try:
@@ -1421,6 +1507,10 @@ def _sanitize_sql(sql: str) -> str:
     """
     if not sql:
         return sql
+    # Step 0: strip Python/bash-style line-continuation backslashes ("... \\\n    ...")
+    # — the LLM occasionally emits these when writing multi-line SQL, but DuckDB has
+    # no such syntax; a trailing backslash before a newline is just a parse error.
+    sql = re.sub(r'\\\s*\n', ' ', sql)
     # Step 1: literal backslash-quote sequences (\") → single quote
     sql = sql.replace('\\"', "'")
     # Step 2: double-quoted VALUES after comparison operators → single-quoted
@@ -1563,6 +1653,60 @@ def _exec_sql(sql: str) -> Dict[str, Any]:
     return {"columns": columns, "rows": clean_rows}
 
 
+def _ungrounded_figures(narrative_text: str, table: Dict[str, Any], sql: str = "") -> List[float]:
+    """
+    Extract every bolded numeric figure from narrative_text (dollar amounts with
+    optional K/M/B suffix, or bare decimal/whole-number metrics like ROI/scores/counts)
+    and return the ones that don't match any real value derivable from the table (a
+    cell, a column sum, a column average, the row count, or the SQL's LIMIT). Empty
+    list means every cited figure checks out.
+
+    Bare whole numbers ARE validated (not exempted) — a hallucinated count like "5000
+    total customers" for a segment when the whole dataset only has 5000 customers is
+    exactly the kind of number a business user notices first. `len(rows)` and the SQL's
+    LIMIT are included as legitimate reference points so genuine "top 25 customers"
+    phrasing isn't false-flagged just because it doesn't match a table cell.
+    """
+    _rows = table.get('rows', [])
+    if not _rows:
+        return []
+    _num_bolds = re.findall(r'\*\*(\$)?([\d,]+(?:\.\d+)?)\s*(K|M|B)?\*\*', narrative_text, re.IGNORECASE)
+    if not _num_bolds:
+        return []
+    _scale = {'K': 1_000, 'M': 1_000_000, 'B': 1_000_000_000, '': 1}
+    _cited = set()
+    for _dollar, _num, _suf in _num_bolds:
+        _raw = _num.replace(',', '')
+        try:
+            _cited.add(float(_raw) * _scale.get(_suf.upper(), 1))
+        except ValueError:
+            pass
+    if not _cited:
+        return []
+    _real_vals = {float(len(_rows))}
+    _limit_match = re.search(r'\bLIMIT\s+(\d+)\s*$', sql, re.IGNORECASE) if sql else None
+    if _limit_match:
+        _real_vals.add(float(_limit_match.group(1)))
+    for _ci in range(len(table.get('columns', []))):
+        _col_vals = []
+        for _row in _rows:
+            if _ci < len(_row):
+                try:
+                    _v = float(str(_row[_ci]).replace(',', ''))
+                    _col_vals.append(_v)
+                    _real_vals.add(_v)
+                except (ValueError, TypeError):
+                    pass
+        if _col_vals:
+            _real_vals.add(sum(_col_vals))
+            _real_vals.add(sum(_col_vals) / len(_col_vals))
+
+    def _close(a, b):
+        return abs(a - b) <= max(abs(b) * 0.02, 0.5)
+
+    return [c for c in _cited if not any(_close(c, r) for r in _real_vals)]
+
+
 def _true_row_count(sql: str) -> Optional[int]:
     """
     Run COUNT(*) over the query with its trailing ORDER BY/LIMIT stripped, to get the
@@ -1580,9 +1724,255 @@ def _true_row_count(sql: str) -> Optional[int]:
         return None
 
 
+_METRIC_KEYWORDS = (
+    'avg', 'total', 'sum', 'count', 'ratio', 'rate', 'roas', 'roi', 'score',
+    'freq', 'value', 'amount', 'volume', 'spend', 'revenue', 'churn', 'clv',
+    'cpa', 'conversion', 'contacts', 'customers',
+)
+_MONEY_COL_KEYWORDS = (
+    'spend', 'revenue', 'volume', 'value', 'amount', 'clv', 'income',
+    'balance', 'deposit', 'cost', 'budget', 'salary',
+)
+
+# (keywords in the question, substrings to match a column name, sort direction) — for
+# campaign/audience-targeting questions with a stated business goal, this maps the goal
+# to the column that actually matters, instead of defaulting to "highest CLV"/"last
+# column" out of habit. Shared by the LLM lead-hint (ask_chatbot) and the zero-LLM
+# deterministic fallback (_deterministic_fallback_narrative) so both agree.
+_CAMPAIGN_GOAL_MAP = [
+    (('retention', 'retain', 'win-back', 'win back', 're-engage', 'reengage',
+      'reduce churn', 'at risk', 'at-risk', 'churn'),
+     ('churn_prob', 'churn_probability'), 'max'),
+    (('engagement', 'activation', 'increase usage', 'engage'),
+     ('digital_engagement', 'digital_score'), 'min'),
+    # Acquisition campaigns (credit card, loan, new account signup) are gated by
+    # creditworthiness, not segment size — the segment most likely to qualify AND be
+    # profitable is the one with the best credit/income profile, never "the largest
+    # segment" as a reflex (a big segment with below-average income/credit score is a
+    # worse acquisition target than a smaller, more qualified one).
+    (('acquisition', 'new customer', 'sign up', 'sign-up', 'signup', 'qualify',
+      'eligib', 'new account', 'credit card', 'loan approval'),
+     ('credit_score', 'income'), 'max'),
+    (('upsell', 'cross-sell', 'cross sell', 'premium', 'growth', 'revenue'),
+     ('clv', 'lifetime_value', 'income'), 'max'),
+]
+
+
+def _goal_based_metric(table: Dict[str, Any], question: str) -> Optional[Tuple[int, int, str]]:
+    """
+    For campaign/audience-targeting questions with a stated business goal, find the
+    column that actually matters for that goal. Returns (metric_col_idx, label_col_idx,
+    direction), or None if the question doesn't state one of these goals or the table
+    doesn't have a label column / matching metric column.
+    """
+    columns = table.get('columns', [])
+    label_idx = None
+    for i, c in enumerate(columns):
+        if c.lower() in ('segment_name', 'persona_name', 'channel', 'product_name', 'customer_name'):
+            label_idx = i
+            break
+    if label_idx is None:
+        return None
+    q_lower = question.lower()
+    for keywords, col_hints, direction in _CAMPAIGN_GOAL_MAP:
+        if not any(kw in q_lower for kw in keywords):
+            continue
+        metric_idx = None
+        for i, c in enumerate(columns):
+            if any(hint in c.lower() for hint in col_hints):
+                metric_idx = i
+                break
+        if metric_idx is None:
+            continue
+        return metric_idx, label_idx, direction
+    return None
+
+
+def _fmt_fallback_num(v: float, is_money: bool) -> str:
+    av = abs(v)
+    if is_money:
+        if av >= 1_000_000_000:
+            return f"${v/1_000_000_000:.1f}B"
+        if av >= 1_000_000:
+            return f"${v/1_000_000:.1f}M"
+        if av >= 1_000:
+            return f"${v/1_000:.1f}K"
+        return f"${v:,.0f}"
+    return f"{int(v):,}" if v == int(v) else f"{v:,.2f}"
+
+
+def _deterministic_fallback_narrative(table: Dict[str, Any], question: str = "") -> str:
+    """
+    Last-resort narrative built directly from the table with ZERO LLM involvement —
+    guaranteed accurate since it's pure arithmetic on real data. Used when even the
+    second-stage grounded LLM rewrite fails validation, so the user never sees the
+    bland "query returned N rows" message when a real insight (leading value, total,
+    average) is trivially computable from the data that's already sitting right there.
+    Falls back to the plain row-count message only if the table shape genuinely
+    doesn't support this (e.g. no numeric column at all).
+    """
+    columns = table.get('columns') or []
+    rows = table.get('rows') or []
+    _plain = f"The query returned **{len(rows)} row{'s' if len(rows) != 1 else ''}**. Please review the table below for the full results."
+    if not columns or not rows:
+        return _plain
+
+    def is_numeric_col(ci: int) -> bool:
+        sample = [r[ci] for r in rows[:20] if ci < len(r) and r[ci] not in ("", None)]
+        if not sample:
+            return False
+        try:
+            [float(v) for v in sample]
+            return True
+        except (ValueError, TypeError):
+            return False
+
+    numeric_idx = [i for i in range(len(columns)) if is_numeric_col(i)]
+    label_idx = [i for i in range(len(columns)) if i not in numeric_idx]
+    if not label_idx and numeric_idx:
+        # Every column is numeric (e.g. "month", "total_spend" — month is an int, not
+        # a string) — use the first column as the label/dimension anyway, since its
+        # values still work fine as row identifiers even though they're numbers.
+        label_idx = [numeric_idx[0]]
+        numeric_idx = numeric_idx[1:]
+    if not numeric_idx or not label_idx:
+        return _plain
+    if len(label_idx) > 1:
+        # Prefer a human-readable "name" column over an "_id" column for the
+        # narrative's label — "Nancy Harris" reads far better than "CUST_04065", and
+        # both usually exist side by side in these tables.
+        _name_first = [i for i in label_idx if 'name' in columns[i].lower()]
+        if _name_first:
+            label_idx = _name_first + [i for i in label_idx if i not in _name_first]
+
+    # Campaign/audience-targeting questions with a stated business goal (retention,
+    # engagement, upsell) have ONE correct metric — check that first, before any
+    # generic keyword-matching, so this zero-LLM fallback doesn't default to "highest
+    # CLV/income" out of habit when the question actually called for churn risk or
+    # digital engagement instead.
+    _goal = _goal_based_metric(table, question)
+    _direction = 'max'
+    if _goal:
+        metric_i, label_i, _direction = _goal
+    else:
+        metric_candidates = [i for i in numeric_idx if any(kw in columns[i].lower() for kw in _METRIC_KEYWORDS)]
+        _pool = metric_candidates or numeric_idx
+        # When multiple columns are equally metric-like (e.g. both "total_volume" and
+        # "transaction_count" match keywords), prefer whichever one's name is actually
+        # echoed in the user's question — much better than an arbitrary positional guess.
+        _q = question.lower()
+        _q_matches = [i for i in _pool if columns[i].lower().replace('_', ' ') in _q or
+                      any(w in _q for w in columns[i].lower().split('_') if len(w) > 3)]
+        # Prefer the FIRST question-matched column (closer to how the SQL orders columns
+        # when the question's own wording is the tie-breaker), else the LAST candidate
+        # overall (aggregated/computed metrics conventionally trail dimension columns).
+        metric_i = _q_matches[0] if _q_matches else _pool[-1]
+        label_i = label_idx[0]
+    metric_col = columns[metric_i]
+    label_col = columns[label_i]
+    is_money = any(kw in metric_col.lower() for kw in _MONEY_COL_KEYWORDS)
+    _month_names = {1: 'Jan', 2: 'Feb', 3: 'Mar', 4: 'Apr', 5: 'May', 6: 'Jun',
+                     7: 'Jul', 8: 'Aug', 9: 'Sep', 10: 'Oct', 11: 'Nov', 12: 'Dec'}
+    _label_is_month_num = label_col.lower() in ('month', 'month_num', 'month_number')
+
+    def _fmt_label(raw: str) -> str:
+        if _label_is_month_num:
+            try:
+                return _month_names.get(int(float(raw)), raw)
+            except (ValueError, TypeError):
+                pass
+        return raw
+
+    vals = []
+    for r in rows:
+        if label_i < len(r) and metric_i < len(r):
+            try:
+                vals.append((_fmt_label(str(r[label_i])), float(str(r[metric_i]).replace(',', ''))))
+            except (ValueError, TypeError):
+                pass
+    if not vals:
+        return _plain
+
+    vals.sort(key=lambda t: t[1], reverse=(_direction != 'min'))
+    top_label, top_val = vals[0]
+    metric_phrase = metric_col.replace('_', ' ')
+    _lead_verb = "has the lowest" if _direction == 'min' else "leads with"
+    parts = [f"**{top_label}** {_lead_verb} **{_fmt_fallback_num(top_val, is_money)}** {metric_phrase}."]
+    if len(vals) > 1:
+        total = sum(v for _, v in vals)
+        avg = total / len(vals)
+        parts.append(
+            f"Across all **{len(vals)}** rows, the total is **{_fmt_fallback_num(total, is_money)}** "
+            f"and the average is **{_fmt_fallback_num(avg, is_money)}**."
+        )
+        if len(vals) >= 3:
+            _next_label = "Next lowest" if _direction == 'min' else "Next highest"
+            others = ", ".join(f"**{l}** ({_fmt_fallback_num(v, is_money)})" for l, v in vals[1:3])
+            parts.append(f"{_next_label}: {others}.")
+        # Categorical breakdown of any OTHER label column (e.g. segment_name, clv_tier)
+        # — questions like "who are the top 20 customers... and what segments are they
+        # in?" have a second half the leading metric sentence never touches otherwise.
+        _other_label_idx = [i for i in label_idx if i != label_i]
+        if _other_label_idx:
+            from collections import Counter
+            _cat_i = _other_label_idx[0]
+            _cat_col = columns[_cat_i]
+            _cat_vals = [str(r[_cat_i]) for r in rows if _cat_i < len(r) and r[_cat_i] not in ("", None)]
+            if _cat_vals:
+                _counts = Counter(_cat_vals)
+                # "segment_name" should read as "segment", not "segment name"
+                _cat_phrase = re.sub(r'_name$', '', _cat_col).replace('_', ' ') or _cat_col.replace('_', ' ')
+                if len(_counts) == 1:
+                    parts.append(f"All **{len(_cat_vals)}** are in the **{_cat_vals[0]}** {_cat_phrase}.")
+                elif len(_counts) <= 5:
+                    _breakdown = ", ".join(f"**{k}** ({v})" for k, v in _counts.most_common())
+                    parts.append(f"By {_cat_phrase}: {_breakdown}.")
+    else:
+        # Single-row result (e.g. a "best segment" query with LIMIT 1) — the bare
+        # leading sentence undersells it, since the row usually carries several other
+        # relevant columns (customer count, other scores, totals) that a one-liner
+        # would otherwise waste. List them, and call out a channel column explicitly
+        # if present — that's exactly what "recommended channel" questions need.
+        _row0 = rows[0]
+        _extra_parts = []
+        _channel_val = None
+        for _ci, _col in enumerate(columns):
+            if _ci in (label_i, metric_i) or _ci >= len(_row0) or _row0[_ci] in ("", None):
+                continue
+            _cl = _col.lower()
+            if 'channel' in _cl:
+                _channel_val = str(_row0[_ci])
+                continue
+            if _ci in numeric_idx:
+                try:
+                    _v = float(str(_row0[_ci]).replace(',', ''))
+                except (ValueError, TypeError):
+                    continue
+                _is_m = any(kw in _cl for kw in _MONEY_COL_KEYWORDS)
+                _extra_parts.append(f"**{_fmt_fallback_num(_v, _is_m)}** {_col.replace('_', ' ')}")
+            else:
+                _extra_parts.append(f"**{_row0[_ci]}** {_col.replace('_', ' ')}")
+        if _extra_parts:
+            parts.append("This segment also has " + ", ".join(_extra_parts) + ".")
+        if _channel_val:
+            parts.append(f"**Recommended channel:** {_channel_val}.")
+    return " ".join(parts)
+
+
 # ── Auto-aggregation (safety net for ungrouped LLM queries) ──────────────────
 
-def _auto_aggregate(table: Dict[str, Any], llm_chart: Dict) -> Dict[str, Any]:
+def _has_multi_column_group_by(sql: str) -> bool:
+    """True if the SQL's own GROUP BY spans 2+ columns — a legitimate multi-dimensional
+    cross-tab (e.g. GROUP BY segment_name, channel), as opposed to raw ungrouped data.
+    Collapsing such a result to a single dimension would sum away a real dimension the
+    user asked about."""
+    if not sql:
+        return False
+    m = re.search(r'\bGROUP\s+BY\s+(.+?)(?:\bORDER\s+BY\b|\bLIMIT\b|$)', sql, re.IGNORECASE | re.DOTALL)
+    return bool(m) and len(m.group(1).split(',')) >= 2
+
+
+def _auto_aggregate(table: Dict[str, Any], llm_chart: Dict, sql: str = "") -> Dict[str, Any]:
     """
     Detect when the LLM returned raw per-row data instead of aggregated results,
     and collapse it by the chart's x_col.
@@ -1591,11 +1981,15 @@ def _auto_aggregate(table: Dict[str, Any], llm_chart: Dict) -> Dict[str, Any]:
       - result has >15 rows, AND
       - the chart x_col has duplicate values (ratio unique/total < 0.5), AND
       - the result is not already a time-series (x_col doesn't look like a date/month col)
+      - the SQL isn't already a legitimate 2+ column GROUP BY (see _has_multi_column_group_by)
     """
     columns = table.get("columns") or []
     rows = table.get("rows") or []
 
     if len(rows) <= 15 or not columns:
+        return table
+
+    if _has_multi_column_group_by(sql):
         return table
 
     x_col = llm_chart.get("x_col") or ""
@@ -1655,7 +2049,7 @@ def _auto_aggregate(table: Dict[str, Any], llm_chart: Dict) -> Dict[str, Any]:
 
 # ── Chart config resolution ───────────────────────────────────────────────────
 
-def _resolve_chart(columns: List[str], rows: List[List], llm_chart: Dict) -> Dict:
+def _resolve_chart(columns: List[str], rows: List[List], llm_chart: Dict, sql: str = "") -> Dict:
     if not columns or not rows:
         return {"type": "none"}
 
@@ -1698,9 +2092,50 @@ def _resolve_chart(columns: List[str], rows: List[List], llm_chart: Dict) -> Dic
         if sample_vals and all(_re.match(r'CUST_', v) for v in sample_vals):
             return {"type": "none"}
 
+    # Suppress when the SQL is a legitimate 2+ column GROUP BY (e.g. GROUP BY
+    # segment_name, channel) and the chosen x_col repeats heavily as a result (each
+    # segment appears once per channel). A single-axis chart can't represent two
+    # dimensions at once — plotting it either collapses one dimension away (wrong:
+    # silently sums across it) or draws confusing duplicate-labeled bars. The table
+    # already shows the full breakdown correctly, so defer to it instead.
+    if rows and x_col in columns and _has_multi_column_group_by(sql):
+        xi = columns.index(x_col)
+        x_vals = [str(r[xi]) for r in rows if xi < len(r)]
+        if x_vals and len(set(x_vals)) < len(x_vals) * 0.6:
+            return {"type": "none"}
+
+    # Grouping/dimension keys that are numeric but never the intended measure —
+    # the LLM sometimes picks these as y_col instead of the actual aggregate column
+    # (e.g. x_col="month_name", y_col="month" instead of "total_spend").
+    _DIMENSION_LIKE = {'month', 'year', 'day', 'week', 'quarter'}
+
+    # Column names that suggest an actual computed/aggregated metric, as opposed to a
+    # raw attribute carried over from the table (e.g. days_since_last_transaction,
+    # credit_score) that happens to also be numeric but isn't what the chart should
+    # plot on the y-axis.
+    _METRIC_KEYWORDS = (
+        'avg', 'total', 'sum', 'count', 'ratio', 'rate', 'roas', 'roi', 'score',
+        'freq', 'value', 'amount', 'volume', 'spend', 'revenue', 'churn', 'clv',
+        'cpa', 'conversion', 'contacts', 'customers',
+    )
+
     y_col = llm_chart.get("y_col")
-    if y_col not in columns:
-        y_col = numeric_cols[0] if numeric_cols else (columns[1] if len(columns) > 1 else columns[0])
+    _y_valid = (
+        y_col in columns and y_col != x_col and y_col.lower() not in _DIMENSION_LIKE
+    )
+    if not _y_valid:
+        _y_candidates = [
+            c for c in numeric_cols if c != x_col and c.lower() not in _DIMENSION_LIKE
+        ] or [c for c in numeric_cols if c != x_col]
+        # Prefer a column whose name suggests it's the actual metric. Among those (or
+        # all candidates if none match), prefer the LAST one — a computed/aggregated
+        # value conventionally appears at the end of a SELECT list, after grouping
+        # keys and any raw attributes carried along for context.
+        _metric_candidates = [c for c in _y_candidates if any(kw in c.lower() for kw in _METRIC_KEYWORDS)]
+        _pool = _metric_candidates or _y_candidates
+        y_col = _pool[-1] if _pool else (
+            numeric_cols[0] if numeric_cols else (columns[1] if len(columns) > 1 else columns[0])
+        )
 
     title = llm_chart.get("title") or "Query Results"
 
@@ -1751,6 +2186,34 @@ def _default_follow_ups(q: str) -> List[str]:
     ]
 
 
+# Creative/strategic phrasing that has no SQL answer — these consistently return 0 rows
+# because there's no table of "rewards to design" or "strategies to try". Matches the
+# same class of advisory language already screened out of the main question elsewhere.
+_ADVISORY_FOLLOWUP_RE = re.compile(
+    r'\bhow (can|should|do|might) we\b|\bhow to\b|\bwhat strategy|\bwhat strategies\b'
+    r'|\bwhat should\b|\bwhat would be the best\b|\bwhat rewards?\b|\bwhat offers?\b'
+    r'|\bpersonalized (reward|offer)|\bcould be (designed|created|developed)\b'
+    r'|\bdesign(ed)? (a|to)\b|\bcreate a\b|\bdevelop a\b|\bbuild a\b'
+    r'|\bloyalty program\b|\bretention strategy\b|\bmarketing strategy\b|\bwhat approach\b',
+    re.IGNORECASE,
+)
+
+
+def _filter_advisory_follow_ups(follow_ups: List[str], question: str) -> List[str]:
+    """
+    Drop follow-up questions with no SQL answer (advisory/creative phrasing), padding
+    back up to 3 with schema-safe defaults so the user never loses a suggestion slot.
+    """
+    good = [f for f in follow_ups if f and not _ADVISORY_FOLLOWUP_RE.search(f)]
+    if len(good) < 3:
+        for fallback in _default_follow_ups(question):
+            if fallback not in good:
+                good.append(fallback)
+            if len(good) >= 3:
+                break
+    return good[:3]
+
+
 # ── Main entrypoint ───────────────────────────────────────────────────────────
 
 def ask_chatbot(
@@ -1799,6 +2262,23 @@ def ask_chatbot(
     follow_ups = parsed.get("follow_ups") or []
     llm_chart = parsed.get("chart") or {}
 
+    # Blank-response retry: occasionally the LLM returns nothing usable at all (empty
+    # narrative AND empty sql) — a full generation/parsing failure, not a deliberate
+    # "no data" answer. One retry before giving up avoids showing the user a blank panel.
+    if not narrative and not sql:
+        logger.warning("Segment AI: blank first-stage response — retrying once.")
+        try:
+            raw_retry = _call_llm(prompt)
+            parsed_retry = _parse_response(raw_retry)
+            if parsed_retry.get("narrative") or parsed_retry.get("sql"):
+                parsed = parsed_retry
+                sql = (parsed.get("sql") or "").strip()
+                narrative = (parsed.get("narrative") or "").strip()
+                follow_ups = parsed.get("follow_ups") or []
+                llm_chart = parsed.get("chart") or {}
+        except Exception as _retry_exc:
+            logger.warning("Blank-response retry failed: %s", _retry_exc)
+
     # Retry when LLM set sql=null for an interrogative data question.
     # Questions starting with Which/Who/What/Show/List/Find are data retrieval, not advisory.
     _INTERROGATIVE = re.compile(r'^\s*(which|who|what|show|list|find|rank|give me)\b', re.IGNORECASE)
@@ -1824,6 +2304,66 @@ def ask_chatbot(
                 logger.info("Segment AI: interrogative retry succeeded, SQL acquired.")
         except Exception as _retry_exc:
             logger.warning("Interrogative retry failed: %s", _retry_exc)
+
+    # Retry when a follow-up query filters by customer_name instead of customer_id.
+    # customer_name is NOT unique in this dataset (many customers share a name) — the
+    # system prompt already instructs re-deriving a CTE with customer_id for "these
+    # top N customers" follow-ups, but the LLM sometimes ignores that and hardcodes
+    # names extracted from the conversation history instead, silently pulling in
+    # unrelated namesakes and corrupting any count/breakdown computed on the group.
+    if sql and history and re.search(r'customer_name\s*(IN\s*\(|=)', sql, re.IGNORECASE):
+        logger.warning("Segment AI: follow-up SQL filters by customer_name (not unique) — retrying with override.")
+        retry_prompt = _build_prompt(
+            question + "\n\n[SYSTEM OVERRIDE: Your SQL filtered by customer_name, which is NOT a unique "
+            "identifier in this dataset — many customers share the same name, so this silently includes "
+            "unrelated customers. Re-derive the prior result set as a CTE using customer_id instead (mirror "
+            "the exact WHERE/ORDER BY/LIMIT logic from the prior turn's SQL), then filter or join on "
+            "customer_id, never customer_name.]",
+            history, schema,
+        )
+        try:
+            raw3 = _call_llm(retry_prompt)
+            parsed3 = _parse_response(raw3)
+            _sql3 = (parsed3.get("sql") or "").strip()
+            if _sql3 and not re.search(r'customer_name\s*(IN\s*\(|=)', _sql3, re.IGNORECASE):
+                parsed = parsed3
+                sql = _sql3
+                narrative = (parsed.get("narrative") or "").strip()
+                follow_ups = parsed.get("follow_ups") or []
+                llm_chart = parsed.get("chart") or {}
+                logger.info("Segment AI: customer_name retry succeeded, now uses customer_id.")
+        except Exception as _retry_exc:
+            logger.warning("customer_name retry failed: %s", _retry_exc)
+
+    # Retry when the question asks for a recommended channel but the SQL never
+    # fetched any channel data. This happens on campaign/audience-targeting questions
+    # ("...and the recommended channel for this audience segment") — the system
+    # prompt already instructs including MODE(channel_preference), but the LLM
+    # sometimes drops it anyway. No narrative, however well-grounded, can answer a
+    # channel question if the channel was never queried — so fix the SQL itself.
+    _asks_for_channel = bool(re.search(r'\bchannel\b', question, re.IGNORECASE))
+    if sql and _asks_for_channel and not re.search(r'channel', sql, re.IGNORECASE):
+        logger.warning("Segment AI: question asks for a channel recommendation but SQL has no channel column — retrying with override.")
+        retry_prompt = _build_prompt(
+            question + "\n\n[SYSTEM OVERRIDE: This question asks for a recommended channel, but your SQL "
+            "didn't fetch any channel data. Add MODE(c.channel_preference) AS dominant_channel to the SELECT "
+            "list (grouped the same way as the rest of the query), so the channel recommendation is backed "
+            "by real data.]",
+            history, schema,
+        )
+        try:
+            raw4 = _call_llm(retry_prompt)
+            parsed4 = _parse_response(raw4)
+            _sql4 = (parsed4.get("sql") or "").strip()
+            if _sql4 and re.search(r'channel', _sql4, re.IGNORECASE):
+                parsed = parsed4
+                sql = _sql4
+                narrative = (parsed.get("narrative") or "").strip()
+                follow_ups = parsed.get("follow_ups") or []
+                llm_chart = parsed.get("chart") or {}
+                logger.info("Segment AI: channel retry succeeded, SQL now includes channel data.")
+        except Exception as _retry_exc:
+            logger.warning("channel retry failed: %s", _retry_exc)
 
     # Normalize narrative formatting and number display
     if narrative:
@@ -1946,13 +2486,13 @@ def ask_chatbot(
                                 chart = {"type": "none"}
 
                         # Auto-aggregate if the LLM returned ungrouped rows (safety net)
-                        table = _auto_aggregate(table, llm_chart)
+                        table = _auto_aggregate(table, llm_chart, sql=sql)
 
                         # Single-row chart suppression — 1 bar is never useful; show as text
                         if len(table.get("rows", [])) == 1:
                             chart = {"type": "none"}
                         else:
-                            chart = chart or _resolve_chart(table["columns"], rows, llm_chart)
+                            chart = chart or _resolve_chart(table["columns"], table["rows"], llm_chart, sql=sql)
             except Exception as e:
                 _raw_error = str(e)
                 logger.warning("SQL execution failed: %s\nSQL: %s", e, sql[:400])
@@ -1969,12 +2509,11 @@ def ask_chatbot(
                             sql = _sql_retry
                             _retried = True
                             if table and table.get("columns"):
-                                rows = table.get("rows", [])
-                                table = _auto_aggregate(table, llm_chart)
+                                table = _auto_aggregate(table, llm_chart, sql=sql)
                                 if len(table.get("rows", [])) == 1:
                                     chart = {"type": "none"}
                                 else:
-                                    chart = _resolve_chart(table["columns"], rows, llm_chart)
+                                    chart = _resolve_chart(table["columns"], table["rows"], llm_chart, sql=sql)
                     except Exception as _e2:
                         logger.warning("Retry also failed: %s", _e2)
                         _raw_error = str(_e2)
@@ -2024,155 +2563,82 @@ def ask_chatbot(
     # When table data is available, validate the narrative is grounded in real values.
     # If hollow, trigger a second-stage LLM call that passes the actual table rows.
     if narrative and table and table.get("rows"):
-        _HOLLOW_RE = re.compile(
-            # Circular definitions
-            r'is the one with the highest|score between 0 and 1|is a critical metric'
-            r'|are determined by their|directly affects customer|improve customer loyalty'
-            r'|churn risk is defined as|probability score ranging'
-            # Placeholder/advisory language masquerading as narrative
-            r'|are likely to be those with|driven by their transaction history'
-            r'|the exact product names|can inform the bank'
-            r'|are critical for targeted|given the segment.s moderate'
-            r'|would need to be analyzed|would require further analysis'
-            r'|we would need to look at|it is important to note that'
-            r'|analyzing these|to develop targeted'
-            # Speculative estimation without data
-            r'|can be estimated by|would need to consider|actual profit'
-            r'|cost of servicing|revenue generated from their|additional factors such as'
-            r'|to determine the actual|profitability.*consider|consider.*profitability'
-            r'|cannot be directly calculated|not directly available|would require additional'
-            r'|based on general banking|industry average|typical bank'
-            # Hedging / inference language (LLM pretending to know without data)
-            r'|the data suggests|this suggests|these results suggest|the analysis suggests'
-            r'|we can infer|we can observe|we can see that|as we can see'
-            r'|it appears that|it seems that|appears to indicate|seems to indicate'
-            r'|may indicate|could indicate|might indicate|may suggest|could suggest'
-            r'|further investigation|further analysis|deeper analysis|additional analysis'
-            r'|a significant number of customers|many customers|most customers'
-            r'|generally speaking|in general terms|on average.*customers'
-            r'|it is worth noting|it should be noted|note that|notably'
-            r'|based on available data|based on the data|based on this data'
-            r'|the query result|the sql result|as shown in the query'
-            r'|the results indicate|the results show|the table shows'
-            r'|according to the data|from the data we can'
-            # Query-description masquerading as insight (pre-execution hallucination)
-            r'|the query identifies|this query identifies|the query retrieves|the query filters'
-            r'|the query returns|this query returns|the query selects|the query finds'
-            r'|customers who prefer digital|customers who have not transacted'
-            r'|have a high lifetime value and are|lifetime value and are at risk'
-            r'|are at risk of churn if not re|if not re-engaged',
-            re.IGNORECASE,
-        )
-        # Hollow patterns are specific enough — flag regardless of bold numbers present
-        _is_hollow = bool(_HOLLOW_RE.search(narrative))
+        _rows = table.get('rows', [])
 
-        # Also catch narratives that describe what data "would show" without showing it
-        _SPECULATIVE_RE = re.compile(
-            r'\blikely\b.*\bproduct|\bprobably\b|\bwould be\b.*\bthose\b'
-            r'|\bexact\b.*\bnames?\b|\bcorresponding\b.*\bcounts?\b'
-            r'|\bmight be\b.*\bthose\b|\bcould be\b.*\bthose\b'
-            r'|\bappears to be\b|\bseems to be\b'
-            r'|\btypically\b.*\bsegment|\bgenerally\b.*\bcustomer'
-            r'|\bwe expect\b|\bwe anticipate\b'
-            r'|\bit is likely\b|\bit is possible\b|\bit may be\b',
-            re.IGNORECASE,
-        )
-        if not _is_hollow and _SPECULATIVE_RE.search(narrative):
-            _is_hollow = True
+        # LIMIT-truncation check: if the SQL hit a LIMIT, the visible table is a
+        # subset of the true match set — recompute the real total via COUNT(*) so the
+        # grounded narrative can state it correctly (e.g. "143 total, showing top 25").
+        _true_count = None
+        if len(_rows) > 1:
+            _limit_match = re.search(r'\bLIMIT\s+(\d+)\s*$', sql, re.IGNORECASE)
+            if _limit_match and len(_rows) == int(_limit_match.group(1)):
+                _true_count = _true_row_count(sql)
 
-        # Unfilled template placeholders: LLM wrote {avg_income} or ${avg_clv} instead of real values
-        if not _is_hollow and re.search(r'\$?\{[a-z][a-z_]*\}', narrative):
-            _is_hollow = True
-            logger.info("Segment AI: unfilled placeholders detected in narrative — triggering grounded replacement.")
-
-        # Category name cross-validation: extract bold non-numeric terms from narrative (e.g. "Income Verification",
-        # "Personal Loan") and check that at least one appears in the actual result rows.
-        # If NONE of the bolded category names appear in the table, the narrative was hallucinated.
-        if not _is_hollow:
-            _bold_categories = re.findall(r'\*\*([A-Za-z][A-Za-z ]{3,})\*\*', narrative)
-            # Only check when we have 2+ category names (skip numeric-only narratives)
-            if len(_bold_categories) >= 2:
-                _all_cell_text = ' '.join(
-                    str(v).lower()
-                    for row in table.get('rows', [])
-                    for v in row
-                    if v is not None
-                ).lower()
-                _col_text = ' '.join(c.lower() for c in table.get('columns', []))
-                _searchable = _all_cell_text + ' ' + _col_text
-                _matches = sum(
-                    1 for w in _bold_categories
-                    if w.lower() in _searchable
-                )
-                if _matches == 0:
-                    _is_hollow = True
-                    logger.info(
-                        "Segment AI: bold category names %s not found in table — triggering grounded replacement.",
-                        _bold_categories[:4],
-                    )
-
-        # Single-row number validation: bold numbers in narrative must match the one result row.
-        # Catches "1429 customers" in narrative when table says 766.
-        if not _is_hollow:
-            _rows = table.get('rows', [])
-            if len(_rows) == 1:
-                _result_nums = set()
-                for _v in _rows[0]:
-                    if _v is not None:
+        # Top-ranked-row hint: for "which segment/channel/product should I target"
+        # questions, independently verify — in Python, from the table — which row is
+        # actually correct for the question's STATED GOAL, so the grounded narrative
+        # is told the right answer up front instead of guessing from raw numbers
+        # (e.g. a retention question should lead with the highest-churn segment, not
+        # whichever row happens to have the biggest number in an unrelated column).
+        _lead_hint = None
+        if len(_rows) > 1:
+            _goal = _goal_based_metric(table, question)
+            if _goal:
+                _metric_idx, _label_col_idx, _direction = _goal
+                _scored = []
+                for _row in _rows:
+                    if _metric_idx < len(_row) and _label_col_idx < len(_row):
                         try:
-                            _result_nums.add(str(int(float(str(_v).replace(',', '')))))
+                            _scored.append((float(str(_row[_metric_idx]).replace(',', '')), str(_row[_label_col_idx])))
                         except (ValueError, TypeError):
                             pass
-                _bold_nums = re.findall(r'\*\*([\d,]+)\*\*', narrative)
-                if _bold_nums and _result_nums:
-                    _num_match = any(bn.replace(',', '') in _result_nums for bn in _bold_nums)
-                    if not _num_match:
-                        _is_hollow = True
-                        logger.info(
-                            "Segment AI: narrative numbers %s don't match 1-row result %s — triggering grounded replacement.",
-                            _bold_nums[:4], list(_result_nums)[:4],
-                        )
+                if _scored:
+                    _scored.sort(key=lambda t: t[0], reverse=(_direction == 'max'))
+                    _correct_label = _scored[0][1]
+                    _lead_hint = (
+                        f"The correct answer for this question, independently verified from the table "
+                        f"data, is **{_correct_label}** — lead with this row by name. Do not recommend a "
+                        f"different row just because it has a bigger number in an unrelated column (e.g. "
+                        f"a higher lifetime value) — that other row is NOT the answer to what was asked."
+                    )
 
-        # Multi-row count validation: the first-stage narrative (and its claimed total
-        # count, e.g. "143 customers") was written by the LLM BEFORE the SQL ran, so it
-        # can disagree with the actual result size — with or without a LIMIT clause.
-        #   - No LIMIT (or LIMIT not reached): the full match set is already in `table`,
-        #     so len(rows) IS the true count.
-        #   - LIMIT reached exactly: the table is a truncated subset — recompute the
-        #     true total via COUNT(*) over the query with LIMIT/ORDER BY stripped.
-        _true_count = None
-        _rows = table.get('rows', [])
-        if len(_rows) > 1:
-            _leading_nums = re.findall(r'\*\*([\d,]+)\*\*', narrative[:200])
-            if _leading_nums:
-                _claimed = int(_leading_nums[0].replace(',', ''))
-                if _claimed != len(_rows):
-                    _limit_match = re.search(r'\bLIMIT\s+(\d+)\s*$', sql, re.IGNORECASE)
-                    _truncated = bool(_limit_match) and len(_rows) == int(_limit_match.group(1))
-                    _true_count = _true_row_count(sql) if _truncated else len(_rows)
-                    if not _is_hollow and _true_count is not None and _true_count != _claimed:
-                        _is_hollow = True
-                        logger.info(
-                            "Segment AI: claimed count %s != true count %s (rows=%s, truncated=%s) — triggering grounded replacement.",
-                            _claimed, _true_count, len(_rows), _truncated,
-                        )
-
-        if _is_hollow:
-            logger.info("Segment AI: hollow narrative detected — generating grounded replacement.")
-            grounded = _generate_grounded_narrative(question, table, total_count=_true_count)
-            if grounded:
-                narrative = grounded
+        # STRICT GUARDRAIL — never trust the first-stage narrative. It was written by
+        # the LLM in the SAME call as the SQL, before the SQL ever ran, so any number
+        # or name in it is a guess, not a fact — no amount of pattern-matching on the
+        # guess can be a substitute for not trusting it in the first place. ALWAYS
+        # regenerate the narrative from the actual query result instead, with up to 2
+        # independent attempts, and fall back to a zero-LLM deterministic narrative
+        # (pure arithmetic on the real table) if both are still ungrounded. This makes
+        # a hallucinated figure structurally impossible to show, rather than merely
+        # unlikely to slip past a detector.
+        logger.info("Segment AI: regenerating narrative from real query results (strict grounding).")
+        grounded = _generate_grounded_narrative(question, table, total_count=_true_count, lead_hint=_lead_hint)
+        if grounded and _ungrounded_figures(grounded, table, sql=sql):
+            logger.warning("Segment AI: grounded narrative still ungrounded — retrying once more.")
+            grounded = None
+        if not grounded:
+            grounded2 = _generate_grounded_narrative(question, table, total_count=_true_count, lead_hint=_lead_hint)
+            if grounded2 and not _ungrounded_figures(grounded2, table, sql=sql):
+                grounded = grounded2
             else:
-                # Grounded LLM call also failed — show a safe static fallback so the user
-                # at least sees the table with a neutral header instead of a blank narrative
-                _n_rows = len(table.get("rows", []))
-                narrative = (
-                    f"The query returned **{_n_rows} row{'s' if _n_rows != 1 else ''}**. "
-                    "Please review the table below for the full results."
-                )
+                logger.warning("Segment AI: second grounded attempt also failed — using deterministic fallback.")
+        narrative = grounded if grounded else _deterministic_fallback_narrative(table, question)
+
+    # Strip raw SQL column names leaking into the narrative as parentheticals, e.g.
+    # "average customer lifetime value (avg_clv)" or "(**avg_churn_prob**)". The LLM is
+    # instructed not to do this, but instruction-following isn't 100% reliable — so
+    # scrub any parenthetical that names an actual column from this result, deterministically.
+    if narrative and table and table.get('columns'):
+        for _col in table['columns']:
+            narrative = re.sub(
+                r'\s*\(\*{0,2}' + re.escape(_col) + r'\*{0,2}\)',
+                '', narrative, flags=re.IGNORECASE,
+            )
 
     if not follow_ups:
         follow_ups = _default_follow_ups(question)
+    else:
+        follow_ups = _filter_advisory_follow_ups(follow_ups, question)
 
     # Append Agent A warning to narrative if applicable
     if _personas_warning and narrative:

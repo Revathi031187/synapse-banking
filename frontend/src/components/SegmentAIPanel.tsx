@@ -294,7 +294,7 @@ function ResultChart({
   config: ChartConfig;
 }) {
   const [activeType, setActiveType] = React.useState<'bar' | 'line' | 'pie' | 'area'>(
-    config.type === 'none' ? 'bar' : config.type
+    config.type === 'pie' ? 'pie' : 'bar'
   );
 
   const xIdx = table.columns.indexOf(config.x_col);
@@ -348,7 +348,7 @@ function ResultChart({
   const chartHeight = maxLabelLen > 20 ? 360 : 300;
   const margin = { top: 10, right: 20, left: 10, bottom: bottomMargin };
 
-  const typeButtons: Array<'bar' | 'line' | 'area' | 'pie'> = ['bar', 'line', 'area', 'pie'];
+  const typeButtons: Array<'bar' | 'line' | 'area' | 'pie'> = ['bar', 'pie'];
 
   const tooltipStyle = { fontSize: 12, borderRadius: 8, border: '1px solid #e2e8f0' };
   const tickStyle = { fontSize: 11, fill: '#64748b' };
@@ -1724,7 +1724,7 @@ export default function SegmentAIPanel() {
             <div className={`flex items-center gap-1.5 pb-2 ${isFullscreen ? 'px-0 mb-1' : 'px-1'}`}>
               <div className="w-1.5 h-1.5 rounded-full bg-emerald-400 flex-shrink-0" />
               <p className={`text-slate-400 ${isFullscreen ? 'text-sm' : 'text-[10px]'}`}>
-                Context active — ask follow-ups like "show as line chart" or "filter to High churn only"
+                Context active — ask follow-ups like "show as pie chart" or "filter to High churn only"
               </p>
             </div>
           )}

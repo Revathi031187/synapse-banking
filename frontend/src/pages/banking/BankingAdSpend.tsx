@@ -164,35 +164,6 @@ function segInsight(persona: string, d: Record<string, ChannelMetrics>) {
   return parts.join(' ');
 }
 
-function overallInsight(personas: Record<string, Record<string, ChannelMetrics>>, summary: AdSpendData['summary']) {
-  // Find top under-invested opportunity and worst over-indexed waste
-  let topUnder  = { persona:'', channel:'', uplift:0, roas:0, mroas:0 };
-  let topOver   = { persona:'', channel:'', waste:0,  roas:0 };
-  for (const [p, chs] of Object.entries(personas)) {
-    for (const [id, m] of Object.entries(chs)) {
-      const label = CHANNELS.find(c => c.id === id)?.label ?? id;
-      if (m.status === 'under') {
-        const u = (m.optimal_spend_usd - m.spend_usd) * m.marginal_roas;
-        if (u > topUnder.uplift) topUnder = { persona: p, channel: label, uplift: u, roas: m.roas, mroas: m.marginal_roas };
-      }
-      if (m.status === 'over') {
-        const w = Math.abs(m.optimal_spend_usd - m.spend_usd);
-        if (w > topOver.waste) topOver = { persona: p, channel: label, waste: w, roas: m.roas };
-      }
-    }
-  }
-  const parts: string[] = [
-    `Platform blended ROAS is ${fmtRoas(summary.blended_roas)} across ${fmtK(summary.total_spend_usd)}/mo total spend.`,
-  ];
-  if (topUnder.uplift > 0)
-    parts.push(`Highest-yield gap: ${topUnder.channel} for ${topUnder.persona} — ${fmtRoas(topUnder.roas)} ROAS, $${topUnder.mroas.toFixed(2)} marginal return, est. +${fmtK(topUnder.uplift)}/mo available.`);
-  if (topOver.waste > 0)
-    parts.push(`Largest waste: ${topOver.channel} for ${topOver.persona} — ${fmtK(topOver.waste)}/mo beyond the saturation curve.`);
-  if (summary.reallocation_opportunity_usd > 0)
-    parts.push(`Total cross-segment reallocation opportunity: ~${fmtK(summary.reallocation_opportunity_usd)}/mo at flat budget.`);
-  return parts.join(' ');
-}
-
 // ── Canvas: S-curve renderer ───────────────────────────────────────────────────
 
 interface DrawCurveOpts {
@@ -803,28 +774,7 @@ function ChannelCard({
 
   const handleReset = () => { setSimSpend(metrics.spend_usd); setSimInsight(null); };
 
-  // ── Stats grid: actual vs simulated ─────────────────────────────────────
   const simCfg = statusCfg(isSimChanged ? simStatus : metrics.status);
-  const statsRows = isSimChanged
-    ? [
-        { label: 'Sim. Spend',   val: fmtK(simSpend),   sub: `${(simConv).toFixed(0)} est. convs`,       color: 'text-blue-700' },
-        { label: 'Optimal Spend',val: fmtK(metrics.optimal_spend_usd), sub: (simSpend <= metrics.optimal_spend_usd ? 'keep increasing' : 'reduce to optimal'), color: simSpend <= metrics.optimal_spend_usd ? 'text-emerald-700' : 'text-amber-600' },
-        { label: 'ROAS',         val: fmtRoas(simRoas),  sub: fmtK(simRev)+' projected',  color: simRoas >= metrics.roas ? 'text-emerald-700' : 'text-red-700' },
-        { label: 'Mktg ROI',     val: fmtRoi(simRoi),    sub: 'media cost only',           color: simRoi  >= 0 ? 'text-emerald-700' : 'text-red-700' },
-        { label: 'Business ROI', val: fmtRoi(simTrueRoi),sub: `incl. ${fmtK(simBiz)} ops`,color: simTrueRoi >= 0 ? 'text-blue-700' : 'text-red-700' },
-      ]
-    : [
-        { label: 'Current Spend',val: fmtK(metrics.spend_usd),          sub: metrics.sent.toLocaleString()+' contacts/yr', color: 'text-gray-900' },
-        { label: 'Optimal Spend',val: fmtK(metrics.optimal_spend_usd),   sub: (delta>=0?'+':'')+fmtK(delta)+' vs current',  color: delta>=0?'text-emerald-700':'text-red-700' },
-        { label: 'ROAS',         val: fmtRoas(metrics.roas),             sub: fmtK(metrics.attributed_revenue_usd)+' attributed', color: 'text-gray-900' },
-        { label: 'Mktg ROI',     val: fmtRoi(metrics.roi_pct),           sub: 'media cost only',       color: metrics.roi_pct>=0?'text-emerald-700':'text-red-700' },
-        {
-          label: 'Business ROI',
-          val:   metrics.true_roi_pct != null ? fmtRoi(metrics.true_roi_pct) : '—',
-          sub:   metrics.true_roi_pct != null ? (metrics.business_cost_usd != null ? 'incl. '+fmtK(metrics.business_cost_usd)+' ops' : 'incl. ops + risk') : 'ops + risk adj.',
-          color: metrics.true_roi_pct != null ? (metrics.true_roi_pct>=0?'text-blue-700':'text-red-700') : 'text-gray-400',
-        },
-      ];
 
   // Curve: saturation/sim insight. 12-mo: seasonal trend insight. Funnel: drop-off insight.
   const openRate  = metrics.sent > 0 ? (metrics.opened    / metrics.sent * 100).toFixed(1) : '0';
@@ -890,22 +840,6 @@ function ChannelCard({
           onMouseLeave={handleMouseLeave}
           style={{ width: '100%', height: '100%', display: 'block', cursor: 'crosshair' }} />
       </div>
-
-      {/* Legend row + view description */}
-      {view === 'curve' && (
-        <div className="px-4 pt-1 pb-1 flex flex-col gap-1">
-          <div className="flex items-center gap-4 text-[10px] text-gray-400 flex-wrap">
-            <span className="flex items-center gap-1.5"><span className="inline-block w-5 border-t-2 border-dashed border-red-400"/>Current</span>
-            <span className="flex items-center gap-1.5"><span className="inline-block w-5 border-t-2 border-dashed border-green-500"/>Optimal</span>
-            <span className="flex items-center gap-1.5"><span className="inline-block w-5 border-t-2 border-dashed border-blue-500"/>Simulated</span>
-            <span className="flex items-center gap-1.5"><span className="inline-block w-3 h-3 rounded-sm" style={{background:(isSimChanged?simCfg:cfg).fill}}/>{(isSimChanged?simStatus:metrics.status)==='under'?'Opportunity':(isSimChanged?simStatus:metrics.status)==='over'?'Waste':'Optimal'} zone</span>
-            <span className="ml-auto italic text-[9px]">Hover curve for details</span>
-          </div>
-          <p className="text-[9.5px] text-gray-400 leading-snug">
-            <span className="font-semibold text-gray-500">S-Curve view:</span> Shows how revenue responds to increasing spend — the curve flattens as the channel saturates (diminishing returns). The green zone is where each dollar is most efficient.
-          </p>
-        </div>
-      )}
 
       {view === 'trend' && (
         <div className="px-4 pt-1 pb-1 flex flex-col gap-1">
@@ -975,17 +909,6 @@ function ChannelCard({
           )}
         </div>
       )}
-
-      {/* Stats grid — updates instantly on slider move */}
-      <div className={`grid grid-cols-5 border-b border-gray-100 transition-all ${isSimChanged ? 'bg-blue-50/40' : ''}`}>
-        {statsRows.map((s, i) => (
-          <div key={i} className={`px-3 py-3 ${i<4?'border-r border-gray-100':''}`}>
-            <p className="text-[9px] font-semibold uppercase tracking-wide text-gray-400 mb-1">{s.label}</p>
-            <p className={`text-[13px] font-bold tabular-nums leading-none ${s.color}`}>{s.val}</p>
-            <p className="text-[9px] text-gray-400 mt-1">{s.sub}</p>
-          </div>
-        ))}
-      </div>
 
       {/* AI insight — updates from backend 350ms after slider settles */}
       <div className={`px-4 py-3 border-b border-gray-100 flex gap-2 items-start transition-colors ${isSimChanged ? 'bg-blue-50/30' : 'bg-gray-50'}`}>
@@ -1306,16 +1229,14 @@ export default function BankingAdSpend() {
       </div>
 
       {/* Metrics bar */}
-      <div className="grid grid-cols-5 divide-x divide-gray-200 border border-gray-200 rounded-xl overflow-hidden bg-white">
+      <div className="grid grid-cols-3 divide-x divide-gray-200 border border-gray-200 rounded-xl overflow-hidden bg-white">
         {[
           { label:'Total Ad Spend',      value:fmtK(summary.total_spend_usd),                    sub:'across 4 channels · 5 segments', Icon:DollarSign, color:'text-gray-800' },
           { label:'Attributed Revenue',  value:fmtK(summary.total_revenue_usd),                  sub:'annual marketing attributed',    Icon:BarChart2,  color:'text-gray-800' },
           { label:'Blended ROAS',        value:fmtRoas(summary.blended_roas),                    sub:'revenue per $ spent',            Icon:TrendingUp,  color:'text-blue-700' },
-          { label:'Blended ROI',         value:fmtRoi(summary.total_roi_pct),                    sub:'(revenue − spend) / spend',      Icon:Zap,         color: summary.total_roi_pct>=0?'text-emerald-700':'text-red-700' },
-          { label:'Reallocation Opp.',   value:'+'+fmtK(summary.reallocation_opportunity_usd)+'/mo', sub:'at same total spend',        Icon:ArrowUp,     color:'text-emerald-700' },
         ].map(m => (
-          <div key={m.label} className="px-4 py-4">
-            <div className="flex items-center gap-1.5 mb-2">
+          <div key={m.label} className="px-4 py-4 flex flex-col items-center text-center">
+            <div className="flex items-center justify-center gap-1.5 mb-2">
               <m.Icon className={`w-3.5 h-3.5 ${m.color}`}/>
               <p className="text-[10px] font-semibold uppercase tracking-wide text-gray-400">{m.label}</p>
             </div>
@@ -1323,15 +1244,6 @@ export default function BankingAdSpend() {
             <p className="text-[10px] text-gray-400 mt-1.5">{m.sub}</p>
           </div>
         ))}
-      </div>
-
-      {/* Overall AI insight */}
-      <div className="bg-blue-50 border border-blue-200 rounded-xl px-5 py-4 flex gap-3 items-start">
-        <div className="w-7 h-7 rounded-full bg-blue-900 flex items-center justify-center text-white text-[13px] flex-shrink-0 mt-0.5">✦</div>
-        <div>
-          <p className="text-[10px] font-bold uppercase tracking-widest text-blue-500 mb-1.5">Platform AI · Cross-Segment Insight</p>
-          <p className="text-[13px] text-blue-900 leading-relaxed">{overallInsight(personas, summary)}</p>
-        </div>
       </div>
 
       {/* Segment tabs */}

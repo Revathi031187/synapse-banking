@@ -32,13 +32,19 @@ _ANTHROPIC_KEY   = (os.getenv("ANTHROPIC_API_KEY") or "").strip()
 _TOGETHER_KEY    = (os.getenv("TOGETHER_API_KEY") or "").strip()
 _TOGETHER_BASE   = "https://api.together.xyz/v1"
 
-# High-quality Together AI models for segment naming and rationale
-# Llama 3.3 70B gives GPT-4-class quality for concise generation tasks
+# High-quality Together AI models for segment naming and rationale.
+# Llama 3.3 70B gives GPT-4-class quality for concise generation tasks. Confirmed
+# working again via direct API test on 2026-07-29 (3/3 successful calls, ~4-10s each)
+# after an earlier session saw HTTP 400 "non-serverless model" on every attempt —
+# that was transient (a 503 showed up on retry too), not a permanent account
+# restriction. Qwen2.5-7B kept as a fast, confirmed-working fallback in case the
+# larger models flake out again.
 _TOGETHER_MODELS = [
     "meta-llama/Llama-3.3-70B-Instruct-Turbo",
     "meta-llama/Meta-Llama-3.1-70B-Instruct-Turbo",
     "Qwen/Qwen2.5-72B-Instruct-Turbo",
-    "meta-llama/Meta-Llama-3-8B-Instruct-Lite",   # fast fallback
+    "Qwen/Qwen2.5-7B-Instruct-Turbo",
+    "meta-llama/Meta-Llama-3-8B-Instruct-Lite",
 ]
 
 # Circuit breaker settings

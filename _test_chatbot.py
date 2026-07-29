@@ -253,8 +253,14 @@ if llm_ok:
             if rows == 0 and sql and not sql_err:
                 issues.append("0 rows returned")
 
-            # Check for missing GROUP BY (duplicate x values)
-            if table and chart.get("x_col") and chart["x_col"] in cols:
+            # Check for missing GROUP BY (duplicate x values). Skip this check when the
+            # SQL's own GROUP BY spans 2+ columns — a legitimate cross-tab (e.g.
+            # GROUP BY persona, channel) naturally repeats whichever single column the
+            # chart picked as x-axis without the data being "ungrouped" at all.
+            import re as _re
+            _group_by_match = _re.search(r'\bGROUP\s+BY\s+(.+?)(?:\bORDER\s+BY\b|\bLIMIT\b|$)', sql, _re.IGNORECASE | _re.DOTALL)
+            _group_by_cols = len(_group_by_match.group(1).split(',')) if _group_by_match else 0
+            if table and chart.get("x_col") and chart["x_col"] in cols and _group_by_cols < 2:
                 xi = cols.index(chart["x_col"])
                 x_vals = [str(r[xi]) for r in table["rows"]]
                 uniq = len(set(x_vals))
