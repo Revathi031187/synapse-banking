@@ -227,7 +227,9 @@
       "Bash(\"/c/Users/jaisonsamuel.d.lv/AppData/Local/Programs/Python/Python310/python.exe\" \"C:/Users/JAISON~1.LV/AppData/Local/Temp/claude/d--personalization-agent-banking-main-personalization-agent-banking-main/479df78c-7073-40da-bb0c-549b20242fb0/scratchpad/test_top20_fallback.py\")",
       "Bash(taskkill //F //PID 22860)",
       "Bash(taskkill //F //PID 6728)",
-      "Bash(curl -s -X POST http://localhost:8002/api/banking/chat/ask -H \"Content-Type: application/json; charset=utf-8\" -d \"{\\\\\"question\\\\\": \\\\\"Who are the top 20 customers by total transaction value across all data, and what segments are they in?\\\\\", \\\\\"history\\\\\": []}\")"
+      "Bash(curl -s -X POST http://localhost:8002/api/banking/chat/ask -H \"Content-Type: application/json; charset=utf-8\" -d \"{\\\\\"question\\\\\": \\\\\"Who are the top 20 customers by total transaction value across all data, and what segments are they in?\\\\\", \\\\\"history\\\\\": []}\")",
+      "Bash(taskkill //F //PID 7192)",
+      "Bash(taskkill //F //PID 22880)"
     ]
   }
 }

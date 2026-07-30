@@ -2233,14 +2233,10 @@ def ask_chatbot(
         logger.info("Segment AI: out-of-scope question blocked: %.80s", question)
         return _OUT_OF_SCOPE_REPLY
 
-    # Agent A detection — warn when segment/persona questions asked without personas registered
-    _segment_keywords = ("segment", "persona", "wealth builder", "digital native", "at risk", "cluster")
-    _needs_personas = any(kw in question.lower() for kw in _segment_keywords)
-    _personas_warning = (
-        "\n\n> **Note:** Persona assignments are not yet generated — answering using the **5 Meridian Bank segments** "
-        "(heuristic-derived: Retiree Depositor, Wealth Accumulator, Everyday Essential, Digital Trendsetter, At-Risk Saver). "
-        "Run **Agent A** for AI-refined segmentation."
-    ) if (_needs_personas and not _PERSONAS_REGISTERED) else ""
+    # Agent A "not yet generated" note — intentionally disabled. The heuristic
+    # segment_assignments fallback is a fully supported, real answer path (not
+    # broken/incomplete), so the note isn't shown even when Agent A hasn't run.
+    _personas_warning = ""
 
     schema = build_schema_context()
     prompt = _build_prompt(question, history, schema)
