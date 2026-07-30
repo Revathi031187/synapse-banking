@@ -229,7 +229,11 @@
       "Bash(taskkill //F //PID 6728)",
       "Bash(curl -s -X POST http://localhost:8002/api/banking/chat/ask -H \"Content-Type: application/json; charset=utf-8\" -d \"{\\\\\"question\\\\\": \\\\\"Who are the top 20 customers by total transaction value across all data, and what segments are they in?\\\\\", \\\\\"history\\\\\": []}\")",
       "Bash(taskkill //F //PID 7192)",
-      "Bash(taskkill //F //PID 22880)"
+      "Bash(taskkill //F //PID 22880)",
+      "Bash(python -c \"import ast; ast.parse\\(open\\('agents/banking_12_factor_scorer.py', encoding='utf-8'\\).read\\(\\)\\)\")",
+      "Bash(curl -s http://localhost:8002/api/banking/agent_b/factor-weights)",
+      "Bash(python -c \"import json,sys; d=json.load\\(sys.stdin\\); print\\('is_custom:', d['is_custom']\\)\")",
+      "Bash(python -c \"import json,sys; d=json.load\\(sys.stdin\\); print\\('is_custom:', d['is_custom']\\); print\\('weights_percent:', d['weights_percent']\\)\")"
     ]
   }
 }

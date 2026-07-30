@@ -42,7 +42,7 @@ class Banking12FactorScorer:
         'financial_need_match': 0.18,   # Product matches customer's financial situation
         'relationship_depth': 0.13,     # Tenure, product count, loyalty (reduced: short tenures common)
 
-        # TIER 2: Strategic Fit & Product Value (31%)
+        # TIER 2: Strategic Fit & Product Value (27%)
         'product_value': 0.13,          # Product fees, rates, min balance, ROI (increased: key differentiator)
         'product_pairing': 0.10,        # Cross-sell affinity, complementary products (increased: strong banking signal)
         'channel_fit': 0.04,            # Digital vs branch alignment (reduced: Meridian is hybrid bank)
@@ -201,7 +201,7 @@ class Banking12FactorScorer:
             'explanation': financial_need['explanation']
         }
         
-        # ==================== FACTOR 3: RELATIONSHIP DEPTH (15%) ====================
+        # ==================== FACTOR 3: RELATIONSHIP DEPTH (13%) ====================
         relationship = self._calculate_relationship_depth(num_products, customer.get('months_since_relationship_started') or customer.get('tenure_months', 12))
         w3 = wt['relationship_depth']
         c3 = relationship['score'] * w3
@@ -213,7 +213,7 @@ class Banking12FactorScorer:
             'explanation': relationship['explanation']
         }
         
-        # ==================== FACTOR 4: PRODUCT VALUE (12%) ====================
+        # ==================== FACTOR 4: PRODUCT VALUE (13%) ====================
         product_value = self._calculate_product_value(
             product, customer, income, total_deposits, persona
         )
@@ -228,7 +228,7 @@ class Banking12FactorScorer:
             'details': product_value.get('details', {})
         }
         
-        # ==================== FACTOR 5: PRODUCT PAIRING (9%) ====================
+        # ==================== FACTOR 5: PRODUCT PAIRING (10%) ====================
         pairing = self._calculate_product_pairing(customer_id, product_id, category, product=product, customer=customer)
         w5 = wt['product_pairing']
         c5 = pairing['score'] * w5
@@ -241,7 +241,7 @@ class Banking12FactorScorer:
             'pairs_with': pairing.get('pairs_with', [])
         }
         
-        # ==================== FACTOR 6: CHANNEL FIT (7%) ====================
+        # ==================== FACTOR 6: CHANNEL FIT (4%) ====================
         channel = self._calculate_channel_fit(digital_engagement, product.get('digital_required', False))
         w6 = wt['channel_fit']
         c6 = channel['score'] * w6
@@ -267,7 +267,7 @@ class Banking12FactorScorer:
             'explanation': complexity['explanation']
         }
         
-        # ==================== FACTOR 8: INTENT SCORE (3%) ====================
+        # ==================== FACTOR 8: INTENT SCORE (6%) ====================
         w8 = wt['intent_score']
         c8 = cross_sell_receptivity * w8
         breakdown['intent_score'] = {

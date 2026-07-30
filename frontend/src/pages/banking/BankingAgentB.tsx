@@ -65,17 +65,60 @@ const ALL_BANKING_FACTOR_KEYS = FACTOR_WEIGHT_GROUPS.flatMap((g) => g.keys);
 const BANKING_DEFAULTS_PERCENT: Record<string, number> = {
   eligibility_score: 22,
   financial_need_match: 18,
-  relationship_depth: 15,
-  product_value: 12,
-  product_pairing: 9,
-  channel_fit: 7,
+  relationship_depth: 13,
+  product_value: 13,
+  product_pairing: 10,
+  channel_fit: 4,
   complexity_match: 4,
-  intent_score: 3,
+  intent_score: 6,
   segment_affinity: 2,
   transaction_pattern: 1,
   product_rating: 4,
   popularity: 3,
 };
+
+const DETAILED_CALC_TIER_KEYS: Record<'tier1' | 'tier2' | 'tier3' | 'tier4', string[]> = {
+  tier1: ['eligibility_score', 'financial_need_match', 'relationship_depth'],
+  tier2: ['product_value', 'product_pairing', 'channel_fit'],
+  tier3: ['complexity_match', 'intent_score', 'segment_affinity', 'transaction_pattern'],
+  tier4: ['product_rating', 'popularity'],
+};
+
+/** Tier caption percentage always reflects the *current* config, not whatever weights happened
+ *  to be active when a given recommendation was generated. */
+function tierWeightPct(currentPercent: Record<string, number>, tier: keyof typeof DETAILED_CALC_TIER_KEYS): number {
+  return DETAILED_CALC_TIER_KEYS[tier].reduce(
+    (sum, k) => sum + (Number(currentPercent?.[k]) || 0),
+    0
+  );
+}
+
+/**
+ * Recomputes a factor's displayed weight/contribution/calculation string from the *current*
+ * config instead of trusting the weight baked into `detailed_calculation` at generation time.
+ * Safe because `raw_score` (how well this factor matches, e.g. "Credit: 776 vs 660 required")
+ * is independent of weight — only the weighted contribution changes when weights change. This
+ * guarantees the explanation panel can never show a different weight than the config screen,
+ * regardless of what weights were active when the recommendation was actually run.
+ */
+function liveFactor(
+  detailedCalc: any,
+  key: string,
+  currentPercent: Record<string, number>
+): { raw: number; weight: number; score: number; calculation: string; explanation: string } | null {
+  const factor = detailedCalc?.[key];
+  if (!factor) return null;
+  const raw = Number(factor.raw_score) || 0;
+  const weight = (Number(currentPercent?.[key]) || 0) / 100;
+  const score = raw * weight;
+  return {
+    raw,
+    weight,
+    score,
+    calculation: `Raw score ${(raw * 100).toFixed(1)}% × ${(weight * 100).toFixed(0)}% weight = ${(score * 100).toFixed(1)}% contribution`,
+    explanation: factor.explanation ?? '',
+  };
+}
 
 const BANKING_FACTOR_LABELS_FALLBACK: Record<string, string> = {
   eligibility_score: 'Eligibility (credit, income, balance)',
@@ -1700,43 +1743,59 @@ export default function BankingAgentB() {
                               AI
                             </div>
                             <div className="flex-1">
-                              {rec.detailed_calculation && rec.scoring_method === '12_factor' ? (
-                                /* BANKING 12-FACTOR DETAILED CALCULATION */
+                              {rec.detailed_calculation && rec.scoring_method === '12_factor' ? (() => {
+                                /* BANKING 12-FACTOR DETAILED CALCULATION — weight/contribution/calculation are
+                                   always recomputed from the *current* config (not the weight baked into this
+                                   rec at generation time), so this panel can never disagree with the weight
+                                   sliders below it. Only raw_score (weight-independent) comes from the backend. */
+                                const currentPercent = factorWeightsQuery.data?.weights_percent ?? BANKING_DEFAULTS_PERCENT;
+                                const dc = rec.detailed_calculation;
+                                const liveTotal = ALL_BANKING_FACTOR_KEYS.reduce(
+                                  (sum, k) => sum + (liveFactor(dc, k, currentPercent)?.score ?? 0),
+                                  0
+                                );
+                                return (
                                 <div>
                                   <p className="text-xs font-semibold text-indigo-900 mb-3">
                                     Banking 12-Factor Scoring System
                                   </p>
-                                  
+
                                   {/* Total Score */}
                                   <div className="mb-3 p-3 bg-white rounded-lg border-2 border-indigo-300">
                                     <div className="flex justify-between items-center">
                                       <span className="text-xs font-bold text-gray-900">Total Suitability Score</span>
                                       <span className="text-lg font-bold text-indigo-600">{(rec.score * 100).toFixed(1)}%</span>
                                     </div>
+                                    {Math.abs(rec.score - liveTotal) > 0.005 && (
+                                      <p className="mt-2 pt-2 border-t border-indigo-100 text-[11px] text-gray-500">
+                                        12-factor weighted subtotal below: <strong>{(liveTotal * 100).toFixed(1)}%</strong>.
+                                        The final score above also includes additional qualification/persona-fit
+                                        adjustments applied after the 12-factor scoring, not itemized below.
+                                      </p>
+                                    )}
                                   </div>
 
-                                  {/* TIER 1: Core Banking Criteria (55%) */}
+                                  {/* TIER 1: Core Banking Criteria */}
                                   <div className="mb-4 p-3 bg-gradient-to-r from-indigo-50 to-purple-50 rounded-lg border border-indigo-200">
-                                    <p className="text-xs font-bold text-indigo-900 mb-3">TIER 1: Core Banking Criteria (55%)</p>
-                                    
+                                    <p className="text-xs font-bold text-indigo-900 mb-3">TIER 1: Core Banking Criteria ({tierWeightPct(currentPercent, 'tier1').toFixed(0)}%)</p>
+
                                     {/* Eligibility Score */}
-                                    {rec.detailed_calculation.eligibility_score && (
+                                    {liveFactor(dc, 'eligibility_score', currentPercent) && (
                                       <div className="mb-3 pb-3 border-b border-indigo-100">
                                         <div className="flex justify-between items-center mb-1">
                                           <span className="text-xs font-semibold text-gray-900">1. Eligibility Score</span>
-                                          <span className="text-sm font-bold text-indigo-700">{(rec.detailed_calculation.eligibility_score.score * 100).toFixed(1)}%</span>
+                                          <span className="text-sm font-bold text-indigo-700">{(liveFactor(dc, 'eligibility_score', currentPercent)!.score * 100).toFixed(1)}%</span>
                                         </div>
                                         <div className="text-xs text-gray-700 mb-1">
-                                          {rec.detailed_calculation.eligibility_score.explanation}
+                                          {liveFactor(dc, 'eligibility_score', currentPercent)!.explanation}
                                         </div>
                                         <details className="mt-1">
                                           <summary className="text-xs text-blue-600 cursor-pointer hover:text-blue-800 font-medium">
-                                            Why {(rec.detailed_calculation.eligibility_score.weight * 100).toFixed(0)}%?
+                                            Why {(liveFactor(dc, 'eligibility_score', currentPercent)!.weight * 100).toFixed(0)}%?
                                           </summary>
                                           <div className="text-xs text-gray-600 mt-1 pl-3 border-l-2 border-blue-200 space-y-1">
-                                            {(rec.detailed_calculation.eligibility_score as { calculation?: string }).calculation && (
-                                              <p className="font-medium text-indigo-700">📐 {((rec.detailed_calculation.eligibility_score as { calculation?: string }).calculation)}</p>
-                                            )}
+                                            <p className="font-medium text-indigo-700">📐 {liveFactor(dc, 'eligibility_score', currentPercent)!.calculation}</p>
+                                            <p className="italic">🧮 Blends how comfortably credit score, income, and balance clear the product's minimums (40% credit / 35% income / 25% balance).</p>
                                             <p>Banking regulators require strict eligibility criteria. 68% of denied applications cite credit/income issues (FDIC). Must be highest weight to ensure compliance and prevent customer frustration.</p>
                                           </div>
                                         </details>
@@ -1744,23 +1803,22 @@ export default function BankingAgentB() {
                                     )}
 
                                     {/* Financial Need Match */}
-                                    {rec.detailed_calculation.financial_need_match && (
+                                    {liveFactor(dc, 'financial_need_match', currentPercent) && (
                                       <div className="mb-3 pb-3 border-b border-indigo-100">
                                         <div className="flex justify-between items-center mb-1">
                                           <span className="text-xs font-semibold text-gray-900">2. Financial Need Match</span>
-                                          <span className="text-sm font-bold text-indigo-700">{(rec.detailed_calculation.financial_need_match.score * 100).toFixed(1)}%</span>
+                                          <span className="text-sm font-bold text-indigo-700">{(liveFactor(dc, 'financial_need_match', currentPercent)!.score * 100).toFixed(1)}%</span>
                                         </div>
                                         <div className="text-xs text-gray-700 mb-1">
-                                          {rec.detailed_calculation.financial_need_match.explanation}
+                                          {liveFactor(dc, 'financial_need_match', currentPercent)!.explanation}
                                         </div>
                                         <details className="mt-1">
                                           <summary className="text-xs text-blue-600 cursor-pointer hover:text-blue-800 font-medium">
-                                            Why {(rec.detailed_calculation.financial_need_match.weight * 100).toFixed(0)}%?
+                                            Why {(liveFactor(dc, 'financial_need_match', currentPercent)!.weight * 100).toFixed(0)}%?
                                           </summary>
                                           <div className="text-xs text-gray-600 mt-1 pl-3 border-l-2 border-blue-200 space-y-1">
-                                            {(rec.detailed_calculation.financial_need_match as { calculation?: string }).calculation && (
-                                              <p className="font-medium text-indigo-700">📐 {(rec.detailed_calculation.financial_need_match as { calculation?: string }).calculation}</p>
-                                            )}
+                                            <p className="font-medium text-indigo-700">📐 {liveFactor(dc, 'financial_need_match', currentPercent)!.calculation}</p>
+                                            <p className="italic">🧮 Starts from a neutral 55% baseline, then adjusts for how well the product category fits the customer's age/life stage, rewards preference, fee sensitivity, and goals.</p>
                                             <p>Products must match life stage: Retirees need income products, young professionals need credit building. McKinsey research shows 72% satisfaction comes from need-product alignment.</p>
                                           </div>
                                         </details>
@@ -1768,23 +1826,22 @@ export default function BankingAgentB() {
                                     )}
 
                                     {/* Relationship Depth */}
-                                    {rec.detailed_calculation.relationship_depth && (
+                                    {liveFactor(dc, 'relationship_depth', currentPercent) && (
                                       <div className="mb-0">
                                         <div className="flex justify-between items-center mb-1">
                                           <span className="text-xs font-semibold text-gray-900">3. Relationship Depth</span>
-                                          <span className="text-sm font-bold text-indigo-700">{(rec.detailed_calculation.relationship_depth.score * 100).toFixed(1)}%</span>
+                                          <span className="text-sm font-bold text-indigo-700">{(liveFactor(dc, 'relationship_depth', currentPercent)!.score * 100).toFixed(1)}%</span>
                                         </div>
                                         <div className="text-xs text-gray-700 mb-1">
-                                          {rec.detailed_calculation.relationship_depth.explanation}
+                                          {liveFactor(dc, 'relationship_depth', currentPercent)!.explanation}
                                         </div>
                                         <details className="mt-1">
                                           <summary className="text-xs text-blue-600 cursor-pointer hover:text-blue-800 font-medium">
-                                            Why {(rec.detailed_calculation.relationship_depth.weight * 100).toFixed(0)}%?
+                                            Why {(liveFactor(dc, 'relationship_depth', currentPercent)!.weight * 100).toFixed(0)}%?
                                           </summary>
                                           <div className="text-xs text-gray-600 mt-1 pl-3 border-l-2 border-blue-200 space-y-1">
-                                            {(rec.detailed_calculation.relationship_depth as { calculation?: string }).calculation && (
-                                              <p className="font-medium text-indigo-700">📐 {(rec.detailed_calculation.relationship_depth as { calculation?: string }).calculation}</p>
-                                            )}
+                                            <p className="font-medium text-indigo-700">📐 {liveFactor(dc, 'relationship_depth', currentPercent)!.calculation}</p>
+                                            <p className="italic">🧮 Combines products already held (out of 8) with tenure with the bank (up to 5 years) — more products and longer tenure score higher.</p>
                                             <p>Customers with 3+ products have 92% retention vs 40% for single-product (Bain & Company). Loyalty drives long-term profitability.</p>
                                           </div>
                                         </details>
@@ -1792,28 +1849,27 @@ export default function BankingAgentB() {
                                     )}
                                   </div>
 
-                                  {/* TIER 2: Strategic Fit & Product Value (28%) */}
+                                  {/* TIER 2: Strategic Fit & Product Value */}
                                   <div className="mb-4 p-3 bg-gradient-to-r from-blue-50 to-cyan-50 rounded-lg border border-blue-200">
-                                    <p className="text-xs font-bold text-blue-900 mb-3">TIER 2: Strategic Fit & Product Value (28%)</p>
-                                    
+                                    <p className="text-xs font-bold text-blue-900 mb-3">TIER 2: Strategic Fit & Product Value ({tierWeightPct(currentPercent, 'tier2').toFixed(0)}%)</p>
+
                                     {/* Product Value - NEW! */}
-                                    {rec.detailed_calculation.product_value && (
+                                    {liveFactor(dc, 'product_value', currentPercent) && (
                                       <div className="mb-3 pb-3 border-b border-blue-100">
                                         <div className="flex justify-between items-center mb-1">
                                           <span className="text-xs font-semibold text-gray-900">4. Product Value</span>
-                                          <span className="text-sm font-bold text-blue-700">{(rec.detailed_calculation.product_value.score * 100).toFixed(1)}%</span>
+                                          <span className="text-sm font-bold text-blue-700">{(liveFactor(dc, 'product_value', currentPercent)!.score * 100).toFixed(1)}%</span>
                                         </div>
                                         <div className="text-xs text-gray-700 mb-1">
-                                          {rec.detailed_calculation.product_value.explanation}
+                                          {liveFactor(dc, 'product_value', currentPercent)!.explanation}
                                         </div>
                                         <details className="mt-1">
                                           <summary className="text-xs text-blue-600 cursor-pointer hover:text-blue-800 font-medium">
-                                            Why {(rec.detailed_calculation.product_value.weight * 100).toFixed(0)}%?
+                                            Why {(liveFactor(dc, 'product_value', currentPercent)!.weight * 100).toFixed(0)}%?
                                           </summary>
                                           <div className="text-xs text-gray-600 mt-1 pl-3 border-l-2 border-blue-200 space-y-1">
-                                            {(rec.detailed_calculation.product_value as { calculation?: string }).calculation && (
-                                              <p className="font-medium text-indigo-700">📐 {(rec.detailed_calculation.product_value as { calculation?: string }).calculation}</p>
-                                            )}
+                                            <p className="font-medium text-indigo-700">📐 {liveFactor(dc, 'product_value', currentPercent)!.calculation}</p>
+                                            <p className="italic">🧮 Blends the product's fee level, APY/rate tier, minimum balance, and (for credit/lending) return-on-cost into one value score.</p>
                                             <p>Fee sensitivity drives 45% of account switching (J.D. Power). Products must differentiate on value: fees, APY, min balance, ROI. Higher weight ensures best-value products rise to top.</p>
                                           </div>
                                         </details>
@@ -1821,23 +1877,22 @@ export default function BankingAgentB() {
                                     )}
 
                                     {/* Product Pairing */}
-                                    {rec.detailed_calculation.product_pairing && (
+                                    {liveFactor(dc, 'product_pairing', currentPercent) && (
                                       <div className="mb-3 pb-3 border-b border-blue-100">
                                         <div className="flex justify-between items-center mb-1">
                                           <span className="text-xs font-semibold text-gray-900">5. Product Pairing</span>
-                                          <span className="text-sm font-bold text-blue-700">{(rec.detailed_calculation.product_pairing.score * 100).toFixed(1)}%</span>
+                                          <span className="text-sm font-bold text-blue-700">{(liveFactor(dc, 'product_pairing', currentPercent)!.score * 100).toFixed(1)}%</span>
                                         </div>
                                         <div className="text-xs text-gray-700 mb-1">
-                                          {rec.detailed_calculation.product_pairing.explanation}
+                                          {liveFactor(dc, 'product_pairing', currentPercent)!.explanation}
                                         </div>
                                         <details className="mt-1">
                                           <summary className="text-xs text-blue-600 cursor-pointer hover:text-blue-800 font-medium">
-                                            Why {(rec.detailed_calculation.product_pairing.weight * 100).toFixed(0)}%?
+                                            Why {(liveFactor(dc, 'product_pairing', currentPercent)!.weight * 100).toFixed(0)}%?
                                           </summary>
                                           <div className="text-xs text-gray-600 mt-1 pl-3 border-l-2 border-blue-200 space-y-1">
-                                            {(rec.detailed_calculation.product_pairing as { calculation?: string }).calculation && (
-                                              <p className="font-medium text-indigo-700">📐 {(rec.detailed_calculation.product_pairing as { calculation?: string }).calculation}</p>
-                                            )}
+                                            <p className="font-medium text-indigo-700">📐 {liveFactor(dc, 'product_pairing', currentPercent)!.calculation}</p>
+                                            <p className="italic">🧮 Looks at products the customer already owns and how many commonly pair with this one; more complementary holdings score higher.</p>
                                             <p>Cross-sell increases customer lifetime value 2-3x. Checking+Savings bundles show 85% higher satisfaction (Accenture Banking Study).</p>
                                           </div>
                                         </details>
@@ -1845,23 +1900,22 @@ export default function BankingAgentB() {
                                     )}
 
                                     {/* Channel Fit */}
-                                    {rec.detailed_calculation.channel_fit && (
+                                    {liveFactor(dc, 'channel_fit', currentPercent) && (
                                       <div className="mb-0">
                                         <div className="flex justify-between items-center mb-1">
                                           <span className="text-xs font-semibold text-gray-900">6. Channel Fit</span>
-                                          <span className="text-sm font-bold text-blue-700">{(rec.detailed_calculation.channel_fit.score * 100).toFixed(1)}%</span>
+                                          <span className="text-sm font-bold text-blue-700">{(liveFactor(dc, 'channel_fit', currentPercent)!.score * 100).toFixed(1)}%</span>
                                         </div>
                                         <div className="text-xs text-gray-700 mb-1">
-                                          {rec.detailed_calculation.channel_fit.explanation}
+                                          {liveFactor(dc, 'channel_fit', currentPercent)!.explanation}
                                         </div>
                                         <details className="mt-1">
                                           <summary className="text-xs text-blue-600 cursor-pointer hover:text-blue-800 font-medium">
-                                            Why {(rec.detailed_calculation.channel_fit.weight * 100).toFixed(0)}%?
+                                            Why {(liveFactor(dc, 'channel_fit', currentPercent)!.weight * 100).toFixed(0)}%?
                                           </summary>
                                           <div className="text-xs text-gray-600 mt-1 pl-3 border-l-2 border-blue-200 space-y-1">
-                                            {(rec.detailed_calculation.channel_fit as { calculation?: string }).calculation && (
-                                              <p className="font-medium text-indigo-700">📐 {(rec.detailed_calculation.channel_fit as { calculation?: string }).calculation}</p>
-                                            )}
+                                            <p className="font-medium text-indigo-700">📐 {liveFactor(dc, 'channel_fit', currentPercent)!.calculation}</p>
+                                            <p className="italic">🧮 Compares the customer's digital engagement level against whether this product favors digital self-service or in-branch service.</p>
                                             <p>78% of millennials prefer mobile banking, 65% of 60+ prefer branches (ABA Survey). Channel mismatch causes 30% lower engagement.</p>
                                           </div>
                                         </details>
@@ -1869,30 +1923,34 @@ export default function BankingAgentB() {
                                     )}
                                   </div>
 
-                                  {/* TIER 3: Behavioral & Contextual (10%) */}
+                                  {/* TIER 3: Behavioral & Contextual */}
                                   <div className="mb-4 p-3 bg-gradient-to-r from-green-50 to-emerald-50 rounded-lg border border-green-200">
-                                    <p className="text-xs font-bold text-green-900 mb-3">TIER 3: Behavioral & Contextual (10%)</p>
-                                    
+                                    <p className="text-xs font-bold text-green-900 mb-3">TIER 3: Behavioral & Contextual ({tierWeightPct(currentPercent, 'tier3').toFixed(0)}%)</p>
+
                                     {['complexity_match', 'intent_score', 'segment_affinity', 'transaction_pattern'].map((factorKey) => {
-                                      const factor = rec.detailed_calculation[factorKey];
+                                      const factor = liveFactor(dc, factorKey, currentPercent);
                                       if (!factor) return null;
-                                      
-                                      const factorInfo: Record<string, { name: string; why: string }> = {
+
+                                      const factorInfo: Record<string, { name: string; why: string; howCalculated: string }> = {
                                         'complexity_match': {
                                           name: 'Complexity Match',
-                                          why: 'Complex products (IRAs, CDs) require financial literacy. 40% of customers abandon overly complex products (Deloitte). Matching sophistication prevents drop-off.'
+                                          why: 'Complex products (IRAs, CDs) require financial literacy. 40% of customers abandon overly complex products (Deloitte). Matching sophistication prevents drop-off.',
+                                          howCalculated: 'Estimates customer sophistication from deposits and digital engagement, then compares it to the product\'s complexity level; closer match scores higher.'
                                         },
                                         'intent_score': {
                                           name: 'Intent Score',
-                                          why: 'Cross-sell receptivity varies widely. Targeting high-intent customers improves conversion 3-5x (Salesforce Banking Report).'
+                                          why: 'Cross-sell receptivity varies widely. Targeting high-intent customers improves conversion 3-5x (Salesforce Banking Report).',
+                                          howCalculated: 'Uses the customer\'s cross-sell receptivity score as-is — no adjustment is applied.'
                                         },
                                         'segment_affinity': {
                                           name: 'Segment Affinity',
-                                          why: 'Peer behavior influences 60% of banking decisions. "People like me" social proof drives adoption in homogeneous segments.'
+                                          why: 'Peer behavior influences 60% of banking decisions. "People like me" social proof drives adoption in homogeneous segments.',
+                                          howCalculated: 'Measures what share of customers in the same segment already hold this product; higher peer adoption scores higher.'
                                         },
                                         'transaction_pattern': {
                                           name: 'Transaction Pattern',
-                                          why: 'High-frequency transactors need different products than savers. Activity patterns predict product usage and satisfaction.'
+                                          why: 'High-frequency transactors need different products than savers. Activity patterns predict product usage and satisfaction.',
+                                          howCalculated: 'Buckets monthly transaction volume into high/medium/low/very-low activity, each mapped to a fixed score.'
                                         }
                                       };
 
@@ -1908,9 +1966,8 @@ export default function BankingAgentB() {
                                               Why {(factor.weight * 100).toFixed(0)}%?
                                             </summary>
                                             <div className="text-xs text-gray-600 mt-1 pl-3 border-l-2 border-blue-200 space-y-1">
-                                              {(factor as { calculation?: string }).calculation && (
-                                                <p className="font-medium text-indigo-700">📐 {(factor as { calculation?: string }).calculation}</p>
-                                              )}
+                                              <p className="font-medium text-indigo-700">📐 {factor.calculation}</p>
+                                              <p className="italic">🧮 {factorInfo[factorKey].howCalculated}</p>
                                               <p>{factorInfo[factorKey].why}</p>
                                             </div>
                                           </details>
@@ -1919,22 +1976,24 @@ export default function BankingAgentB() {
                                     })}
                                   </div>
 
-                                  {/* TIER 4: Quality Signals (7%) */}
+                                  {/* TIER 4: Quality Signals */}
                                   <div className="mb-3 p-3 bg-gradient-to-r from-orange-50 to-amber-50 rounded-lg border border-orange-200">
-                                    <p className="text-xs font-bold text-orange-900 mb-3">TIER 4: Quality Signals (7%)</p>
-                                    
+                                    <p className="text-xs font-bold text-orange-900 mb-3">TIER 4: Quality Signals ({tierWeightPct(currentPercent, 'tier4').toFixed(0)}%)</p>
+
                                     {['product_rating', 'popularity'].map((factorKey) => {
-                                      const factor = rec.detailed_calculation[factorKey];
+                                      const factor = liveFactor(dc, factorKey, currentPercent);
                                       if (!factor) return null;
-                                      
-                                      const factorInfo: Record<string, { name: string; why: string }> = {
+
+                                      const factorInfo: Record<string, { name: string; why: string; howCalculated: string }> = {
                                         'product_rating': {
                                           name: 'Product Rating',
-                                          why: 'Customer satisfaction ratings predict long-term retention. 4.5+ star products have 80% renewal rates vs 55% for 3-star (Banking Satisfaction Index).'
+                                          why: 'Customer satisfaction ratings predict long-term retention. 4.5+ star products have 80% renewal rates vs 55% for 3-star (Banking Satisfaction Index).',
+                                          howCalculated: 'Directly converts the product\'s average star rating (out of 5) into a percentage.'
                                         },
                                         'popularity': {
                                           name: 'Popularity',
-                                          why: 'Popular products within segments indicate proven value. Adoption rates signal market validation and reduce perceived risk for customers.'
+                                          why: 'Popular products within segments indicate proven value. Adoption rates signal market validation and reduce perceived risk for customers.',
+                                          howCalculated: 'Based on segment adoption count — over 100 holders scores highest, over 50 scores moderately, fewer scores lower.'
                                         }
                                       };
 
@@ -1950,9 +2009,8 @@ export default function BankingAgentB() {
                                               Why {(factor.weight * 100).toFixed(0)}%?
                                             </summary>
                                             <div className="text-xs text-gray-600 mt-1 pl-3 border-l-2 border-blue-200 space-y-1">
-                                              {(factor as { calculation?: string }).calculation && (
-                                                <p className="font-medium text-indigo-700">📐 {(factor as { calculation?: string }).calculation}</p>
-                                              )}
+                                              <p className="font-medium text-indigo-700">📐 {factor.calculation}</p>
+                                              <p className="italic">🧮 {factorInfo[factorKey].howCalculated}</p>
                                               <p>{factorInfo[factorKey].why}</p>
                                             </div>
                                           </details>
@@ -1974,7 +2032,8 @@ export default function BankingAgentB() {
                                     </p>
                                   </div>
                                 </div>
-                              ) : scoringMethod === 'logit' && rec.scoring_breakdown ? (
+                                );
+                              })() : scoringMethod === 'logit' && rec.scoring_breakdown ? (
                                 /* HYBRID ML MODEL EXPLANATION */
                                 <div>
                                   <p className="text-xs font-semibold text-purple-900 mb-3">

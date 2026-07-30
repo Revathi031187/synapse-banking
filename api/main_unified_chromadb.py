@@ -3626,13 +3626,19 @@ async def banking_agent_b_factor_metadata():
 @app.get("/api/banking/agent_b/factor-weights")
 async def banking_agent_b_factor_weights_get():
     """Current saved weights (or defaults if never submitted)."""
-    from utils.banking_factor_weights import default_weights_percent
+    from utils.banking_factor_weights import default_weights_percent, factor_keys
     saved = system_state["banking"].get("agent_b_factor_weights_pct")
     defaults = default_weights_percent()
+    # A saved override that happens to match the defaults exactly (e.g. re-submitted
+    # unmodified, or reset then saved again) is not meaningfully "custom" — compare values,
+    # not just presence, so this flag reflects what's actually different.
+    is_custom = saved is not None and any(
+        abs(float(saved.get(k, 0)) - float(defaults.get(k, 0))) > 0.05 for k in factor_keys()
+    )
     return {
         "success": True,
         "weights_percent": saved if saved else defaults,
-        "is_custom": saved is not None,
+        "is_custom": is_custom,
         "defaults_percent": defaults,
     }
 
