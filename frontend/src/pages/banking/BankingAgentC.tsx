@@ -1,5 +1,6 @@
 import React, { useState, useMemo, useRef, useEffect } from 'react';
 import BankingAdSpend from './BankingAdSpend';
+import CustomerSearchSelect from '../../components/CustomerSearchSelect';
 import { useQuery } from '@tanstack/react-query';
 import { motion, AnimatePresence } from 'framer-motion';
 import {
@@ -17,7 +18,6 @@ import {
   Shield,
   ArrowRight,
   Loader2,
-  Search,
   Users,
   Gift,
   MessageSquare,
@@ -49,7 +49,6 @@ type BankingAgentCUiState = {
   offerScope: 'customer' | 'persona';
   churnRiskView: 'customer' | 'persona';
   selectedCustomerId: string | null;
-  customerSearch: string;
   explainOpen: boolean;
   selectedPersonaId: string | null;
   activeCommTab: 'push' | 'email' | 'flyer';
@@ -62,7 +61,6 @@ const DEFAULT_AGENT_C_UI: BankingAgentCUiState = {
   offerScope: 'customer',
   churnRiskView: 'customer',
   selectedCustomerId: null,
-  customerSearch: '',
   explainOpen: true,
   selectedPersonaId: null,
   activeCommTab: 'push',
@@ -2908,7 +2906,7 @@ function CommunicationPreviewPanel({
 
 export default function BankingAgentC() {
   const [ui, setUi] = useSessionStorageState<BankingAgentCUiState>(AGENT_C_UI_KEY, DEFAULT_AGENT_C_UI);
-  const { offerScope, churnRiskView, selectedCustomerId, customerSearch, explainOpen, selectedPersonaId, activeCommTab, offerScoreOpen, personaOfferScoreOpen, personaCommTab } = ui;
+  const { offerScope, churnRiskView, selectedCustomerId, explainOpen, selectedPersonaId, activeCommTab, offerScoreOpen, personaOfferScoreOpen, personaCommTab } = ui;
   const offerCardRef = useRef<HTMLDivElement>(null);
   const personaOfferCardRef = useRef<HTMLDivElement>(null);
 
@@ -2936,7 +2934,7 @@ export default function BankingAgentC() {
   });
 
   const customers = useMemo(() => {
-    const list = (customersData?.data?.customers ?? []) as Array<{
+    return (customersData?.data?.customers ?? []) as Array<{
       customer_id: string;
       customer_name: string;
       persona?: string;
@@ -2945,14 +2943,7 @@ export default function BankingAgentC() {
       channel_preference?: string;
       recent_life_event?: string;
     }>;
-    if (!customerSearch.trim()) return list;
-    const q = customerSearch.toLowerCase();
-    return list.filter(
-      (c) =>
-        (c.customer_id && String(c.customer_id).toLowerCase().includes(q)) ||
-        (c.customer_name && c.customer_name.toLowerCase().includes(q))
-    );
-  }, [customersData, customerSearch]);
+  }, [customersData]);
 
   const {
     data: offerData,
@@ -3144,37 +3135,14 @@ export default function BankingAgentC() {
             {offerScope === 'customer' && (
               <>
                 <label className="block text-sm font-semibold text-slate-700 mb-2">Select customer</label>
-                <div className="relative">
-                  <Search className="absolute left-4 top-1/2 -translate-y-1/2 w-5 h-5 text-slate-400" />
-                  <input
-                    type="text"
-                    placeholder="Search by name or ID..."
-                    value={customerSearch}
-                    onChange={(e) => setUi((p) => ({ ...p, customerSearch: e.target.value }))}
-                    className="w-full pl-12 pr-4 py-3 rounded-xl border border-slate-200 bg-white shadow-sm focus:ring-2 focus:ring-violet-500 focus:border-violet-500 transition-all"
-                  />
-                </div>
-                <div className="mt-2 max-h-56 overflow-y-auto rounded-xl border border-slate-200 bg-slate-50/50 shadow-inner">
-                  {customers.slice(0, 80).map((c) => (
-                    <button
-                      key={c.customer_id}
-                      type="button"
-                      onClick={() => setUi((p) => ({ ...p, selectedCustomerId: c.customer_id }))}
-                      className={`w-full flex items-center gap-3 px-4 py-3 text-left hover:bg-white transition-colors border-b border-slate-100 last:border-0 ${
-                        selectedCustomerId === c.customer_id ? 'bg-violet-50 text-violet-800' : ''
-                      }`}
-                    >
-                      <User className="w-5 h-5 text-slate-400 flex-shrink-0" />
-                      <div className="min-w-0 flex-1">
-                        <p className="font-medium text-slate-900 truncate">{c.customer_name}</p>
-                        <p className="text-sm text-slate-500 truncate">
-                          {c.customer_id} · {c.persona ?? '—'}
-                        </p>
-                      </div>
-                      {selectedCustomerId === c.customer_id && <div className="w-2 h-2 rounded-full bg-violet-500" />}
-                    </button>
-                  ))}
-                </div>
+                <CustomerSearchSelect
+                  customers={customers}
+                  value={selectedCustomerId ?? ''}
+                  onChange={(id) => setUi((p) => ({ ...p, selectedCustomerId: id }))}
+                  loading={customersLoading}
+                  emptyListLabel="Run Segmentation and load data first to use Best Offer."
+                  placeholder="Search by name or ID..."
+                />
                 <div className="mt-6">
                   <AnimatePresence mode="wait">
                     {!selectedCustomerId ? (

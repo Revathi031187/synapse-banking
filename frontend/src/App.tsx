@@ -9,6 +9,7 @@ import BankingAgentD from './pages/banking/BankingAgentD';
 import BankingAskGenie from './pages/banking/BankingAskGenie';
 import BankingLanding from './pages/banking/BankingLanding';
 import BankingSegmentDashboard from './pages/banking/BankingSegmentDashboard';
+import BankingDataIntegration from './pages/banking/BankingDataIntegration';
 
 // Academy Sports pages (Keep for reference)
 import AcademyDashboard from './pages/academy/AcademyDashboard';
@@ -50,6 +51,7 @@ function App() {
             <Route index element={<Navigate to="dashboard" replace />} />
             <Route path="dashboard" element={<BankingSegmentDashboard />} />
             <Route path="data-loader" element={<BankingDataLoader />} />
+            <Route path="data-integration" element={<BankingDataIntegration />} />
             <Route path="macro-dashboard" element={<BankingMacroDashboard />} />
             <Route path="agent-a" element={<Navigate to="/banking/data-loader" replace />} />
             <Route path="agent-b" element={<BankingAgentB />} />

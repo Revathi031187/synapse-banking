@@ -1,5 +1,5 @@
 import { Outlet, NavLink, useNavigate, useLocation } from 'react-router-dom';
-import { Home, Database, Users, Target, BarChart3, Search, Crosshair, Star, Activity, Sparkles, Globe, TrendingUp, LayoutDashboard } from 'lucide-react';
+import { Home, Database, Users, Target, BarChart3, Search, Crosshair, Star, Activity, Sparkles, Globe, TrendingUp, LayoutDashboard, Plug } from 'lucide-react';
 import { AnimatePresence, motion } from 'framer-motion';
 import latentviewLogo from '../assets/latentview-logo.svg';
 import { useQuery } from '@tanstack/react-query';
@@ -77,6 +77,7 @@ export default function UnifiedLayout({ industry }: UnifiedLayoutProps) {
     { path: `/${industry}/agent-b`, label: 'Recommender', icon: Crosshair },
     { path: `/${industry}/agent-c`, label: 'Offer & Ad Spend', icon: Star },
     { path: `/${industry}/agent-d`, label: 'Director', icon: Activity },
+    { path: `/${industry}/data-integration`, label: 'Data Integration', icon: Plug },
   ] : industry === 'academy' ? [
     { path: `/${industry}`, label: 'Dashboard', icon: Home },
     { path: `/${industry}/macro-dashboard`, label: 'Visual Dashboard', icon: BarChart3 },

@@ -22,6 +22,7 @@ import {
 } from 'lucide-react';
 import { getBankingApiBase } from '../../utils/apiBase';
 import { useSessionStorageState } from '../../hooks/useSessionStorageState';
+import CustomerSearchSelect from '../../components/CustomerSearchSelect';
 
 const API_BASE = getBankingApiBase();
 
@@ -482,27 +483,16 @@ export default function BankingAgentD() {
               </div>
               <div>
                 <label className="block text-sm font-medium text-slate-700 mb-1">Customer in segment</label>
-                <select
-                  className="w-full border border-slate-300 rounded-xl px-3 py-2.5 bg-white"
+                <CustomerSearchSelect
+                  customers={segmentCustomers}
                   value={customerId}
-                  disabled={segmentCustomersQuery.isLoading}
-                  onChange={(e) => {
-                    setUi((prev) => ({ ...prev, customerId: e.target.value, persistedOrchestrate: null }));
+                  loading={segmentCustomersQuery.isLoading}
+                  emptyListLabel="No customers in segment (run Segmentation)"
+                  onChange={(id) => {
+                    setUi((prev) => ({ ...prev, customerId: id, persistedOrchestrate: null }));
                     orchestrateMutation.reset();
                   }}
-                >
-                  {segmentCustomersQuery.isLoading ? (
-                    <option value="">Loading customers in segment…</option>
-                  ) : segmentCustomers.length === 0 ? (
-                    <option value="">No customers in segment (run Segmentation)</option>
-                  ) : (
-                    segmentCustomers.map((c) => (
-                      <option key={c.customer_id} value={String(c.customer_id)}>
-                        {c.customer_name || c.customer_id} ({c.customer_id})
-                      </option>
-                    ))
-                  )}
-                </select>
+                />
               </div>
             </div>
           )}
@@ -510,29 +500,17 @@ export default function BankingAgentD() {
           {mode === 'customer' && (
             <div>
               <label className="block text-sm font-medium text-slate-700 mb-1">Customer</label>
-              <select
-                className="w-full border border-slate-300 rounded-xl px-3 py-2.5 bg-white max-w-xl"
+              <CustomerSearchSelect
+                className="max-w-xl"
+                customers={allCustomers}
                 value={customerId}
-                onChange={(e) => {
-                  setUi((prev) => ({ ...prev, customerId: e.target.value, persistedOrchestrate: null }));
+                loading={customersQuery.isLoading}
+                emptyListLabel="No customers — run Segmentation first"
+                onChange={(id) => {
+                  setUi((prev) => ({ ...prev, customerId: id, persistedOrchestrate: null }));
                   orchestrateMutation.reset();
                 }}
-              >
-                {customersQuery.isLoading ? (
-                  <option value="">Loading customers…</option>
-                ) : allCustomers.length === 0 ? (
-                  <option value="">No customers — run Segmentation first</option>
-                ) : (
-                  <>
-                    <option value="">Select customer…</option>
-                    {allCustomers.map((c) => (
-                      <option key={c.customer_id} value={String(c.customer_id)}>
-                        {c.customer_name || c.customer_id} ({c.customer_id})
-                      </option>
-                    ))}
-                  </>
-                )}
-              </select>
+              />
             </div>
           )}
 
