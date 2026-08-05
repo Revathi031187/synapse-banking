@@ -87,5 +87,4 @@ Desktop.ini
 # data/
 # *.csv
 # *.parquet
-"myenv/" 
-"myenv/" 
+myenv/
