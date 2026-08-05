@@ -77,7 +77,7 @@ export default function UnifiedLayout({ industry }: UnifiedLayoutProps) {
     { path: `/${industry}/agent-b`, label: 'Recommender', icon: Crosshair },
     { path: `/${industry}/agent-c`, label: 'Offer & Ad Spend', icon: Star },
     { path: `/${industry}/agent-d`, label: 'Director', icon: Activity },
-    { path: `/${industry}/data-integration`, label: 'Data Integration', icon: Plug },
+    { path: `/${industry}/activation`, label: 'Activation', icon: Plug },
   ] : industry === 'academy' ? [
     { path: `/${industry}`, label: 'Dashboard', icon: Home },
     { path: `/${industry}/macro-dashboard`, label: 'Visual Dashboard', icon: BarChart3 },

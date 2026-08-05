@@ -1,5 +1,8 @@
 import { useState } from 'react';
-import { CheckCircle2, Check } from 'lucide-react';
+import { CheckCircle2, Check, XCircle } from 'lucide-react';
+import { getBankingApiBase } from '../../utils/apiBase';
+
+const API_BASE = getBankingApiBase();
 
 interface Connector {
   key: string;
@@ -8,20 +11,17 @@ interface Connector {
   bg: string;
 }
 
-const FILE_UPLOAD: Connector = { key: 'csv', label: 'File Upload (CSV/XLSX/TSV)', abbr: 'CSV', bg: '#10B981' };
 const CLOUD_PLATFORMS: Connector[] = [
   { key: 'databricks', label: 'Databricks', abbr: 'DB', bg: '#EA580C' },
-  { key: 'aep', label: 'Adobe Experience Platform', abbr: 'AEP', bg: '#FA0F00' },
   { key: 'snowflake', label: 'Snowflake', abbr: 'SF', bg: '#29B5E8' },
-];
-const ENTERPRISE_SYSTEMS: Connector[] = [
-  { key: 'salesforce', label: 'Salesforce CRM', abbr: 'SC', bg: '#0EA5E9' },
 ];
 const MARKETING_PLATFORMS: Connector[] = [
   { key: 'google-ads', label: 'Google Ads', abbr: 'GA', bg: '#4285F4' },
+  { key: 'salesforce', label: 'Salesforce Data 360', abbr: 'SD', bg: '#0EA5E9' },
+  { key: 'aep', label: 'Adobe Experience Platform', abbr: 'AEP', bg: '#FA0F00' },
 ];
 
-const ALL_CONNECTORS: Connector[] = [FILE_UPLOAD, ...CLOUD_PLATFORMS, ...ENTERPRISE_SYSTEMS, ...MARKETING_PLATFORMS];
+const ALL_CONNECTORS: Connector[] = [...CLOUD_PLATFORMS, ...MARKETING_PLATFORMS];
 
 // ─── Field / section schema ────────────────────────────────────────────────
 interface FieldDef {
@@ -57,10 +57,42 @@ const AEP_SECTIONS: SectionDef[] = [
   {
     title: 'Connection',
     fields: [
+      { key: 'tenantId', label: 'Tenant ID', required: true, placeholder: 'e.g. yourcompany' },
       { key: 'sandbox', label: 'Sandbox Name', required: false, placeholder: 'prod' },
+      { key: 'schemaName', label: 'Schema Name', required: false, placeholder: 'Synapse-Connection-Test-Schema' },
     ],
   },
 ];
+
+// Pre-filled defaults for the demo AEP sandbox — never stored server-side, only used for this session.
+const AEP_DEFAULT_VALUES: Record<string, string> = {
+  clientId: 'c98c75d80dfc48d7bf209265bc1d441e',
+  clientSecret: 'p8e-VZ5SpYW7WadWFMkx-R0a9mgQkaZPg6JR',
+  orgId: '83E53FDE5D14A9330A495E27@AdobeOrg',
+  tenantId: 'wrkshp5snbxamer',
+  sandbox: 'latentviewanalytics-ucp',
+};
+
+// Credentials of the last successfully-tested AEP connection, cached locally so the
+// user can come back and edit rather than re-enter everything from scratch.
+const AEP_CREDENTIALS_STORAGE_KEY = 'bankingActivation.aep.credentials';
+
+function loadCachedAEPCredentials(): Record<string, string> | null {
+  try {
+    const raw = window.localStorage.getItem(AEP_CREDENTIALS_STORAGE_KEY);
+    return raw ? JSON.parse(raw) : null;
+  } catch {
+    return null;
+  }
+}
+
+function saveCachedAEPCredentials(values: Record<string, string>) {
+  try {
+    window.localStorage.setItem(AEP_CREDENTIALS_STORAGE_KEY, JSON.stringify(values));
+  } catch {
+    // Ignore storage errors (e.g. private browsing with storage disabled).
+  }
+}
 
 const SALESFORCE_SECTIONS: SectionDef[] = [
   {
@@ -136,13 +168,45 @@ const SNOWFLAKE_OPTIONS: SnowflakeOption[] = [
 const CONNECT_BUTTON_LABEL: Record<string, string> = {
   aep: 'Connect to AEP',
   snowflake: 'Connect to Snowflake',
-  salesforce: 'Connect to Salesforce',
+  salesforce: 'Connect to Salesforce Data 360',
   'google-ads': 'Connect to Google Ads',
 };
 
 function fieldsComplete(fields: FieldDef[], values: Record<string, string>): boolean {
   return fields.every(f => !f.required || (values[f.key] || '').trim() !== '');
 }
+
+// ─── Adobe Experience Platform — real activation ───────────────────────────
+interface AEPErrorDetail {
+  step: string;
+  status: number | null;
+  title: string;
+  detail: string;
+  type: string | null;
+  registryRequestId: string | null;
+  subErrors: unknown[];
+  timestamp: string | null;
+  rawResponse: unknown;
+}
+
+interface AEPConnectionResult {
+  schemaId: string;
+  schemaTitle: string;
+  fieldGroupId: string;
+  fieldGroupTitle: string;
+  tenantId: string;
+  sandbox: string;
+  imsOrg: string;
+  connectedAt: string;
+}
+
+const AEP_STEP_LABELS: Record<string, string> = {
+  auth_validation: 'Credential validation failed',
+  fieldgroup_creation: 'Field Group creation failed',
+  schema_creation: 'Schema creation failed',
+  network: 'Network request failed',
+  unknown: 'Request failed',
+};
 
 // ─── UI bits ────────────────────────────────────────────────────────────────
 function ConnectorCard({
@@ -217,6 +281,64 @@ function FormField({
   );
 }
 
+function DetailRow({ label, value, mono }: { label: string; value?: string | null; mono?: boolean }) {
+  if (!value) return null;
+  return (
+    <div className="flex items-center justify-between gap-3">
+      <span className="text-[11px] font-bold uppercase tracking-wide text-gray-400 flex-shrink-0">{label}</span>
+      <span
+        className={`text-sm text-gray-800 truncate max-w-[240px] ${mono ? 'font-mono text-xs' : ''}`}
+        title={value}
+      >
+        {value}
+      </span>
+    </div>
+  );
+}
+
+function AEPErrorPanel({ error }: { error: AEPErrorDetail }) {
+  const responseJson = {
+    detail: error.detail,
+    status: error.status,
+    title: error.title,
+    type: error.type,
+    report: {
+      'detailed-message': error.detail,
+      registryRequestId: error.registryRequestId,
+      'sub-errors': error.subErrors,
+      timestamp: error.timestamp,
+    },
+  };
+  return (
+    <div className="mt-6 rounded-xl border border-rose-200 bg-rose-50 overflow-hidden">
+      <div className="flex items-start gap-3 px-5 py-4 border-b border-rose-200">
+        <XCircle className="w-5 h-5 text-rose-600 mt-0.5 flex-shrink-0" />
+        <div>
+          <h4 className="text-sm font-bold text-rose-800">{error.title || 'Connection Failed'}</h4>
+          <p className="text-sm text-rose-700 mt-0.5">
+            {AEP_STEP_LABELS[error.step] || AEP_STEP_LABELS.unknown}
+            {error.status ? ` (HTTP ${error.status})` : ''}
+          </p>
+        </div>
+      </div>
+      <div className="px-5 py-4 space-y-4">
+        <div>
+          <p className="text-[11px] font-bold uppercase tracking-wide text-rose-400 mb-1.5">Failed Step</p>
+          <div className="bg-white border border-rose-100 rounded-lg px-3 py-2 text-sm font-mono text-rose-900">
+            {error.step}
+          </div>
+        </div>
+        <div>
+          <p className="text-[11px] font-bold uppercase tracking-wide text-rose-400 mb-1.5">API Response</p>
+          <pre className="bg-white border border-rose-100 rounded-lg px-3 py-3 text-xs font-mono text-rose-900 overflow-x-auto whitespace-pre-wrap">
+            {JSON.stringify(responseJson, null, 2)}
+          </pre>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 function SectionTag({ children }: { children: React.ReactNode }) {
   return (
     <span className="ml-2 text-[10px] font-bold uppercase tracking-wide text-violet-600 bg-violet-50 border border-violet-100 rounded-full px-2 py-0.5">
@@ -252,11 +374,15 @@ function FormSections({
   );
 }
 
-export default function BankingDataIntegration() {
+export default function BankingActivation() {
   const [step, setStep] = useState<'select' | 'configure' | 'success'>('select');
   const [selectedKey, setSelectedKey] = useState<string | null>(null);
   const [formValues, setFormValues] = useState<Record<string, string>>({});
   const [snowflakeOptionKey, setSnowflakeOptionKey] = useState<string>('oauth');
+  const [aepConnecting, setAepConnecting] = useState(false);
+  const [aepError, setAepError] = useState<AEPErrorDetail | null>(null);
+  const [aepResult, setAepResult] = useState<AEPConnectionResult | null>(null);
+  const [hasCachedAepCredentials, setHasCachedAepCredentials] = useState(() => loadCachedAEPCredentials() !== null);
 
   const selectedConnector = ALL_CONNECTORS.find(c => c.key === selectedKey) || null;
   const connectorKey = selectedConnector?.key || '';
@@ -274,9 +400,20 @@ export default function BankingDataIntegration() {
 
   const goToConfigure = () => {
     if (!selectedConnector) return;
-    setFormValues({});
+    if (connectorKey === 'aep') {
+      setFormValues(loadCachedAEPCredentials() || { ...AEP_DEFAULT_VALUES });
+    } else {
+      setFormValues({});
+    }
     setSnowflakeOptionKey('oauth');
+    setAepError(null);
+    setAepResult(null);
     setStep('configure');
+  };
+
+  const goBackToSelect = () => {
+    setAepError(null);
+    setStep('select');
   };
 
   const restart = () => {
@@ -284,6 +421,83 @@ export default function BankingDataIntegration() {
     setSelectedKey(null);
     setFormValues({});
     setSnowflakeOptionKey('oauth');
+    setAepConnecting(false);
+    setAepError(null);
+    setAepResult(null);
+  };
+
+  const handleConnect = async () => {
+    if (!canProceed || aepConnecting) return;
+
+    if (connectorKey !== 'aep') {
+      setStep('success');
+      return;
+    }
+
+    const credentials = {
+      clientId: formValues.clientId || '',
+      clientSecret: formValues.clientSecret || '',
+      orgId: formValues.orgId || '',
+      accessToken: formValues.accessToken || '',
+      sandbox: formValues.sandbox || 'prod',
+      tenantId: formValues.tenantId || '',
+      schemaName: formValues.schemaName || '',
+    };
+
+    setAepConnecting(true);
+    setAepError(null);
+    try {
+      const res = await fetch(`${API_BASE}/api/banking/activation/aep/connect`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          client_id: credentials.clientId,
+          client_secret: credentials.clientSecret,
+          org_id: credentials.orgId,
+          access_token: credentials.accessToken,
+          sandbox: credentials.sandbox,
+          tenant_id: credentials.tenantId,
+          schema_name: credentials.schemaName,
+        }),
+      });
+      const data = await res.json();
+
+      if (!res.ok || !data.success) {
+        setAepError(
+          data.error || {
+            step: 'unknown',
+            status: res.status,
+            title: 'Connection Failed',
+            detail: data.detail || 'The request to Adobe Experience Platform failed.',
+            type: null,
+            registryRequestId: null,
+            subErrors: [],
+            timestamp: null,
+            rawResponse: data,
+          }
+        );
+        return;
+      }
+
+      saveCachedAEPCredentials(credentials);
+      setHasCachedAepCredentials(true);
+      setAepResult(data.connection);
+      setStep('success');
+    } catch (err) {
+      setAepError({
+        step: 'network',
+        status: null,
+        title: 'Network Error',
+        detail: err instanceof Error ? err.message : 'Could not reach the activation service.',
+        type: null,
+        registryRequestId: null,
+        subErrors: [],
+        timestamp: null,
+        rawResponse: null,
+      });
+    } finally {
+      setAepConnecting(false);
+    }
   };
 
   return (
@@ -292,24 +506,12 @@ export default function BankingDataIntegration() {
 
         {step === 'select' && (
           <div className="bg-white rounded-2xl border border-gray-200 shadow-sm p-8">
-            <h2 className="text-lg font-bold text-gray-900 mb-1">Choose destination for data integration</h2>
+            <h2 className="text-lg font-bold text-gray-900 mb-1">Choose destination for activation</h2>
             <p className="text-sm text-gray-500 mb-6">Pick where your data should be delivered.</p>
-
-            <SectionLabel>File Upload</SectionLabel>
-            <div className="grid grid-cols-3 gap-3 mb-6">
-              <ConnectorCard connector={FILE_UPLOAD} selected={selectedKey === FILE_UPLOAD.key} onSelect={setSelectedKey} />
-            </div>
 
             <SectionLabel>Cloud Platforms</SectionLabel>
             <div className="grid grid-cols-3 gap-3 mb-6">
               {CLOUD_PLATFORMS.map(c => (
-                <ConnectorCard key={c.key} connector={c} selected={selectedKey === c.key} onSelect={setSelectedKey} />
-              ))}
-            </div>
-
-            <SectionLabel>Enterprise Systems</SectionLabel>
-            <div className="grid grid-cols-3 gap-3 mb-6">
-              {ENTERPRISE_SYSTEMS.map(c => (
                 <ConnectorCard key={c.key} connector={c} selected={selectedKey === c.key} onSelect={setSelectedKey} />
               ))}
             </div>
@@ -331,7 +533,7 @@ export default function BankingDataIntegration() {
                     : 'bg-gray-200 text-gray-400 cursor-not-allowed'
                 }`}
               >
-                Continue →
+                {connectorKey === 'aep' && hasCachedAepCredentials ? 'Edit Connection →' : 'Continue →'}
               </button>
             </div>
           </div>
@@ -392,23 +594,25 @@ export default function BankingDataIntegration() {
               </>
             )}
 
+            {connectorKey === 'aep' && aepError && <AEPErrorPanel error={aepError} />}
+
             <div className="flex justify-between mt-2">
               <button
-                onClick={() => setStep('select')}
+                onClick={goBackToSelect}
                 className="text-sm font-semibold px-5 py-2.5 rounded-lg border border-gray-300 text-gray-700 hover:bg-gray-50 transition-colors"
               >
                 ← Back
               </button>
               <button
-                onClick={() => canProceed && setStep('success')}
-                disabled={!canProceed}
+                onClick={handleConnect}
+                disabled={!canProceed || aepConnecting}
                 className={`text-sm font-semibold px-5 py-2.5 rounded-lg transition-colors ${
-                  canProceed
+                  canProceed && !aepConnecting
                     ? 'bg-violet-600 hover:bg-violet-700 text-white cursor-pointer'
                     : 'bg-gray-200 text-gray-400 cursor-not-allowed'
                 }`}
               >
-                {CONNECT_BUTTON_LABEL[connectorKey] || 'Proceed with integration →'}
+                {aepConnecting ? 'Connecting…' : CONNECT_BUTTON_LABEL[connectorKey] || 'Proceed with activation →'}
               </button>
             </div>
           </div>
@@ -420,9 +624,29 @@ export default function BankingDataIntegration() {
               <CheckCircle2 className="w-9 h-9 text-emerald-600" />
             </div>
             <h2 className="text-xl font-bold text-gray-900 mb-1">
-              Data integration to {selectedConnector?.label} was successful
+              Activation to {selectedConnector?.label} was successful
             </h2>
-            <p className="text-sm text-gray-500 mb-8">Your data has been connected and delivered to the selected destination.</p>
+            <p className="text-sm text-gray-500 mb-8">
+              {connectorKey === 'aep' && aepResult?.schemaTitle
+                ? `Schema "${aepResult.schemaTitle}" was created in your Adobe Experience Platform sandbox.`
+                : 'Your data has been connected and delivered to the selected destination.'}
+            </p>
+
+            {connectorKey === 'aep' && aepResult && (
+              <div className="w-full max-w-md text-left bg-gray-50 border border-gray-200 rounded-xl p-5 mb-8 space-y-2.5">
+                <DetailRow label="Schema Name" value={aepResult.schemaTitle} />
+                <DetailRow label="Schema ID" value={aepResult.schemaId} mono />
+                <DetailRow label="Field Group ID" value={aepResult.fieldGroupId} mono />
+                <DetailRow label="Tenant ID" value={aepResult.tenantId} />
+                <DetailRow label="Sandbox" value={aepResult.sandbox} />
+                <DetailRow label="IMS Org" value={aepResult.imsOrg} />
+                <DetailRow
+                  label="Connected At"
+                  value={aepResult.connectedAt ? new Date(aepResult.connectedAt).toLocaleString() : undefined}
+                />
+              </div>
+            )}
+
             <button
               onClick={restart}
               className="text-sm font-semibold px-5 py-2.5 rounded-lg border border-gray-300 text-gray-700 hover:bg-gray-50 transition-colors"

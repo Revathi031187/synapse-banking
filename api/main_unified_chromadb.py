@@ -5848,6 +5848,16 @@ class RephraseOfferRequest(BaseModel):
     current_body: str
     tone: str = "professional"   # professional | warm | urgent
 
+class AEPActivationConnectRequest(BaseModel):
+    client_id: str
+    client_secret: Optional[str] = None
+    org_id: str
+    access_token: str
+    sandbox: str = "prod"
+    tenant_id: str
+    industry: str = "banking"
+    schema_name: Optional[str] = None
+
 
 @app.post("/api/banking/agent_c/send_offer_email")
 async def send_banking_offer_email(req: SendOfferEmailRequest):
@@ -5969,6 +5979,50 @@ async def rephrase_banking_offer_content(req: RephraseOfferRequest):
     except Exception as e:
         logger.error(f"[API] rephrase_offer_content error: {e}", exc_info=True)
         raise HTTPException(status_code=500, detail=f"Rephrase failed: {e}")
+
+
+@app.post("/api/banking/activation/aep/connect")
+async def banking_activation_aep_connect(req: AEPActivationConnectRequest):
+    """
+    Activation tab — Adobe Experience Platform connector.
+    Validates the supplied credentials against AEP's Schema Registry and
+    provisions a field group + schema representing this platform's
+    personalization attributes. Returns success=False with the full Adobe
+    error payload (rather than raising) so the frontend can render the exact
+    failure — this is an expected/recoverable outcome, not a server bug.
+    """
+    from utils.adobe_aep_client import validate_and_activate, AdobeAEPError
+
+    try:
+        connection = validate_and_activate(
+            client_id=req.client_id,
+            org_id=req.org_id,
+            access_token=req.access_token,
+            sandbox=(req.sandbox or "prod").strip(),
+            tenant_id=req.tenant_id,
+            industry=req.industry,
+            schema_name=req.schema_name,
+        )
+        return {"success": True, "connection": connection}
+    except AdobeAEPError as e:
+        logger.warning(f"[Activation] AEP connect failed at step={e.step} status={e.status}: {e.detail}")
+        return {
+            "success": False,
+            "error": {
+                "step": e.step,
+                "status": e.status,
+                "title": e.title,
+                "detail": e.detail,
+                "type": e.type,
+                "registryRequestId": e.registry_request_id,
+                "subErrors": e.sub_errors,
+                "timestamp": e.timestamp,
+                "rawResponse": e.raw_response,
+            },
+        }
+    except Exception as e:
+        logger.error(f"[Activation] AEP connect unexpected error: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail=f"Activation failed: {e}")
 
 
 # ═══════════════════════════════════════════════════════════════════════════
