@@ -1,8 +1,11 @@
 import { useState } from 'react';
-import { CheckCircle2, Check, XCircle } from 'lucide-react';
+import { CheckCircle2, Check, XCircle, AlertTriangle, Database, Loader2, Info } from 'lucide-react';
 import { getBankingApiBase } from '../../utils/apiBase';
+import { useSessionStorageState } from '../../hooks/useSessionStorageState';
+import { AGENT_D_SESSION_LOG_KEY, type AgentDSessionLogEntry } from './BankingAgentD';
 
 const API_BASE = getBankingApiBase();
+const AEP_LAST_PUSHED_KEY = 'bankingActivation.aep.lastPushedTimestamp';
 
 interface Connector {
   key: string;
@@ -204,9 +207,31 @@ const AEP_STEP_LABELS: Record<string, string> = {
   auth_validation: 'Credential validation failed',
   fieldgroup_creation: 'Field Group creation failed',
   schema_creation: 'Schema creation failed',
+  schema_lookup: 'Schema lookup failed',
+  dataset_creation: 'Dataset creation failed',
+  batch_creation: 'Batch creation failed',
+  batch_upload: 'Batch file upload failed',
+  batch_completion: 'Batch completion failed',
+  batch_validation: 'Batch validation failed',
   network: 'Network request failed',
   unknown: 'Request failed',
 };
+
+interface AEPDatasetResult {
+  datasetId: string;
+  datasetName: string;
+  schemaId: string;
+  pushedCount: number;
+  skippedCount: number;
+  records: Array<{
+    customerId: string;
+    nbaPersona: string;
+    recommendedProductId: string;
+    offerName: string;
+    lastActivationDate: string;
+  }>;
+  batch: { batchId: string; status: string; recordCount: number };
+}
 
 // ─── UI bits ────────────────────────────────────────────────────────────────
 function ConnectorCard({
@@ -384,6 +409,17 @@ export default function BankingActivation() {
   const [aepResult, setAepResult] = useState<AEPConnectionResult | null>(null);
   const [hasCachedAepCredentials, setHasCachedAepCredentials] = useState(() => loadCachedAEPCredentials() !== null);
 
+  const [datasetName, setDatasetName] = useState('');
+  const [datasetCreating, setDatasetCreating] = useState(false);
+  const [datasetError, setDatasetError] = useState<AEPErrorDetail | null>(null);
+  const [datasetResult, setDatasetResult] = useState<AEPDatasetResult | null>(null);
+  const [sessionLog] = useSessionStorageState<AgentDSessionLogEntry[]>(AGENT_D_SESSION_LOG_KEY, []);
+  const [lastPushedTimestamp, setLastPushedTimestamp] = useSessionStorageState<string | null>(
+    AEP_LAST_PUSHED_KEY,
+    null
+  );
+  const unpushedEntries = sessionLog.filter((e) => !lastPushedTimestamp || e.timestamp > lastPushedTimestamp);
+
   const selectedConnector = ALL_CONNECTORS.find(c => c.key === selectedKey) || null;
   const connectorKey = selectedConnector?.key || '';
   const isSnowflake = connectorKey === 'snowflake';
@@ -424,6 +460,79 @@ export default function BankingActivation() {
     setAepConnecting(false);
     setAepError(null);
     setAepResult(null);
+    setDatasetName('');
+    setDatasetCreating(false);
+    setDatasetError(null);
+    setDatasetResult(null);
+  };
+
+  const handleCreateDataset = async () => {
+    if (unpushedEntries.length === 0 || datasetCreating || !datasetName.trim()) return;
+
+    setDatasetCreating(true);
+    setDatasetError(null);
+    try {
+      const res = await fetch(`${API_BASE}/api/banking/aep/create-dataset`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          datasetName: datasetName.trim(),
+          schemaName: formValues.schemaName || '',
+          clientId: formValues.clientId || '',
+          orgId: formValues.orgId || '',
+          accessToken: formValues.accessToken || '',
+          sandbox: formValues.sandbox || 'prod',
+          tenantId: formValues.tenantId || '',
+          agentDResults: unpushedEntries.map((e) => ({
+            customerId: e.customerId,
+            timestamp: e.timestamp,
+            data: e.data,
+          })),
+        }),
+      });
+      const data = await res.json();
+
+      if (!res.ok || !data.success) {
+        setDatasetError(
+          data.error || {
+            step: 'unknown',
+            status: res.status,
+            title: 'Dataset Creation Failed',
+            detail: data.detail || 'The request to Adobe Experience Platform failed.',
+            type: null,
+            registryRequestId: null,
+            subErrors: [],
+            timestamp: null,
+            rawResponse: data,
+          }
+        );
+        return;
+      }
+
+      // All entries in this attempt are considered handled (pushed, or permanently
+      // skipped as malformed) — advance the watermark past the newest one so a
+      // retry only ever picks up entries generated after this click.
+      const newestTimestamp = unpushedEntries.reduce(
+        (max, e) => (e.timestamp > max ? e.timestamp : max),
+        unpushedEntries[0].timestamp
+      );
+      setLastPushedTimestamp(newestTimestamp);
+      setDatasetResult(data);
+    } catch (err) {
+      setDatasetError({
+        step: 'network',
+        status: null,
+        title: 'Network Error',
+        detail: err instanceof Error ? err.message : 'Could not reach the activation service.',
+        type: null,
+        registryRequestId: null,
+        subErrors: [],
+        timestamp: null,
+        rawResponse: null,
+      });
+    } finally {
+      setDatasetCreating(false);
+    }
   };
 
   const handleConnect = async () => {
@@ -644,6 +753,103 @@ export default function BankingActivation() {
                   label="Connected At"
                   value={aepResult.connectedAt ? new Date(aepResult.connectedAt).toLocaleString() : undefined}
                 />
+              </div>
+            )}
+
+            {connectorKey === 'aep' && aepResult && (
+              <div className="w-full max-w-md text-left bg-white border border-gray-200 rounded-xl p-5 mb-8">
+                <div className="flex items-center gap-2 mb-3">
+                  <Database className="w-4 h-4 text-violet-600" />
+                  <h3 className="text-sm font-bold text-gray-800">Create Dataset from Agent D</h3>
+                </div>
+
+                {sessionLog.length === 0 ? (
+                  <div className="flex items-start gap-2 bg-amber-50 border border-amber-200 rounded-lg px-3 py-2.5">
+                    <AlertTriangle className="w-4 h-4 text-amber-600 mt-0.5 flex-shrink-0" />
+                    <p className="text-xs text-amber-800">
+                      Run Agent D for a customer first — there's no orchestration result to ingest yet.
+                    </p>
+                  </div>
+                ) : datasetResult ? (
+                  <div className="space-y-3">
+                    <div className="flex items-center gap-2 text-emerald-700 text-sm font-semibold mb-1">
+                      <CheckCircle2 className="w-4 h-4" />
+                      {datasetResult.pushedCount} record{datasetResult.pushedCount === 1 ? '' : 's'} ingested
+                      {datasetResult.skippedCount > 0 && ` (${datasetResult.skippedCount} skipped)`}
+                    </div>
+                    <DetailRow label="Dataset Name" value={datasetResult.datasetName} />
+                    <DetailRow label="Dataset ID" value={datasetResult.datasetId} mono />
+                    <DetailRow label="Batch Status" value={datasetResult.batch.status} />
+                    <div className="border-t border-gray-100 pt-2.5 space-y-2 max-h-48 overflow-y-auto">
+                      {datasetResult.records.map((r, i) => (
+                        <div key={i} className="text-xs bg-gray-50 rounded-lg px-3 py-2">
+                          <span className="font-mono text-gray-500">{r.customerId}</span>
+                          <span className="text-gray-400"> · </span>
+                          <span className="text-gray-700">{r.nbaPersona}</span>
+                          <span className="text-gray-400"> · </span>
+                          <span className="font-mono text-gray-500">{r.recommendedProductId}</span>
+                          <span className="text-gray-400"> · </span>
+                          <span className="text-gray-700">{r.offerName || '—'}</span>
+                          <span className="text-gray-400"> · </span>
+                          <span className="text-gray-500">{new Date(r.lastActivationDate).toLocaleString()}</span>
+                        </div>
+                      ))}
+                    </div>
+                    {unpushedEntries.length > 0 && (
+                      <div className="flex items-center justify-between gap-3 bg-violet-50 border border-violet-100 rounded-lg px-3 py-2">
+                        <p className="text-xs text-violet-700">
+                          {unpushedEntries.length} more result{unpushedEntries.length === 1 ? '' : 's'} generated since.
+                        </p>
+                        <button
+                          onClick={() => setDatasetResult(null)}
+                          className="flex-shrink-0 text-xs font-semibold text-violet-700 hover:text-violet-900 underline"
+                        >
+                          Push {unpushedEntries.length} more →
+                        </button>
+                      </div>
+                    )}
+                  </div>
+                ) : unpushedEntries.length === 0 ? (
+                  <div className="flex items-start gap-2 bg-blue-50 border border-blue-200 rounded-lg px-3 py-2.5">
+                    <Info className="w-4 h-4 text-blue-600 mt-0.5 flex-shrink-0" />
+                    <p className="text-xs text-blue-800">
+                      All {sessionLog.length} Agent D result{sessionLog.length === 1 ? '' : 's'} generated this session
+                      {sessionLog.length === 1 ? ' has' : ' have'} already been pushed. Run Agent D again for more
+                      customers to add new records.
+                    </p>
+                  </div>
+                ) : (
+                  <>
+                    <p className="text-xs text-gray-500 mb-3">
+                      {unpushedEntries.length} new Agent D result{unpushedEntries.length === 1 ? '' : 's'} from this
+                      session (across {new Set(unpushedEntries.map((e) => e.customerId)).size} customer
+                      {new Set(unpushedEntries.map((e) => e.customerId)).size === 1 ? '' : 's'}) will be pulled,
+                      mapped to the schema above, and ingested as one batch.
+                    </p>
+                    <div className="flex gap-2">
+                      <input
+                        type="text"
+                        placeholder="Dataset name"
+                        className={inputClass}
+                        value={datasetName}
+                        onChange={e => setDatasetName(e.target.value)}
+                      />
+                      <button
+                        onClick={handleCreateDataset}
+                        disabled={datasetCreating || !datasetName.trim()}
+                        className={`flex-shrink-0 text-sm font-semibold px-4 py-2.5 rounded-lg transition-colors ${
+                          !datasetCreating && datasetName.trim()
+                            ? 'bg-violet-600 hover:bg-violet-700 text-white cursor-pointer'
+                            : 'bg-gray-200 text-gray-400 cursor-not-allowed'
+                        }`}
+                      >
+                        {datasetCreating ? <Loader2 className="w-4 h-4 animate-spin" /> : 'Create Dataset'}
+                      </button>
+                    </div>
+                  </>
+                )}
+
+                {datasetError && <AEPErrorPanel error={datasetError} />}
               </div>
             )}
 

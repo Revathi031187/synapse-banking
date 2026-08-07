@@ -26,7 +26,18 @@ import CustomerSearchSelect from '../../components/CustomerSearchSelect';
 
 const API_BASE = getBankingApiBase();
 
-const AGENT_D_UI_KEY = 'banking-agent-d-v1';
+export const AGENT_D_UI_KEY = 'banking-agent-d-v1';
+
+// Every successful orchestrate call this tab session, appended (not overwritten) —
+// separate from persistedOrchestrate (which only remembers the latest, for UI resume).
+// Consumed by the Activation tab's "Create Dataset" push, which dedupes by timestamp.
+export const AGENT_D_SESSION_LOG_KEY = 'banking-agent-d-session-log-v1';
+
+export interface AgentDSessionLogEntry {
+  customerId: string;
+  timestamp: string; // ISO, stamped client-side the moment this orchestrate call succeeded
+  data: unknown; // Agent D's raw orchestrate output (the `data` field of the response)
+}
 
 // ── Next Visit Intelligence types ─────────────────────────────────────────────
 type DirectorResult = {
@@ -57,7 +68,7 @@ const CHANNEL_LABELS: Record<string, string> = {
 const CHANNEL_COLORS: Record<string, string> = {
   in_app: 'bg-violet-500', email: 'bg-blue-400', direct_mail: 'bg-teal-400', branch: 'bg-amber-400',
 };
-const DEFAULT_AGENT_D_UI = {
+export const DEFAULT_AGENT_D_UI = {
   mode: 'customer' as 'persona' | 'customer',
   personaId: '',
   customerId: '',
@@ -174,6 +185,7 @@ export default function BankingAgentD() {
   const queryClient = useQueryClient();
   const [ui, setUi] = useSessionStorageState(AGENT_D_UI_KEY, DEFAULT_AGENT_D_UI);
   const { mode, personaId, customerId, persistedOrchestrate } = ui;
+  const [, setSessionLog] = useSessionStorageState<AgentDSessionLogEntry[]>(AGENT_D_SESSION_LOG_KEY, []);
 
   const personasQuery = useQuery({
     queryKey: ['banking-personas'],
@@ -282,6 +294,10 @@ export default function BankingAgentD() {
       const cid = String(customerId).trim();
       if (cid) {
         setUi((prev) => ({ ...prev, persistedOrchestrate: { customerId: cid, response: payload } }));
+        setSessionLog((prev) => [
+          ...prev,
+          { customerId: cid, timestamp: new Date().toISOString(), data: payload?.data },
+        ]);
         queryClient.invalidateQueries({ queryKey: ['banking-agent-d-directives-b', cid] });
         queryClient.invalidateQueries({ queryKey: ['banking-agent-d-directives-b'] });
       }
