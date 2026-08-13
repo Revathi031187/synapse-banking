@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { CheckCircle2, Check, XCircle, AlertTriangle, Database, Loader2, Info } from 'lucide-react';
+import { CheckCircle2, Check, XCircle, AlertTriangle, Database, Loader2, Info, RotateCcw } from 'lucide-react';
 import { getBankingApiBase } from '../../utils/apiBase';
 import { useSessionStorageState } from '../../hooks/useSessionStorageState';
 import { AGENT_D_SESSION_LOG_KEY, type AgentDSessionLogEntry } from './BankingAgentD';
@@ -92,6 +92,14 @@ function loadCachedAEPCredentials(): Record<string, string> | null {
 function saveCachedAEPCredentials(values: Record<string, string>) {
   try {
     window.localStorage.setItem(AEP_CREDENTIALS_STORAGE_KEY, JSON.stringify(values));
+  } catch {
+    // Ignore storage errors (e.g. private browsing with storage disabled).
+  }
+}
+
+function clearCachedAEPCredentials() {
+  try {
+    window.localStorage.removeItem(AEP_CREDENTIALS_STORAGE_KEY);
   } catch {
     // Ignore storage errors (e.g. private browsing with storage disabled).
   }
@@ -452,6 +460,15 @@ export default function BankingActivation() {
     setStep('select');
   };
 
+  const handleResetAepConnection = () => {
+    clearCachedAEPCredentials();
+    setHasCachedAepCredentials(false);
+    setAepResult(null);
+    setAepError(null);
+    setFormValues({});
+    setStep('configure');
+  };
+
   const restart = () => {
     setStep('select');
     setSelectedKey(null);
@@ -632,7 +649,16 @@ export default function BankingActivation() {
               ))}
             </div>
 
-            <div className="flex justify-end">
+            <div className="flex justify-end gap-3">
+              {connectorKey === 'aep' && hasCachedAepCredentials && (
+                <button
+                  onClick={handleResetAepConnection}
+                  className="flex items-center gap-1.5 text-sm font-semibold px-5 py-2.5 rounded-lg border border-gray-300 text-gray-700 hover:bg-gray-50 transition-colors"
+                >
+                  <RotateCcw className="w-3.5 h-3.5" />
+                  Reset Connection
+                </button>
+              )}
               <button
                 onClick={goToConfigure}
                 disabled={!selectedConnector}

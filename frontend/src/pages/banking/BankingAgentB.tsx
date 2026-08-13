@@ -211,6 +211,7 @@ function mergeAgentBUi(saved: Partial<BankingAgentBUiState>, def: BankingAgentBU
     lastRunFactorWeights: null,
     // Always reset to the canonical default — ignore any old value in session storage
     topN: def.topN,
+    weightsAccordionOpen: def.weightsAccordionOpen,
     factorWeights: { ...BANKING_DEFAULTS_PERCENT, ...def.factorWeights, ...saved.factorWeights },
     factorLabels: { ...def.factorLabels, ...saved.factorLabels },
     expandedExplanations: saved.expandedExplanations ?? def.expandedExplanations,
@@ -230,7 +231,7 @@ const DEFAULT_BANKING_AGENT_B_UI: BankingAgentBUiState = {
   useAgentDDirectives: false,
   factorWeights: { ...BANKING_DEFAULTS_PERCENT },
   factorLabels: {},
-  weightsAccordionOpen: true,
+  weightsAccordionOpen: false,
   lastAiFactorRationales: {},
   lastRunFactorWeights: null,
   runWeightsAccordionOpen: false,

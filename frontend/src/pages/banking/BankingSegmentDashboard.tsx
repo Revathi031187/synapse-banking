@@ -204,7 +204,7 @@ function OfferDetailsModal({ seg, onClose }: { seg: Segment; onClose: () => void
       onClick={onClose}
     >
       <div
-        className="bg-white rounded-2xl shadow-2xl w-full max-w-lg max-h-[85vh] overflow-y-auto relative"
+        className="bg-white rounded-2xl shadow-2xl w-full max-w-lg max-h-[92vh] overflow-y-auto relative"
         onClick={e => e.stopPropagation()}
       >
         <div
@@ -214,72 +214,70 @@ function OfferDetailsModal({ seg, onClose }: { seg: Segment; onClose: () => void
 
         <button
           onClick={onClose}
-          className="absolute top-4 right-4 text-gray-400 hover:text-gray-700 hover:bg-gray-100 rounded-lg p-1.5 transition-colors"
+          className="absolute top-3.5 right-3.5 text-gray-400 hover:text-gray-700 hover:bg-gray-100 rounded-lg p-1.5 transition-colors"
           aria-label="Close"
         >
           <X className="w-5 h-5" />
         </button>
 
-        <div className="p-6">
+        <div className="p-5">
           <div
-            className="inline-flex items-center gap-1 text-white text-[9px] font-bold uppercase tracking-[0.7px] px-2.5 py-1 rounded-full mb-3"
+            className="inline-flex items-center gap-1 text-white text-[9px] font-bold uppercase tracking-[0.7px] px-2.5 py-1 rounded-full mb-2.5"
             style={{ background: seg.color }}
           >
             ★ Best Offer · {seg.name}
           </div>
 
-          <h3 className="text-[22px] font-extrabold text-gray-900 mb-2 leading-tight" style={{ letterSpacing: '-0.5px' }}>
+          <h3 className="text-[19px] font-extrabold text-gray-900 mb-1.5 leading-tight" style={{ letterSpacing: '-0.4px' }}>
             {seg.offer.headline}
           </h3>
-          <p className="text-[13px] text-gray-600 leading-relaxed mb-5">{seg.offer.sub}</p>
+          <p className="text-[12.5px] text-gray-600 leading-relaxed mb-3.5">{seg.offer.sub}</p>
 
           {/* Product card */}
           <div
-            className="rounded-xl p-4 mb-5"
+            className="rounded-xl p-3.5 mb-3.5"
             style={{ background: `rgba(${seg.rgb},0.05)`, border: `1px solid rgba(${seg.rgb},0.15)` }}
           >
             <p className="text-[9px] font-bold uppercase tracking-[0.5px] text-gray-400 mb-1">Featured Product</p>
-            <p className="text-[15px] font-bold text-gray-900 mb-0.5">{seg.offer.product}</p>
+            <p className="text-[14px] font-bold text-gray-900 mb-0.5">{seg.offer.product}</p>
             {matchedRec && (
               <>
-                <p className="text-[10.5px] uppercase tracking-[0.3px] text-gray-400 mb-1.5">{matchedRec.type}</p>
-                <p className="text-[12px] text-gray-600 leading-snug">{matchedRec.desc}</p>
+                <p className="text-[10px] uppercase tracking-[0.3px] text-gray-400 mb-1">{matchedRec.type}</p>
+                <p className="text-[11.5px] text-gray-600 leading-snug">{matchedRec.desc}</p>
               </>
             )}
           </div>
 
-          {/* Segment fit */}
-          <p className="text-[10px] font-bold uppercase tracking-[0.8px] text-gray-500 mb-2.5">Segment Fit</p>
-          <div className="grid grid-cols-2 gap-2.5 mb-5">
-            <div className="rounded-lg px-3 py-2.5 border border-gray-200">
-              <p className="text-[15px] font-extrabold text-gray-900 tabular-nums">{fmtBalance(seg.balanceRaw)}</p>
-              <p className="text-[9px] uppercase tracking-[0.4px] text-gray-500 mt-0.5">Avg Annual Balance</p>
-            </div>
-            <div className="rounded-lg px-3 py-2.5 border border-gray-200">
-              <p className="text-[15px] font-extrabold text-gray-900 tabular-nums">{seg.credit}</p>
-              <p className="text-[9px] uppercase tracking-[0.4px] text-gray-500 mt-0.5">Avg Credit Score</p>
-            </div>
-            <div className="rounded-lg px-3 py-2.5 border border-gray-200">
-              <p className="text-[15px] font-extrabold text-gray-900 tabular-nums">{seg.income}</p>
-              <p className="text-[9px] uppercase tracking-[0.4px] text-gray-500 mt-0.5">Avg Income</p>
-            </div>
-            <div className="rounded-lg px-3 py-2.5 border border-gray-200">
-              <p className="text-[15px] font-extrabold text-gray-900 tabular-nums">{fmtIntent(seg.intentRaw)}</p>
-              <p className="text-[9px] uppercase tracking-[0.4px] text-gray-500 mt-0.5">Intent Score</p>
-            </div>
-          </div>
-
-          <div className="flex items-center justify-between mb-5">
-            <span className="text-[11px] text-gray-500">Portfolio health</span>
+          {/* Segment fit — header row carries the portfolio-health badge to save a row */}
+          <div className="flex items-center justify-between mb-2">
+            <p className="text-[10px] font-bold uppercase tracking-[0.8px] text-gray-500">Segment Fit</p>
             <span
-              className="text-[9px] font-bold px-2 py-1 rounded-full whitespace-nowrap"
+              className="text-[9px] font-bold px-2 py-0.5 rounded-full whitespace-nowrap"
               style={{ background: h.bg.includes('rgba(255') ? '#F1F5F9' : h.bg, color: h.bg.includes('rgba(255') ? '#64748B' : h.text }}
             >
               {h.label}
             </span>
           </div>
+          <div className="grid grid-cols-4 gap-2 mb-3.5">
+            <div className="rounded-lg px-2 py-2 border border-gray-200 text-center">
+              <p className="text-[13px] font-extrabold text-gray-900 tabular-nums">{fmtBalance(seg.balanceRaw)}</p>
+              <p className="text-[8px] uppercase tracking-[0.3px] text-gray-500 mt-0.5 leading-tight">Avg Balance</p>
+            </div>
+            <div className="rounded-lg px-2 py-2 border border-gray-200 text-center">
+              <p className="text-[13px] font-extrabold text-gray-900 tabular-nums">{seg.credit}</p>
+              <p className="text-[8px] uppercase tracking-[0.3px] text-gray-500 mt-0.5 leading-tight">Credit Score</p>
+            </div>
+            <div className="rounded-lg px-2 py-2 border border-gray-200 text-center">
+              <p className="text-[13px] font-extrabold text-gray-900 tabular-nums">{seg.income}</p>
+              <p className="text-[8px] uppercase tracking-[0.3px] text-gray-500 mt-0.5 leading-tight">Avg Income</p>
+            </div>
+            <div className="rounded-lg px-2 py-2 border border-gray-200 text-center">
+              <p className="text-[13px] font-extrabold text-gray-900 tabular-nums">{fmtIntent(seg.intentRaw)}</p>
+              <p className="text-[8px] uppercase tracking-[0.3px] text-gray-500 mt-0.5 leading-tight">Intent Score</p>
+            </div>
+          </div>
 
-          <p className="text-[11.5px] text-gray-500 leading-relaxed mb-6">{seg.desc}</p>
+          <p className="text-[11px] text-gray-500 leading-relaxed mb-4">{seg.desc}</p>
 
           <button
             onClick={onClose}

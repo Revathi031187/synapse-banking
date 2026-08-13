@@ -75,11 +75,15 @@ class AdobeAEPError(Exception):
 
 
 def _headers(access_token: str, client_id: str, org_id: str, sandbox: str) -> Dict[str, str]:
+    # Credentials often arrive with stray leading/trailing whitespace (e.g. a
+    # newline picked up when pasting the access token into the textarea) —
+    # Adobe IMS rejects a Bearer token with trailing whitespace as invalid,
+    # so strip every field before it goes on the wire.
     return {
-        "Authorization": f"Bearer {access_token}",
-        "x-api-key": client_id,
-        "x-gw-ims-org-id": org_id,
-        "x-sandbox-name": sandbox,
+        "Authorization": f"Bearer {access_token.strip()}",
+        "x-api-key": client_id.strip(),
+        "x-gw-ims-org-id": org_id.strip(),
+        "x-sandbox-name": sandbox.strip(),
         "Content-Type": "application/json",
     }
 
@@ -171,6 +175,7 @@ def validate_and_activate(
     Raises AdobeAEPError (with full diagnostic detail) on any failure.
     """
     label = "F&M Bank" if industry == "banking" else "Academy Sports"
+    tenant_id = tenant_id.strip()
     headers = _headers(access_token, client_id, org_id, sandbox)
 
     # Step 1 — validate credentials with a cheap, read-only call
