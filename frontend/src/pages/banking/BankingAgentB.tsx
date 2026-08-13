@@ -23,6 +23,7 @@ import {
 } from 'lucide-react';
 import { getBankingApiBase } from '../../utils/apiBase';
 import { useSessionStorageState } from '../../hooks/useSessionStorageState';
+import CustomerSearchSelect from '../../components/CustomerSearchSelect';
 
 /** Banking 12-factor groups — mirrors Academy “Product fit / Persona / Social / Freshness” layout */
 const FACTOR_WEIGHT_GROUPS: {
@@ -210,6 +211,7 @@ function mergeAgentBUi(saved: Partial<BankingAgentBUiState>, def: BankingAgentBU
     lastRunFactorWeights: null,
     // Always reset to the canonical default — ignore any old value in session storage
     topN: def.topN,
+    weightsAccordionOpen: def.weightsAccordionOpen,
     factorWeights: { ...BANKING_DEFAULTS_PERCENT, ...def.factorWeights, ...saved.factorWeights },
     factorLabels: { ...def.factorLabels, ...saved.factorLabels },
     expandedExplanations: saved.expandedExplanations ?? def.expandedExplanations,
@@ -229,7 +231,7 @@ const DEFAULT_BANKING_AGENT_B_UI: BankingAgentBUiState = {
   useAgentDDirectives: false,
   factorWeights: { ...BANKING_DEFAULTS_PERCENT },
   factorLabels: {},
-  weightsAccordionOpen: true,
+  weightsAccordionOpen: false,
   lastAiFactorRationales: {},
   lastRunFactorWeights: null,
   runWeightsAccordionOpen: false,
@@ -919,18 +921,14 @@ export default function BankingAgentB() {
             ) : (
               <div className="flex flex-col">
                 <label className="block text-sm font-semibold text-gray-800 mb-2">Select Customer</label>
-                <select
+                <CustomerSearchSelect
+                  customers={customersQuery.data?.data?.customers ?? []}
                   value={customerId}
-                  onChange={(e) => setUi((p) => ({ ...p, customerId: e.target.value }))}
-                  className="w-full px-4 py-3 border border-gray-300 rounded-xl bg-white focus:ring-2 focus:ring-blue-500"
-                >
-                  <option value="">Choose a customer…</option>
-                  {customersQuery.data?.data?.customers?.map((customer: { customer_id: string; customer_name: string }) => (
-                    <option key={customer.customer_id} value={customer.customer_id}>
-                      {customer.customer_name} ({customer.customer_id})
-                    </option>
-                  ))}
-                </select>
+                  onChange={(id) => setUi((p) => ({ ...p, customerId: id }))}
+                  loading={customersQuery.isLoading}
+                  emptyListLabel="No customers — run Segmentation first"
+                  placeholder="Search by name or customer ID…"
+                />
                 {customersQuery.isError && (
                   <p className="text-sm text-red-600 mt-2">
                     Could not load customers ({customersQuery.error?.message ?? 'network error'}).

@@ -3474,6 +3474,7 @@ async def get_banking_customers(
 ):
     """Get paginated list of banking customers. Use cluster_id to list customers in one persona/segment."""
     try:
+        _sync_banking_cluster_column()
         customers_data = banking_agent_a.get_all_customers(
             skip=skip,
             limit=limit,
@@ -4480,6 +4481,133 @@ async def banking_agent_d_orchestrate(body: AgentDOrchestrateBody):
         logger.error(f"Agent D orchestrate: {e}")
         logger.error(traceback.format_exc())
         raise HTTPException(status_code=500, detail=str(e))
+
+
+class AgentDResultEntry(BaseModel):
+    customerId: str
+    timestamp: str  # ISO, stamped client-side when this orchestrate call succeeded
+    data: Dict[str, Any]
+
+
+class AEPCreateDatasetBody(BaseModel):
+    datasetName: str
+    schemaName: str
+    clientId: str
+    orgId: str
+    accessToken: str
+    sandbox: str = "prod"
+    tenantId: str
+    agentDResults: List[AgentDResultEntry]
+
+
+def _agent_d_result_to_aep_fields(data: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+    """Extract persona/recommendedProductId/offerName from one Agent D orchestrate
+    result. Returns None if the result is missing persona or a recommended product."""
+    persona = data.get("persona_name")
+    recommended_product_id = ((data.get("agent_c_snapshot") or {}).get("primary_product_id"))
+    if not persona or not recommended_product_id:
+        return None
+
+    # offer_name is "" when Agent C didn't select an explicit offer (segment-only
+    # recommendation) — soft default, same tolerance Agent D itself uses, so those
+    # results still get ingested rather than being skipped for lacking a campaign name.
+    offer_name = ((data.get("supervisor_view") or {}).get("agent_c_primary_offer") or {}).get("offer_name") or ""
+
+    return {
+        "nbaPersona": persona,
+        "recommendedProductId": str(recommended_product_id),
+        "offerName": offer_name,
+    }
+
+
+@app.post("/api/banking/aep/create-dataset")
+async def banking_aep_create_dataset(body: AEPCreateDatasetBody):
+    """
+    Activation tab — "Create Dataset" action. Creates (or reuses) a dataset bound
+    to the schema already provisioned by /activation/aep/connect, then ingests every
+    still-unpushed Agent D orchestrate result from this browser session as one batch
+    (persona/recommended product/offer score, dated by when each was generated —
+    dedup against re-pushing is handled client-side via a timestamp watermark).
+    Mirrors the connect endpoint's error shape (success=False + full Adobe error
+    payload) so the frontend can reuse the same error panel.
+    """
+    from utils.adobe_aep_client import create_dataset, ingest_records, AdobeAEPError
+
+    if not body.agentDResults:
+        raise HTTPException(status_code=400, detail="No new Agent D results to push — run Agent D for a customer first.")
+
+    # The field group (utils/adobe_aep_client.py:_field_group_body) declares these
+    # fields nested under the tenant namespace "_{tenant_id}", not at the top level —
+    # XDM custom fields always live under that namespace.
+    tenant_key = f"_{body.tenantId.strip()}"
+
+    records = []
+    skipped = 0
+    for entry in body.agentDResults:
+        fields = _agent_d_result_to_aep_fields(entry.data)
+        if fields is None:
+            skipped += 1
+            continue
+        fields["lastActivationDate"] = entry.timestamp
+        records.append({tenant_key: fields, "_customerId": entry.customerId})
+
+    if not records:
+        raise HTTPException(
+            status_code=400,
+            detail=f"All {skipped} Agent D result(s) were missing persona or a recommended product — re-run Agent D.",
+        )
+
+    # _customerId is bookkeeping for the response only, not part of the XDM record —
+    # popping it here also strips it from `records` before they're sent to AEP.
+    display_records = [{"customerId": r.pop("_customerId"), **r[tenant_key]} for r in records]
+
+    try:
+        created = create_dataset(
+            client_id=body.clientId,
+            org_id=body.orgId,
+            access_token=body.accessToken,
+            sandbox=(body.sandbox or "prod").strip(),
+            schema_name=body.schemaName,
+            dataset_name=body.datasetName,
+        )
+        batch = ingest_records(
+            client_id=body.clientId,
+            org_id=body.orgId,
+            access_token=body.accessToken,
+            sandbox=(body.sandbox or "prod").strip(),
+            dataset_id=created["datasetId"],
+            records=records,
+        )
+    except AdobeAEPError as e:
+        logger.warning(f"[Activation] AEP create-dataset failed at step={e.step} status={e.status}: {e.detail}")
+        return {
+            "success": False,
+            "error": {
+                "step": e.step,
+                "status": e.status,
+                "title": e.title,
+                "detail": e.detail,
+                "type": e.type,
+                "registryRequestId": e.registry_request_id,
+                "subErrors": e.sub_errors,
+                "timestamp": e.timestamp,
+                "rawResponse": e.raw_response,
+            },
+        }
+    except Exception as e:
+        logger.error(f"[Activation] AEP create-dataset unexpected error: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail=f"Dataset creation failed: {e}")
+
+    return {
+        "success": True,
+        "datasetId": created["datasetId"],
+        "datasetName": body.datasetName,
+        "schemaId": created["schemaId"],
+        "pushedCount": len(records),
+        "skippedCount": skipped,
+        "records": display_records,
+        "batch": batch,
+    }
 
 
 class BankingAgentDClickBody(BaseModel):
@@ -5848,6 +5976,16 @@ class RephraseOfferRequest(BaseModel):
     current_body: str
     tone: str = "professional"   # professional | warm | urgent
 
+class AEPActivationConnectRequest(BaseModel):
+    client_id: str
+    client_secret: Optional[str] = None
+    org_id: str
+    access_token: str
+    sandbox: str = "prod"
+    tenant_id: str
+    industry: str = "banking"
+    schema_name: Optional[str] = None
+
 
 @app.post("/api/banking/agent_c/send_offer_email")
 async def send_banking_offer_email(req: SendOfferEmailRequest):
@@ -5969,6 +6107,50 @@ async def rephrase_banking_offer_content(req: RephraseOfferRequest):
     except Exception as e:
         logger.error(f"[API] rephrase_offer_content error: {e}", exc_info=True)
         raise HTTPException(status_code=500, detail=f"Rephrase failed: {e}")
+
+
+@app.post("/api/banking/activation/aep/connect")
+async def banking_activation_aep_connect(req: AEPActivationConnectRequest):
+    """
+    Activation tab — Adobe Experience Platform connector.
+    Validates the supplied credentials against AEP's Schema Registry and
+    provisions a field group + schema representing this platform's
+    personalization attributes. Returns success=False with the full Adobe
+    error payload (rather than raising) so the frontend can render the exact
+    failure — this is an expected/recoverable outcome, not a server bug.
+    """
+    from utils.adobe_aep_client import validate_and_activate, AdobeAEPError
+
+    try:
+        connection = validate_and_activate(
+            client_id=req.client_id,
+            org_id=req.org_id,
+            access_token=req.access_token,
+            sandbox=(req.sandbox or "prod").strip(),
+            tenant_id=req.tenant_id,
+            industry=req.industry,
+            schema_name=req.schema_name,
+        )
+        return {"success": True, "connection": connection}
+    except AdobeAEPError as e:
+        logger.warning(f"[Activation] AEP connect failed at step={e.step} status={e.status}: {e.detail}")
+        return {
+            "success": False,
+            "error": {
+                "step": e.step,
+                "status": e.status,
+                "title": e.title,
+                "detail": e.detail,
+                "type": e.type,
+                "registryRequestId": e.registry_request_id,
+                "subErrors": e.sub_errors,
+                "timestamp": e.timestamp,
+                "rawResponse": e.raw_response,
+            },
+        }
+    except Exception as e:
+        logger.error(f"[Activation] AEP connect unexpected error: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail=f"Activation failed: {e}")
 
 
 # ═══════════════════════════════════════════════════════════════════════════

@@ -22,10 +22,22 @@ import {
 } from 'lucide-react';
 import { getBankingApiBase } from '../../utils/apiBase';
 import { useSessionStorageState } from '../../hooks/useSessionStorageState';
+import CustomerSearchSelect from '../../components/CustomerSearchSelect';
 
 const API_BASE = getBankingApiBase();
 
-const AGENT_D_UI_KEY = 'banking-agent-d-v1';
+export const AGENT_D_UI_KEY = 'banking-agent-d-v1';
+
+// Every successful orchestrate call this tab session, appended (not overwritten) —
+// separate from persistedOrchestrate (which only remembers the latest, for UI resume).
+// Consumed by the Activation tab's "Create Dataset" push, which dedupes by timestamp.
+export const AGENT_D_SESSION_LOG_KEY = 'banking-agent-d-session-log-v1';
+
+export interface AgentDSessionLogEntry {
+  customerId: string;
+  timestamp: string; // ISO, stamped client-side the moment this orchestrate call succeeded
+  data: unknown; // Agent D's raw orchestrate output (the `data` field of the response)
+}
 
 // ── Next Visit Intelligence types ─────────────────────────────────────────────
 type DirectorResult = {
@@ -56,7 +68,7 @@ const CHANNEL_LABELS: Record<string, string> = {
 const CHANNEL_COLORS: Record<string, string> = {
   in_app: 'bg-violet-500', email: 'bg-blue-400', direct_mail: 'bg-teal-400', branch: 'bg-amber-400',
 };
-const DEFAULT_AGENT_D_UI = {
+export const DEFAULT_AGENT_D_UI = {
   mode: 'customer' as 'persona' | 'customer',
   personaId: '',
   customerId: '',
@@ -173,6 +185,7 @@ export default function BankingAgentD() {
   const queryClient = useQueryClient();
   const [ui, setUi] = useSessionStorageState(AGENT_D_UI_KEY, DEFAULT_AGENT_D_UI);
   const { mode, personaId, customerId, persistedOrchestrate } = ui;
+  const [, setSessionLog] = useSessionStorageState<AgentDSessionLogEntry[]>(AGENT_D_SESSION_LOG_KEY, []);
 
   const personasQuery = useQuery({
     queryKey: ['banking-personas'],
@@ -281,6 +294,10 @@ export default function BankingAgentD() {
       const cid = String(customerId).trim();
       if (cid) {
         setUi((prev) => ({ ...prev, persistedOrchestrate: { customerId: cid, response: payload } }));
+        setSessionLog((prev) => [
+          ...prev,
+          { customerId: cid, timestamp: new Date().toISOString(), data: payload?.data },
+        ]);
         queryClient.invalidateQueries({ queryKey: ['banking-agent-d-directives-b', cid] });
         queryClient.invalidateQueries({ queryKey: ['banking-agent-d-directives-b'] });
       }
@@ -482,27 +499,16 @@ export default function BankingAgentD() {
               </div>
               <div>
                 <label className="block text-sm font-medium text-slate-700 mb-1">Customer in segment</label>
-                <select
-                  className="w-full border border-slate-300 rounded-xl px-3 py-2.5 bg-white"
+                <CustomerSearchSelect
+                  customers={segmentCustomers}
                   value={customerId}
-                  disabled={segmentCustomersQuery.isLoading}
-                  onChange={(e) => {
-                    setUi((prev) => ({ ...prev, customerId: e.target.value, persistedOrchestrate: null }));
+                  loading={segmentCustomersQuery.isLoading}
+                  emptyListLabel="No customers in segment (run Segmentation)"
+                  onChange={(id) => {
+                    setUi((prev) => ({ ...prev, customerId: id, persistedOrchestrate: null }));
                     orchestrateMutation.reset();
                   }}
-                >
-                  {segmentCustomersQuery.isLoading ? (
-                    <option value="">Loading customers in segment…</option>
-                  ) : segmentCustomers.length === 0 ? (
-                    <option value="">No customers in segment (run Segmentation)</option>
-                  ) : (
-                    segmentCustomers.map((c) => (
-                      <option key={c.customer_id} value={String(c.customer_id)}>
-                        {c.customer_name || c.customer_id} ({c.customer_id})
-                      </option>
-                    ))
-                  )}
-                </select>
+                />
               </div>
             </div>
           )}
@@ -510,29 +516,17 @@ export default function BankingAgentD() {
           {mode === 'customer' && (
             <div>
               <label className="block text-sm font-medium text-slate-700 mb-1">Customer</label>
-              <select
-                className="w-full border border-slate-300 rounded-xl px-3 py-2.5 bg-white max-w-xl"
+              <CustomerSearchSelect
+                className="max-w-xl"
+                customers={allCustomers}
                 value={customerId}
-                onChange={(e) => {
-                  setUi((prev) => ({ ...prev, customerId: e.target.value, persistedOrchestrate: null }));
+                loading={customersQuery.isLoading}
+                emptyListLabel="No customers — run Segmentation first"
+                onChange={(id) => {
+                  setUi((prev) => ({ ...prev, customerId: id, persistedOrchestrate: null }));
                   orchestrateMutation.reset();
                 }}
-              >
-                {customersQuery.isLoading ? (
-                  <option value="">Loading customers…</option>
-                ) : allCustomers.length === 0 ? (
-                  <option value="">No customers — run Segmentation first</option>
-                ) : (
-                  <>
-                    <option value="">Select customer…</option>
-                    {allCustomers.map((c) => (
-                      <option key={c.customer_id} value={String(c.customer_id)}>
-                        {c.customer_name || c.customer_id} ({c.customer_id})
-                      </option>
-                    ))}
-                  </>
-                )}
-              </select>
+              />
             </div>
           )}
 

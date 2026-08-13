@@ -1,4 +1,5 @@
 import React, { useState, useEffect, useRef } from 'react';
+import { X } from 'lucide-react';
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 interface Rec { rank: number; name: string; type: string; desc: string }
@@ -186,9 +187,115 @@ function AnimatedMetric({
   );
 }
 
+// ─── Offer Details Modal ───────────────────────────────────────────────────────
+function OfferDetailsModal({ seg, onClose }: { seg: Segment; onClose: () => void }) {
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape') onClose(); };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [onClose]);
+
+  const h = HEALTH[seg.health];
+  const matchedRec = seg.recs.find(r => r.name === seg.offer.product);
+
+  return (
+    <div
+      className="fixed inset-0 bg-black bg-opacity-60 z-50 flex items-center justify-center p-4 backdrop-blur-sm animate-fadeIn"
+      onClick={onClose}
+    >
+      <div
+        className="bg-white rounded-2xl shadow-2xl w-full max-w-lg max-h-[92vh] overflow-y-auto relative"
+        onClick={e => e.stopPropagation()}
+      >
+        <div
+          className="absolute top-0 left-0 right-0 h-[3px]"
+          style={{ background: seg.color }}
+        />
+
+        <button
+          onClick={onClose}
+          className="absolute top-3.5 right-3.5 text-gray-400 hover:text-gray-700 hover:bg-gray-100 rounded-lg p-1.5 transition-colors"
+          aria-label="Close"
+        >
+          <X className="w-5 h-5" />
+        </button>
+
+        <div className="p-5">
+          <div
+            className="inline-flex items-center gap-1 text-white text-[9px] font-bold uppercase tracking-[0.7px] px-2.5 py-1 rounded-full mb-2.5"
+            style={{ background: seg.color }}
+          >
+            ★ Best Offer · {seg.name}
+          </div>
+
+          <h3 className="text-[19px] font-extrabold text-gray-900 mb-1.5 leading-tight" style={{ letterSpacing: '-0.4px' }}>
+            {seg.offer.headline}
+          </h3>
+          <p className="text-[12.5px] text-gray-600 leading-relaxed mb-3.5">{seg.offer.sub}</p>
+
+          {/* Product card */}
+          <div
+            className="rounded-xl p-3.5 mb-3.5"
+            style={{ background: `rgba(${seg.rgb},0.05)`, border: `1px solid rgba(${seg.rgb},0.15)` }}
+          >
+            <p className="text-[9px] font-bold uppercase tracking-[0.5px] text-gray-400 mb-1">Featured Product</p>
+            <p className="text-[14px] font-bold text-gray-900 mb-0.5">{seg.offer.product}</p>
+            {matchedRec && (
+              <>
+                <p className="text-[10px] uppercase tracking-[0.3px] text-gray-400 mb-1">{matchedRec.type}</p>
+                <p className="text-[11.5px] text-gray-600 leading-snug">{matchedRec.desc}</p>
+              </>
+            )}
+          </div>
+
+          {/* Segment fit — header row carries the portfolio-health badge to save a row */}
+          <div className="flex items-center justify-between mb-2">
+            <p className="text-[10px] font-bold uppercase tracking-[0.8px] text-gray-500">Segment Fit</p>
+            <span
+              className="text-[9px] font-bold px-2 py-0.5 rounded-full whitespace-nowrap"
+              style={{ background: h.bg.includes('rgba(255') ? '#F1F5F9' : h.bg, color: h.bg.includes('rgba(255') ? '#64748B' : h.text }}
+            >
+              {h.label}
+            </span>
+          </div>
+          <div className="grid grid-cols-4 gap-2 mb-3.5">
+            <div className="rounded-lg px-2 py-2 border border-gray-200 text-center">
+              <p className="text-[13px] font-extrabold text-gray-900 tabular-nums">{fmtBalance(seg.balanceRaw)}</p>
+              <p className="text-[8px] uppercase tracking-[0.3px] text-gray-500 mt-0.5 leading-tight">Avg Balance</p>
+            </div>
+            <div className="rounded-lg px-2 py-2 border border-gray-200 text-center">
+              <p className="text-[13px] font-extrabold text-gray-900 tabular-nums">{seg.credit}</p>
+              <p className="text-[8px] uppercase tracking-[0.3px] text-gray-500 mt-0.5 leading-tight">Credit Score</p>
+            </div>
+            <div className="rounded-lg px-2 py-2 border border-gray-200 text-center">
+              <p className="text-[13px] font-extrabold text-gray-900 tabular-nums">{seg.income}</p>
+              <p className="text-[8px] uppercase tracking-[0.3px] text-gray-500 mt-0.5 leading-tight">Avg Income</p>
+            </div>
+            <div className="rounded-lg px-2 py-2 border border-gray-200 text-center">
+              <p className="text-[13px] font-extrabold text-gray-900 tabular-nums">{fmtIntent(seg.intentRaw)}</p>
+              <p className="text-[8px] uppercase tracking-[0.3px] text-gray-500 mt-0.5 leading-tight">Intent Score</p>
+            </div>
+          </div>
+
+          <p className="text-[11px] text-gray-500 leading-relaxed mb-4">{seg.desc}</p>
+
+          <button
+            onClick={onClose}
+            className="w-full text-white text-[13px] font-bold px-4 py-2.5 rounded-lg transition-all hover:opacity-90"
+            style={{ background: seg.color }}
+          >
+            Close
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 // ─── Component ────────────────────────────────────────────────────────────────
 export default function BankingSegmentDashboard() {
   const [activeIdx, setActiveIdx] = useState(0);
+  const [showOfferModal, setShowOfferModal] = useState(false);
   const seg = SEGMENTS[activeIdx];
 
   return (
@@ -361,6 +468,7 @@ export default function BankingSegmentDashboard() {
               <p className="text-[12px] text-gray-500 max-w-[520px] leading-relaxed mb-4">{seg.offer.sub}</p>
               <div className="flex items-center gap-2.5">
                 <button
+                  onClick={() => setShowOfferModal(true)}
                   className="text-white text-[12px] font-bold px-4 py-2 rounded-lg transition-all hover:opacity-90 hover:-translate-y-px active:translate-y-0"
                   style={{ background: seg.color }}
                 >
@@ -375,6 +483,10 @@ export default function BankingSegmentDashboard() {
 
         </div>
       </main>
+
+      {showOfferModal && (
+        <OfferDetailsModal seg={seg} onClose={() => setShowOfferModal(false)} />
+      )}
 
     </div>
   );
