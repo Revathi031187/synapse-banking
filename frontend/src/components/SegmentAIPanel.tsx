@@ -28,6 +28,13 @@ interface TableData {
   rows: (string | number)[][];
 }
 
+interface TokenUsage {
+  prompt_tokens: number;
+  completion_tokens: number;
+  total_tokens: number;
+  calls?: number;
+}
+
 interface ChatResponse {
   success: boolean;
   narrative: string;
@@ -38,6 +45,7 @@ interface ChatResponse {
   sql_error?: string | null;
   personas_registered?: boolean;
   error?: string;
+  token_usage?: TokenUsage | null;
 }
 
 interface ChatEntry {
@@ -718,6 +726,11 @@ function ChatMessage({
                 <p className="mt-2.5 text-[10.5px] text-slate-400 flex items-center gap-1.5">
                   <span className="inline-block w-1.5 h-1.5 rounded-full bg-amber-400 flex-shrink-0" />
                   AI-generated summary — verify values in the table below.
+                </p>
+              )}
+              {!!ans.token_usage?.total_tokens && (
+                <p className="mt-2 text-[10px] text-slate-300">
+                  {ans.token_usage.total_tokens.toLocaleString()} Tokens were consumed for this reply
                 </p>
               )}
             </div>

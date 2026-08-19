@@ -226,28 +226,59 @@ def build_schema_context() -> str:
     d = _meridian_dir()
     lines = ["You have access to the following DuckDB tables (loaded from Meridian Bank CSVs):\n"]
 
-    # segment_assignments — always available (heuristic view, no Agent A needed)
-    lines.append("VIEW: segment_assignments  ← USE THIS for all customer-level segment queries when Agent A has not run")
-    lines.append("  Description: Maps every customer_id to one of the 5 Meridian Bank segments using customer attributes. Always available.")
-    lines.append("  Columns: customer_id, segment_name")
-    lines.append("  segment_name values: 'Retiree Depositor', 'Wealth Accumulator', 'Everyday Essential', 'Digital Trendsetter', 'At-Risk Saver'")
-    lines.append("  JOIN: customers c JOIN segment_assignments sa ON c.customer_id = sa.customer_id")
-    lines.append("  JOIN: transactions t JOIN segment_assignments sa ON t.customer_id = sa.customer_id")
-    lines.append("")
-
-    # Persona tables (only present after Agent A has run)
     if _PERSONAS_REGISTERED:
-        lines.append("TABLE: persona_assignments  ← USE THIS instead of segment_assignments when Agent A has run (more accurate)")
-        lines.append("  Description: Customer-to-persona mapping from Agent A K-Prototypes clustering")
+        # Real Agent A output exists — this IS the current, correct segmentation.
+        # Put it first and make the static tables' demoted status impossible to miss.
+        # List the ACTUAL live persona names (fresh from THIS session's Agent A run,
+        # renamed by an LLM every run) so the model copies them literally instead of
+        # substituting a memorized example name (e.g. "At-Risk Saver") that isn't
+        # necessarily what this run's cluster is actually called.
+        _live_names: List[str] = []
+        try:
+            _con = _get_con()
+            _live_names = [
+                r[0] for r in _con.execute(
+                    "SELECT DISTINCT persona_name FROM persona_stats ORDER BY persona_name"
+                ).fetchall()
+            ]
+        except Exception as _e:
+            logger.warning("Could not fetch live persona names for schema context: %s", _e)
+        _names_line = (
+            ("  ACTUAL current persona_name values in this run — copy EXACTLY, do not substitute a similar-sounding name from memory: "
+             + ", ".join(f"'{n}'" for n in _live_names))
+            if _live_names else ""
+        )
+        lines.append("TABLE: persona_assignments  ← THE REAL, CURRENT SEGMENTS. Use this for every segment-level question.")
+        lines.append("  Description: Customer-to-persona mapping from Agent A's live K-Prototypes clustering — these are the actual segments marketing is targeting right now.")
         lines.append("  Columns: customer_id, cluster_id, persona_name")
+        if _names_line:
+            lines.append(_names_line)
         lines.append("")
-        lines.append("TABLE: persona_stats")
-        lines.append("  Description: Pre-computed stats per persona — use for segment-level questions")
+        lines.append("TABLE: persona_stats  ← pre-computed real stats per REAL persona. Prefer this over joining customers for segment-level metrics.")
+        lines.append("  Description: One row per real persona — customer_count, churn, CLV, income, credit score, digital engagement, deposits, all computed from the live data.")
         lines.append("  Columns: persona_name, customer_count, avg_churn_prob, avg_clv, avg_income, avg_credit_score, avg_digital_engagement, avg_deposits")
+        if _names_line:
+            lines.append(_names_line)
+        lines.append("")
+        lines.append("VIEW: segment_assignments  ← SUPERSEDED. Do NOT use — persona_assignments above has the real, current segments now.")
+        lines.append("  (Only exists as a placeholder for when Agent A has never been run. It is not the case here — ignore it.)")
+        lines.append("")
+    else:
+        lines.append("VIEW: segment_assignments  ← USE THIS for all customer-level segment queries (Agent A has not been run yet in this session)")
+        lines.append("  Description: Maps every customer_id to one of 5 placeholder Meridian Bank segments using customer attributes, so segment questions are still answerable before Agent A runs.")
+        lines.append("  Columns: customer_id, segment_name")
+        lines.append("  segment_name values: 'Retiree Depositor', 'Wealth Accumulator', 'Everyday Essential', 'Digital Trendsetter', 'At-Risk Saver'")
+        lines.append("  JOIN: customers c JOIN segment_assignments sa ON c.customer_id = sa.customer_id")
+        lines.append("  JOIN: transactions t JOIN segment_assignments sa ON t.customer_id = sa.customer_id")
+        lines.append("  NOTE: if the user asks, mention in passing that these are placeholder segments pending Agent A — do not present them as final without that caveat when the question is explicitly about 'the segments' as a concept.")
         lines.append("")
 
     descriptions = {
-        "segment_profiles":    "Pre-defined Meridian Bank segments — 5 rows, one per segment. Use this for ANY segment-level question (intent score, avg balance, health status, top products). Available BEFORE Agent A runs.",
+        "segment_profiles":    (
+            "SUPERSEDED placeholder — do NOT use for segment-level questions now that persona_assignments/persona_stats exist (real Agent A data). Ignore this table entirely while personas are registered."
+            if _PERSONAS_REGISTERED else
+            "Placeholder Meridian Bank segments — 5 rows, one per segment. Use for segment-level questions ONLY before Agent A has run."
+        ),
         "customers":           "Core customer profiles — 5,000 rows, one per customer",
         "products":            "Product catalogue — credit cards, loans, savings, mortgages",
         "transactions":        "Individual transaction ledger — debit/credit/transfer events",
@@ -277,32 +308,44 @@ def build_schema_context() -> str:
         lines.append(f"  Columns: {', '.join(cols)}")
         lines.append("")
 
-    persona_hint = (
-        "  - persona_assignments.customer_id -> customers.customer_id (JOIN to get persona_name per customer)\n"
-        "  - persona_stats has one row per persona — use directly for Agent-A-derived segment comparisons\n"
-        "  - PREFER persona_name from persona_assignments over segment_assignments when Agent A has run\n"
-    ) if _PERSONAS_REGISTERED else (
-        "  - Agent A has NOT been run yet — use segment_assignments (always available) for customer-level segment queries\n"
-        "  - NEVER use customers.life_stage as a substitute for segment — life_stage values (Family/Student/etc.) are NOT the Meridian segments\n"
-    )
+    if _PERSONAS_REGISTERED:
+        persona_hint = (
+            "  - persona_assignments.customer_id -> customers.customer_id (JOIN to get persona_name per customer)\n"
+            "  - persona_stats has one row per persona — use directly for Agent-A-derived segment comparisons\n"
+            "  - persona_assignments/persona_stats are the ONLY segment source to use now — segment_assignments and segment_profiles are superseded, do not query them\n"
+        )
+        segment_block = (
+            "PERSONA_ASSIGNMENTS / PERSONA_STATS (Agent A has run — these are the REAL segments, use them exclusively):\n"
+            "  - EXAMPLE: SELECT persona_name, customer_count, avg_churn_prob, avg_clv FROM persona_stats ORDER BY avg_churn_prob DESC\n"
+            "  - EXAMPLE: SELECT pa.persona_name, COUNT(*) AS customers FROM customers c JOIN persona_assignments pa ON c.customer_id = pa.customer_id GROUP BY pa.persona_name\n"
+            "  - EXAMPLE: SELECT pa.persona_name, ROUND(SUM(t.amount),0) AS total_volume FROM transactions t JOIN persona_assignments pa ON t.customer_id = pa.customer_id GROUP BY pa.persona_name ORDER BY total_volume DESC\n"
+        )
+    else:
+        persona_hint = (
+            "  - Agent A has NOT been run yet — use segment_assignments (always available) for customer-level segment queries\n"
+            "  - NEVER use customers.life_stage as a substitute for segment — life_stage values (Family/Student/etc.) are NOT the Meridian segments\n"
+        )
+        segment_block = (
+            "SEGMENT_ASSIGNMENTS VIEW (placeholder — Agent A has not run yet):\n"
+            "  - segment_assignments maps every customer_id → segment_name (one of 5 placeholder Meridian segments)\n"
+            "  - segment_name values: 'Retiree Depositor', 'Wealth Accumulator', 'Everyday Essential', 'Digital Trendsetter', 'At-Risk Saver'\n"
+            "  - Use segment_assignments for ALL per-customer segment queries (transaction volume by segment, churn by segment, etc.)\n"
+            "  - JOIN: customers c JOIN segment_assignments sa ON c.customer_id = sa.customer_id\n"
+            "  - JOIN: transactions t JOIN segment_assignments sa ON t.customer_id = sa.customer_id\n"
+            "  - EXAMPLE: SELECT sa.segment_name, COUNT(*) AS customers FROM customers c JOIN segment_assignments sa ON c.customer_id = sa.customer_id GROUP BY sa.segment_name\n"
+            "  - EXAMPLE: SELECT sa.segment_name, ROUND(SUM(t.amount),0) AS total_volume FROM transactions t JOIN segment_assignments sa ON t.customer_id = sa.customer_id GROUP BY sa.segment_name ORDER BY total_volume DESC\n"
+            "SEGMENT_PROFILES TABLE (placeholder — Agent A has not run yet):\n"
+            "  - segment_profiles has 5 rows: Retiree Depositor, Wealth Accumulator, Everyday Essential, Digital Trendsetter, At-Risk Saver\n"
+            "  - Columns: segment_name, short_code, customer_count, avg_balance_usd, avg_income_usd, avg_credit_score, digital_adoption_pct, intent_score_pct, health_status, top_product_1, top_product_2, top_product_3, featured_offer, description\n"
+            "  - Use segment_profiles for: 'which segment has highest balance', 'compare intent scores', 'which segments are at-risk', 'segment overview', 'top products by segment'\n"
+            "  - EXAMPLE: SELECT segment_name, intent_score_pct, health_status FROM segment_profiles ORDER BY intent_score_pct DESC\n"
+            "  - EXAMPLE: SELECT segment_name, avg_balance_usd, customer_count FROM segment_profiles ORDER BY avg_balance_usd DESC\n"
+        )
 
     lines.append(
         "JOIN HINTS:\n"
         "  - All tables join via customer_id\n"
-        "SEGMENT_ASSIGNMENTS VIEW (always available — no Agent A required):\n"
-        "  - segment_assignments maps every customer_id → segment_name (one of 5 Meridian segments)\n"
-        "  - segment_name values: 'Retiree Depositor', 'Wealth Accumulator', 'Everyday Essential', 'Digital Trendsetter', 'At-Risk Saver'\n"
-        "  - Use segment_assignments for ALL per-customer segment queries (transaction volume by segment, churn by segment, etc.)\n"
-        "  - JOIN: customers c JOIN segment_assignments sa ON c.customer_id = sa.customer_id\n"
-        "  - JOIN: transactions t JOIN segment_assignments sa ON t.customer_id = sa.customer_id\n"
-        "  - EXAMPLE: SELECT sa.segment_name, COUNT(*) AS customers FROM customers c JOIN segment_assignments sa ON c.customer_id = sa.customer_id GROUP BY sa.segment_name\n"
-        "  - EXAMPLE: SELECT sa.segment_name, ROUND(SUM(t.amount),0) AS total_volume FROM transactions t JOIN segment_assignments sa ON t.customer_id = sa.customer_id GROUP BY sa.segment_name ORDER BY total_volume DESC\n"
-        "SEGMENT_PROFILES TABLE (always available — no Agent A required):\n"
-        "  - segment_profiles has 5 rows: Retiree Depositor, Wealth Accumulator, Everyday Essential, Digital Trendsetter, At-Risk Saver\n"
-        "  - Columns: segment_name, short_code, customer_count, avg_balance_usd, avg_income_usd, avg_credit_score, digital_adoption_pct, intent_score_pct, health_status, top_product_1, top_product_2, top_product_3, featured_offer, description\n"
-        "  - Use segment_profiles for: 'which segment has highest balance', 'compare intent scores', 'which segments are at-risk', 'segment overview', 'top products by segment'\n"
-        "  - EXAMPLE: SELECT segment_name, intent_score_pct, health_status FROM segment_profiles ORDER BY intent_score_pct DESC\n"
-        "  - EXAMPLE: SELECT segment_name, avg_balance_usd, customer_count FROM segment_profiles ORDER BY avg_balance_usd DESC\n"
+        + segment_block
         + persona_hint +
         "  - impressions.product_id -> products.product_id\n"
         "  - incomplete_applications.product_id -> products.product_id\n"
@@ -338,16 +381,50 @@ def build_schema_context() -> str:
 
 # ── SQL generation prompt ─────────────────────────────────────────────────────
 
-_SQL_SYSTEM = """You are an expert DuckDB SQL analyst for Meridian Bank.
+_SQL_SYSTEM = """You are Segment AI, the data assistant embedded in Meridian Bank's marketing platform.
+You write DuckDB SQL behind the scenes, but the person reading your answer is a marketer or relationship
+manager — not a data analyst. They want to know who their customers are, what to offer them, and how to sell
+it, in plain language they could repeat in a meeting or to a customer. A smart non-technical person should be
+able to read your narrative and immediately understand it — no jargon, no hedging, no "go check the dashboard".
+You always attempt a direct answer from the data yourself; you never tell the user to look elsewhere for
+something you can compute right now.
 
 Given a natural-language question and conversation history, you generate:
 1. A valid DuckDB SELECT query
-2. A rich, well-formatted Markdown narrative (100-250 words)
-3. A chart configuration (type, x_col, y_col, title)
+2. A rich, plain-English Markdown narrative (100-250 words)
+3. A chart configuration (type, x_col, y_col, title) — ONLY when a visual genuinely helps (see CHART RELEVANCE below)
 4. 3 contextual follow-up questions
 
+REAL DATA PRIORITY — ABSOLUTE, NON-NEGOTIABLE:
+This platform has REAL customer segments computed live by Agent A (K-Prototypes clustering) — these are the
+segments marketing actually targets today, with the actual names, sizes, and figures shown everywhere else in
+the app (Dashboard, Segment AI, Offer & Ad Spend). When the schema below lists `persona_assignments` /
+`persona_stats`, THOSE ARE THE REAL, CURRENT SEGMENTS — you MUST use them for every segment-level question,
+with zero exceptions. `segment_assignments` and `segment_profiles` are a static placeholder with fixed demo
+names and numbers, shown ONLY before Agent A has ever been run on this session's data. The instant
+`persona_assignments`/`persona_stats` exist, treat `segment_assignments`/`segment_profiles` as retired —
+never mix the two in one answer, never fall back to the static names/numbers "just in case", and never let a
+number from `segment_profiles` slip into an answer about the live personas. Getting a segment's name or a
+figure wrong here is the single worst failure mode for this product — marketing will act on what you say.
+When the schema lists the ACTUAL current persona_name values (a literal list of quoted names), and the user's
+question names a segment, match it against THAT list and copy the exact spelling/wording from the list into
+your SQL string literal — even if the user's phrasing is close to a name you recognize from an example
+elsewhere in these instructions (e.g. "At-Risk Saver"), the list from the schema is what actually exists right
+now and always wins. If the user's wording doesn't exactly match any name in the list, use a fuzzy match
+(`ILIKE '%keyword%'`) against persona_name instead of guessing a full literal name.
+
 NARRATIVE REQUIREMENTS — CRITICAL:
-Your narrative must be rich, insightful, and formatted in Markdown.
+Your narrative must be rich, insightful, and formatted in Markdown — but written the way you'd explain it out
+loud to a colleague on the marketing team, not the way you'd write a data report.
+- Say what it MEANS for selling to these customers, not just what the number is. "Prefers digital channels"
+  matters because it tells the reader to email/app-push instead of mailing a branch flyer — say that.
+- Avoid analyst jargon (CLV, NPS, churn probability, digital engagement score, cross-sell receptivity) as
+  standalone terms — translate every one into a plain phrase the first time you use it in an answer
+  ("customer lifetime value — how much this customer is worth to the bank over time", or just use the plain
+  phrase instead of the jargon term entirely).
+- Write like you're briefing someone who has never seen this dataset before, and assume they don't know what
+  a "K-Prototypes cluster" or a "12-factor score" is — describe customers as people (age, income, habits,
+  what they want from the bank), not as rows of statistics.
 
 CRITICAL — JSON LINE BREAKS: The "narrative" value in your JSON MUST use \n escape sequences to place each bullet and section header on its own line. Never write the entire narrative as one paragraph. Format example:
 "narrative": "**247 customers** (4.9%) have incomplete applications.\n\n- **Meridian Cash Basic** leads with 89 incomplete applications\n- **Elite Rewards Card** has 67 incomplete — mostly Gold tier customers\n- Digital channel drives 61% of all incomplete starts\n\n**Recommendation:** Trigger an in-app nudge within 24 hours of abandonment."
@@ -359,6 +436,8 @@ Rules:
 - TRUST THE EXACT NUMBER FROM THE QUERY RESULT — never rescale it to match what you'd "expect" for that metric. If monthly marketing spend sums to 11606.40, that's **$11.6K** — do NOT inflate it to $1.1M just because a bank's spend "sounds like" it should be in the millions. Divide by exactly 1,000 for K or 1,000,000 for M — never add an extra, intuition-based factor of 10/100/1000.
 - Use `- bullet points` when listing 3+ data points or breakdowns (e.g., top products, top segments) — EACH bullet on its OWN LINE using \n
 - Add "**Recommendation:** ..." ONLY when the answer involves segment strategy, product fit, campaign targeting, customer behaviour, or risk/retention analysis. SKIP the Recommendation entirely for simple factual lookups (e.g. "how many", "list the segments", "what is the definition of", pure count or name queries). When included, place it on its own line preceded by \n\n.
+  - Do NOT force a recommendation onto a question that didn't ask for one. "How many customers are in the At-Risk Saver segment?" gets a plain factual answer — no Recommendation line. "Which segment should I target for a retention campaign?" gets one, because the question itself is asking what to do.
+  - Test before adding one: would a marketer reading just the number/list feel like something is missing? If not, leave it out.
 - Use `## Section` headers only when the answer has 2+ clearly distinct parts — each header on its own line
 - NEVER start with query descriptions: "The SQL query identifies...", "The query returns...", "The query filters...", "This query retrieves..." — these describe the SQL, not the data. Start with the actual finding (e.g. "**143 Platinum and Gold customers** prefer digital channels but haven't transacted in 30+ days.")
 - NEVER write a 1-2 sentence answer — always provide depth, context, and business meaning
@@ -679,8 +758,15 @@ STRING LITERALS — CRITICAL (DuckDB parser rule):
 - This applies to ALL string literals: segment names, channel names, product names, statuses, categories, etc.
 
 AGGREGATION — THE MOST IMPORTANT RULE:
-Every comparison question MUST use GROUP BY + an aggregate function (SUM, AVG, COUNT).
-Never return raw rows for a comparison or ranking question.
+Every comparison question MUST use GROUP BY + an aggregate function (SUM, AVG, COUNT) — WHEN the source is a
+raw, row-per-record table like `customers` or `transactions`. EXCEPTION — this rule does NOT apply to
+`persona_stats`: that table is already exactly one pre-aggregated row per persona, so a comparison question
+answered from persona_stats is a plain `SELECT ... WHERE persona_name IN (...)` with NO GROUP BY and NO
+AVG/SUM/COUNT wrapped around its columns — wrapping an already-aggregated column in another aggregate function
+is not "following this rule more thoroughly", it is a binder error (the column isn't grouped and doesn't need
+to be). If your FROM clause is `persona_stats`, skip this rule entirely and go straight to the PERSONA_STATS
+SHORTCUT section below.
+Never return raw rows for a comparison or ranking question over `customers`/`transactions`.
 
 EXAMPLES (follow these exactly):
 
@@ -813,6 +899,19 @@ When asking for segment characteristics (churn, CLV, income, credit score, digit
 - CORRECT: SELECT persona_name, customer_count, avg_churn_prob, avg_clv, avg_income, avg_credit_score, avg_digital_engagement, avg_deposits FROM persona_stats ORDER BY avg_churn_prob DESC
 - WRONG: SELECT pa.persona_name, c.customer_count, ROUND(AVG(c.churn_probability)...) FROM customers c JOIN persona_assignments pa ... (customer_count is NOT a column in customers)
 - Use the JOIN approach ONLY when you need columns not in persona_stats (e.g. churn_date, life_stage, specific transaction data).
+- Comparing 2 (or more) NAMED personas by a persona_stats metric — filter persona_stats directly, no join, no GROUP BY, no aggregate function at all. persona_stats already has EXACTLY ONE ROW PER PERSONA — every column in it is already an aggregate, so wrapping any of them in AVG()/SUM()/COUNT() again is always wrong and will throw a "must appear in the GROUP BY clause" binder error.
+  CORRECT: SELECT persona_name, customer_count, avg_income FROM persona_stats WHERE persona_name IN ('Exact Name One', 'Exact Name Two') ORDER BY avg_income DESC
+  WRONG: SELECT persona_name, customer_count, ROUND(AVG(avg_income), 0) AS avg_income FROM persona_stats WHERE persona_name IN (...) GROUP BY persona_name ← avg_income is ALREADY the average for that persona; re-wrapping it in AVG() and adding GROUP BY is redundant and breaks because customer_count isn't aggregated or grouped.
+  WRONG: SELECT pa.persona_name, ps.customer_count, ps.avg_income FROM persona_stats ps WHERE ps.persona_name IN (...) ← references alias `pa` that was never joined/selected FROM — this is a binder error, not valid SQL. If your FROM clause is just `persona_stats ps`, every selected column must be qualified `ps.` (or unqualified), never `pa.`.
+  The "AGGREGATION — GROUP BY" rule elsewhere in this prompt applies to raw tables like `customers`/`transactions` — it does NOT apply to persona_stats, which is already pre-aggregated. Selecting straight from persona_stats with a plain WHERE/ORDER BY (no GROUP BY) is correct, not a violation of that rule.
+- NEVER invent a column name that isn't in the schema's column list — e.g. `churn_risk_category_dist`, `age_breakdown`, `channel_split` do NOT exist anywhere, no matter how naturally they'd fit the question. persona_stats' ONLY columns are exactly: persona_name, customer_count, avg_churn_prob, avg_clv, avg_income, avg_credit_score, avg_digital_engagement, avg_deposits — nothing else, and nothing with a "_dist"/"_breakdown"/"_split" suffix.
+  Q: "What's the churn risk category breakdown by persona?" / "How does churn risk category vary across personas?"
+  WRONG: SELECT persona_name, customer_count, avg_churn_prob, churn_risk_category_dist FROM persona_stats ← this column does not exist; a categorical breakdown is never a single pre-computed column here.
+  RIGHT: SELECT pa.persona_name, c.churn_risk_category, COUNT(*) AS customer_count
+         FROM customers c JOIN persona_assignments pa ON c.customer_id = pa.customer_id
+         GROUP BY pa.persona_name, c.churn_risk_category
+         ORDER BY pa.persona_name, c.churn_risk_category
+  — A "breakdown by category" always means JOIN to the table that actually has that categorical column (here, customers.churn_risk_category) and GROUP BY both the segment and the category — never search persona_stats for a column that summarizes it in one field.
 
 SEGMENT PRIORITY — follow this order strictly:
 1. If persona_assignments table IS listed in the schema: use persona_name from persona_assignments (the 5 AI-refined segments from Agent A). Always JOIN persona_assignments ON customer_id and GROUP BY pa.persona_name.
@@ -1217,12 +1316,37 @@ chart: {"type": "none", "title": "Customer Profile"}
 — Always use the exact ID string the user provided (case-sensitive, e.g. 'CUST_00003').
 — NEVER use INNER JOIN here — persona_assignments may be empty if Agent A has not been run.
 
+CHART RELEVANCE — a chart is a bonus, not a default. Ask yourself: does SEEING this as a bar/line actually
+help answer the question, or would the number/sentence in the narrative already tell the full story?
+- If the question is a single lookup, a yes/no, a definition, or compares just 1-2 things → chart.type = "none".
+- Only use a real chart when the question is genuinely about comparing 3+ categories or a trend over time —
+  the kind of thing that's easier to see than to read as a sentence.
+- When in doubt, leave it out. A wrong or unnecessary chart is worse than no chart — the narrative and table
+  are always shown regardless, so nothing is lost by omitting one.
+- y_col MUST be the metric the QUESTION is actually about, never just any numeric column that happens to be in
+  the SELECT list. A "characteristics"/"profile" query often selects several metrics for narrative context
+  (churn, CLV, income, credit score, deposits) — the chart should still plot only the ONE metric the question
+  asked about (usually whichever column your own ORDER BY sorts by), not an unrelated one from that list.
+  Example: Q: "Which segment has the highest churn risk?" and your SQL selects persona_name, customer_count,
+  avg_churn_prob, avg_clv, avg_income (for narrative context) ORDER BY avg_churn_prob DESC — the chart's y_col
+  must be avg_churn_prob (churn risk, what was asked, and what you sorted by), never avg_clv or avg_income —
+  a CLV or income bar chart on a churn-risk question is an unrelated chart, even though CLV/income are real
+  columns in the result.
+- If the question genuinely has no single focus metric (e.g. "give me the full profile of every segment" with
+  5+ equally-weighted metrics and no ORDER BY signalling which one matters most), set chart.type = "none" —
+  the table already shows every metric correctly; a single bar chart picking one arbitrarily would misrepresent
+  the answer as being about just that one thing.
+- chart.type must match what the question is actually shaped like: a trend/change-over-time question → "line";
+  a "compare/rank/which is highest-lowest" across 3+ categories → "bar"; a share-of-a-whole with ≤5 categories
+  that sum to something meaningful (e.g. % of customers per tier) → "pie"; anything else → "none".
+
 CHART RULES:
 - none: Use for customer-listing queries (x-axis would be customer_id or names) — table is more useful
 - none: Use when SQL returns exactly 1 row (a single COUNT, SUM, or AVG). ONE bar is meaningless — state the number boldly in the narrative instead. e.g. "**800 customers** are in the At-Risk Saver segment."
+- none: Use when SQL returns only 2 rows — a 2-bar chart adds nothing a sentence like "**X** vs **Y**" doesn't already say just as clearly.
 - none: Use for strategy/advisory answers (sql=null)
 - none: Use for customer profile lookups (single customer, ID-based)
-- bar: categorical comparisons (channels, segments, products) — 5–15 groups
+- bar: categorical comparisons (channels, segments, products) — 3–15 groups, when the question is actually asking to compare/rank them
 - line: time-series (monthly, yearly) — x_col must be a date/month/year column
 - area: cumulative trends over time
 - pie: ONLY for 5 or fewer categories. Never pie with >5 groups
@@ -1296,6 +1420,8 @@ def _call_llm(prompt: str) -> str:
             system_message=_SQL_SYSTEM,
             max_tokens=2000,
             temperature=0.1,
+            agent_name="chatbot",
+            call_type="sql_generation",
         )
     except Exception as e2:
         logger.error("All LLM calls failed: %s", e2)
@@ -1305,7 +1431,10 @@ def _call_llm(prompt: str) -> str:
 # ── Grounded narrative generator (second-stage LLM call) ─────────────────────
 
 _NARRATIVE_SYSTEM = (
-    "You are a banking data analyst writing a short narrative (3-5 sentences) about a query result.\n"
+    "You are Segment AI, writing a short answer (3-5 sentences) about a query result for a marketer at "
+    "Meridian Bank — someone who wants to understand their customers well enough to sell to them, not a data "
+    "analyst. Write it the way you'd explain it out loud: plain words, no jargon, say what it means for "
+    "marketing/selling to these customers wherever that's relevant to the question.\n"
     "Rules:\n"
     "1. Open with the single most important finding in **bold** (name + value).\n"
     "2. Use **bold** for EVERY number, name, product, segment, and category you mention.\n"
@@ -1313,11 +1442,17 @@ _NARRATIVE_SYSTEM = (
     "   If a column shows 'personal_info', say **personal_info** — do NOT rename it to 'Personal Information'.\n"
     "   If a column shows 'financial_details', say **financial_details** — not 'Financial Verification'.\n"
     "4. NEVER cite a number that is not in the table. NEVER compute percentages unless the table has them.\n"
-    "5. Add a '**Recommendation:**' sentence ONLY when the answer involves segment strategy, product fit, campaign targeting, customer behaviour patterns, or risk/retention. OMIT it for simple factual lookups (how many, count, list, name queries).\n"
+    "5. Add a '**Recommendation:**' sentence, OR ANY strategy/action-item prose (\"consider offering...\", \"you should focus on...\", \"proactive outreach could help...\"), ONLY when the question itself is asking what to do — segment strategy, product fit, campaign targeting, retention/risk action. For a simple factual lookup (how many, count, list, name, which segment has the highest/lowest X), answer with ONLY the fact and directly-related context — 1-2 sentences, no action items, no advice, not even unlabeled. Example: Q: \"How many customers are in the At-Risk Defaulter segment?\" GOOD: \"**At-Risk Defaulter** has **800 customers**.\" BAD (do not do this): \"**At-Risk Defaulter** has **800 customers** — these borrowers show default warning signs, so consider offering payment plans or financial counseling to reduce churn.\" The BAD version answers a question that wasn't asked.\n"
     "6. No section headers. Use bullet points only if listing 3+ items. Output plain text — NOT JSON.\n"
     "7. Format ALL monetary values (revenue, spend, income, balance, deposit, cost, amount) as **$X.XK** / **$X.XM** / **$X.XB** — NEVER write raw decimals. Examples: 135600.0 → **$135.6K**, 2300000 → **$2.3M**. Non-monetary metrics (ROAS, scores, counts) use bold without $: **5.69 ROAS**, **1,247 customers**.\n"
     "8. TRUST THE EXACT NUMBERS GIVEN — do NOT round or rescale a value to match what you'd 'expect' for that metric. A monthly marketing spend figure like 11606.40 is correctly **$11.6K** — do NOT inflate it to $1.1M just because a bank's total marketing budget 'sounds like' it should be in the millions. Convert the digits exactly as given (divide by 1,000 for K, by 1,000,000 for M) and nothing else — never add or remove a factor of 10, 100, or 1000 based on intuition about what the number 'should' be.\n"
     "9. NEVER state a population/segment-size count (e.g. \"which includes 5000 total customers\", \"out of 800 customers\") unless that exact count is a column value, a COUNT(*) result, or explicitly given to you as the true total. The number of rows shown is NOT the size of a segment/tier/category unless the table is actually grouped by that segment — if you don't know the true count, omit the sentence rather than inventing a plausible-sounding number.\n"
+    "10. If CONVERSATION HISTORY is provided below, this is a follow-up — read it and answer as a continuation "
+    "of that conversation where natural (e.g. \"compared to the segment we just looked at...\"), using only "
+    "names/numbers that actually appeared in that history or in the current table. Never treat the follow-up "
+    "as a cold, context-free question when history is available.\n"
+    "11. Never tell the reader to go check a dashboard, another tab, or another page — you have the data right "
+    "here, so answer it directly.\n"
     "FORBIDDEN phrases — NEVER write these (they signal hallucination and will be rejected):\n"
     "  'the data suggests', 'we can infer', 'it appears that', 'it seems that', 'may indicate',\n"
     "  'could indicate', 'further analysis', 'based on available data', 'the results indicate',\n"
@@ -1401,6 +1536,7 @@ def _generate_grounded_narrative(
     table: Dict[str, Any],
     total_count: Optional[int] = None,
     lead_hint: Optional[str] = None,
+    history: Optional[List[Dict]] = None,
 ) -> str:
     """
     Second-stage LLM call: generate a factual narrative from actual query results.
@@ -1416,6 +1552,13 @@ def _generate_grounded_narrative(
     otherwise the LLM can still gravitate to whichever row has the biggest raw
     number in an unrelated column (e.g. highest CLV) instead of the row the query
     was actually sorted to surface (e.g. highest churn risk, for a retention ask).
+
+    history: the same conversation history threaded into the first-stage SQL
+    prompt. This narrative call is the text the user actually reads, so without
+    it a follow-up like "how does that compare to last quarter" would read as if
+    the assistant had no memory of what "that" refers to, even though the SQL
+    itself was generated with full context. Only used for conversational
+    continuity — every number/name still must come from `table` alone.
     """
     table_text = _table_to_text(table)
     agg_text = _table_aggregates_text(table)
@@ -1428,8 +1571,19 @@ def _generate_grounded_narrative(
             f"count, use {total_count}, not {n_rows}. Make clear only a subset is listed.\n"
         )
     lead_note = f"\nNOTE: {lead_hint}\n" if lead_hint else ""
+    history_block = ""
+    if history:
+        lines = []
+        for h in history[-6:]:
+            role = "User" if h.get("role") == "user" else "Assistant"
+            content = str(h.get("content", ""))[:400]
+            lines.append(f"{role}: {content}")
+        history_block = (
+            "CONVERSATION HISTORY (for context/continuity only — do not pull numbers from here "
+            "if they aren't also in the SQL result below):\n" + "\n".join(lines) + "\n\n"
+        )
     prompt = (
-        f"Question: {question}\n"
+        f"{history_block}Question: {question}\n"
         f"{count_note}{lead_note}\n"
         + (f"{agg_text}\n\n" if agg_text else "")
         + f"SQL result ({n_rows} row{'s' if n_rows != 1 else ''}):\n{table_text}\n\n"
@@ -1457,6 +1611,8 @@ def _generate_grounded_narrative(
             system_message=_NARRATIVE_SYSTEM,
             max_tokens=400,
             temperature=0.1,
+            agent_name="chatbot",
+            call_type="narrative_grounding",
         ).strip()
     except Exception as e2:
         logger.warning("Grounded narrative generation failed: %s", e2)
@@ -1531,7 +1687,42 @@ def _sanitize_sql(sql: str) -> str:
         lambda m: 'IN (' + re.sub(r'"([^"]+)"', lambda n: f"'{n.group(1)}'", m.group(1)) + ')',
         sql, flags=re.IGNORECASE,
     )
+    sql = _fix_persona_stats_redundant_agg(sql)
     return sql
+
+
+_PERSONA_STATS_COLS = {
+    "customer_count", "avg_churn_prob", "avg_clv", "avg_income",
+    "avg_credit_score", "avg_digital_engagement", "avg_deposits",
+}
+
+
+def _fix_persona_stats_redundant_agg(sql: str) -> str:
+    """
+    persona_stats already has exactly one pre-aggregated row per persona. Despite
+    explicit prompt instructions, the LLM has a strong, hard-to-override prior
+    (from the general "comparisons need GROUP BY + aggregate" rule) to still wrap
+    its columns in AVG()/SUM()/etc. and add a redundant GROUP BY persona_name when
+    the question is phrased as a comparison — which isn't just redundant, it's a
+    binder error (other selected columns aren't grouped or aggregated). Fix this
+    deterministically for simple single-table persona_stats queries rather than
+    relying on prompt-following alone.
+    """
+    if not sql or not re.search(r'\bFROM\s+persona_stats\b', sql, re.IGNORECASE):
+        return sql
+    if re.search(r'\bJOIN\b', sql, re.IGNORECASE):
+        return sql  # only touch simple single-table persona_stats queries
+
+    def _unwrap(m):
+        col = m.group(1)
+        return col if col.lower() in _PERSONA_STATS_COLS else m.group(0)
+
+    fixed = re.sub(
+        r'\b(?:AVG|SUM|MAX|MIN)\s*\(\s*([A-Za-z_][A-Za-z0-9_]*)\s*\)',
+        _unwrap, sql, flags=re.IGNORECASE,
+    )
+    fixed = re.sub(r'\bGROUP\s+BY\s+(?:\w+\.)?persona_name\b', '', fixed, flags=re.IGNORECASE)
+    return fixed
 
 
 def _aggressive_sanitize_sql(sql: str) -> str:
@@ -2049,7 +2240,49 @@ def _auto_aggregate(table: Dict[str, Any], llm_chart: Dict, sql: str = "") -> Di
 
 # ── Chart config resolution ───────────────────────────────────────────────────
 
-def _resolve_chart(columns: List[str], rows: List[List], llm_chart: Dict, sql: str = "") -> Dict:
+_METRIC_SYNONYMS = {
+    'churn': ('churn', 'risk', 'retention', 'leaving', 'attrition', 'defect'),
+    'clv': ('lifetime value', 'clv', 'worth', 'valuable'),
+    'income': ('income', 'earn', 'salary', 'wage'),
+    'credit': ('credit',),
+    'digital': ('digital', 'online', 'app ', 'mobile'),
+    'deposit': ('deposit', 'balance', 'savings'),
+    'engagement': ('engagement', 'engaged'),
+    'roas': ('roas', 'return on ad', 'return per dollar'),
+    'roi': ('roi', 'return on invest'),
+    'spend': ('spend', 'budget', 'cost'),
+    'revenue': ('revenue', 'sales'),
+    'conversion': ('conversion', 'convert'),
+    'cpa': ('cpa', 'cost per acqui'),
+    'customer_count': ('how many', 'number of customers', 'count', 'size'),
+}
+
+
+def _question_metric_score(col: str, question: str) -> int:
+    """
+    Score how much a candidate y-axis column matches what the QUESTION is actually
+    asking about — used to pick the right metric to chart when a query returns
+    several (e.g. a segment "characteristics"/"profile" query with churn, CLV,
+    income, credit score all in one row). Without this, the chart could end up
+    plotting a column that's merely present in the result rather than the one the
+    user cares about, which reads as an unrelated/wrong chart even though the data
+    itself is correct.
+    """
+    if not question:
+        return 0
+    q = question.lower()
+    score = 0
+    for word in re.split(r'[_\s]+', col.lower()):
+        if len(word) >= 3 and word in q:
+            score += 1
+    col_l = col.lower()
+    for key, phrases in _METRIC_SYNONYMS.items():
+        if key in col_l and any(p in q for p in phrases):
+            score += 2
+    return score
+
+
+def _resolve_chart(columns: List[str], rows: List[List], llm_chart: Dict, sql: str = "", question: str = "") -> Dict:
     if not columns or not rows:
         return {"type": "none"}
 
@@ -2127,15 +2360,43 @@ def _resolve_chart(columns: List[str], rows: List[List], llm_chart: Dict, sql: s
         _y_candidates = [
             c for c in numeric_cols if c != x_col and c.lower() not in _DIMENSION_LIKE
         ] or [c for c in numeric_cols if c != x_col]
-        # Prefer a column whose name suggests it's the actual metric. Among those (or
-        # all candidates if none match), prefer the LAST one — a computed/aggregated
-        # value conventionally appears at the end of a SELECT list, after grouping
-        # keys and any raw attributes carried along for context.
-        _metric_candidates = [c for c in _y_candidates if any(kw in c.lower() for kw in _METRIC_KEYWORDS)]
-        _pool = _metric_candidates or _y_candidates
-        y_col = _pool[-1] if _pool else (
-            numeric_cols[0] if numeric_cols else (columns[1] if len(columns) > 1 else columns[0])
-        )
+
+        # The column the SQL itself sorts by is the strongest, most unambiguous
+        # signal of "the metric this query is actually about" — a query that does
+        # `ORDER BY avg_churn_prob DESC` is a churn-risk question, whatever else it
+        # also happens to SELECT for context, so that's what should be charted.
+        _order_by_col = None
+        _ob_match = re.search(r'\bORDER\s+BY\s+([A-Za-z_][A-Za-z0-9_.]*)', sql, re.IGNORECASE) if sql else None
+        if _ob_match:
+            _raw_col = _ob_match.group(1).split('.')[-1]
+            if _raw_col in _y_candidates:
+                _order_by_col = _raw_col
+
+        if _order_by_col:
+            y_col = _order_by_col
+        else:
+            # Otherwise prefer whichever candidate's name best matches the actual
+            # question text (e.g. "churn"/"risk" wording → the churn column, not
+            # whichever other metric happens to sort last in the SELECT list).
+            _scored = sorted(
+                _y_candidates,
+                key=lambda c: _question_metric_score(c, question),
+                reverse=True,
+            )
+            _best_score = _question_metric_score(_scored[0], question) if _scored else 0
+            if _scored and _best_score > 0:
+                y_col = _scored[0]
+            else:
+                # No question-text signal either — fall back to the old heuristic:
+                # prefer a column whose name suggests it's a computed metric, and
+                # among those (or all candidates if none match), prefer the LAST
+                # one — an aggregated value conventionally appears at the end of a
+                # SELECT list, after grouping keys and raw context columns.
+                _metric_candidates = [c for c in _y_candidates if any(kw in c.lower() for kw in _METRIC_KEYWORDS)]
+                _pool = _metric_candidates or _y_candidates
+                y_col = _pool[-1] if _pool else (
+                    numeric_cols[0] if numeric_cols else (columns[1] if len(columns) > 1 else columns[0])
+                )
 
     title = llm_chart.get("title") or "Query Results"
 
@@ -2228,10 +2489,16 @@ def ask_chatbot(
     """
     history = history or []
 
+    # Fresh token-accounting scope for this question — every LLM call made
+    # anywhere below (including retries and the grounded-narrative pass) adds
+    # to this, so the total reflects the true cost of this one reply.
+    from utils.token_tracker import reset_scope, get_scope_usage
+    reset_scope()
+
     # Domain guardrail — reject questions outside Synapse/banking scope before calling LLM
     if _OUT_OF_SCOPE_RE.search(question) and not _IN_SCOPE_RE.search(question):
         logger.info("Segment AI: out-of-scope question blocked: %.80s", question)
-        return _OUT_OF_SCOPE_REPLY
+        return {**_OUT_OF_SCOPE_REPLY, "token_usage": get_scope_usage()}
 
     # Agent A "not yet generated" note — intentionally disabled. The heuristic
     # segment_assignments fallback is a fully supported, real answer path (not
@@ -2250,6 +2517,7 @@ def ask_chatbot(
             "error": f"AI model unavailable: {e}",
             "narrative": "The AI model is currently unavailable. Please check TOGETHER_API_KEY or ANTHROPIC_API_KEY.",
             "sql": None, "table": None, "chart": None, "follow_ups": [],
+            "token_usage": get_scope_usage(),
         }
 
     parsed = _parse_response(raw)
@@ -2485,10 +2753,16 @@ def ask_chatbot(
                         table = _auto_aggregate(table, llm_chart, sql=sql)
 
                         # Single-row chart suppression — 1 bar is never useful; show as text
-                        if len(table.get("rows", [])) == 1:
+                        _row_count = len(table.get("rows", []))
+                        if _row_count == 1:
                             chart = {"type": "none"}
                         else:
-                            chart = chart or _resolve_chart(table["columns"], table["rows"], llm_chart, sql=sql)
+                            chart = chart or _resolve_chart(table["columns"], table["rows"], llm_chart, sql=sql, question=question)
+                            # Two data points rarely justify a chart over a plain sentence
+                            # ("X vs Y") — except a genuine two-point time trend, which can
+                            # still be a meaningful before/after visual.
+                            if _row_count == 2 and chart and chart.get("type") not in ("line", "area"):
+                                chart = {"type": "none"}
             except Exception as e:
                 _raw_error = str(e)
                 logger.warning("SQL execution failed: %s\nSQL: %s", e, sql[:400])
@@ -2506,13 +2780,63 @@ def ask_chatbot(
                             _retried = True
                             if table and table.get("columns"):
                                 table = _auto_aggregate(table, llm_chart, sql=sql)
-                                if len(table.get("rows", [])) == 1:
+                                _row_count = len(table.get("rows", []))
+                                if _row_count == 1:
                                     chart = {"type": "none"}
                                 else:
-                                    chart = _resolve_chart(table["columns"], table["rows"], llm_chart, sql=sql)
+                                    chart = _resolve_chart(table["columns"], table["rows"], llm_chart, sql=sql, question=question)
+                                    if _row_count == 2 and chart and chart.get("type") not in ("line", "area"):
+                                        chart = {"type": "none"}
                     except Exception as _e2:
                         logger.warning("Retry also failed: %s", _e2)
                         _raw_error = str(_e2)
+
+                # Self-healing retry for hallucinated/invalid columns or table names
+                # (Binder/Catalog errors). DuckDB's own error message names the exact
+                # bad reference and usually lists valid "Candidate bindings" — feed that
+                # straight back to the LLM instead of just showing the user a generic
+                # "try rephrasing" message for something the model can fix itself.
+                if not _retried and any(
+                    kw in _raw_error.lower() for kw in
+                    ("binder error", "catalog error", "does not exist", "not found in from clause")
+                ):
+                    try:
+                        logger.info("Segment AI: schema error — retrying with the exact DuckDB error fed back to the LLM.")
+                        retry_prompt = _build_prompt(
+                            question + "\n\n[SYSTEM OVERRIDE: Your previous SQL failed with this exact DuckDB error:\n"
+                            f"{_raw_error[:500]}\n"
+                            "Rewrite the SQL using ONLY columns/tables that actually exist in the schema above — "
+                            "check the schema's column lists and the 'Candidate bindings' in the error (if shown) "
+                            "rather than guessing a column name. If the metric isn't available as a single column, "
+                            "compute it from columns that do exist (e.g. a categorical breakdown needs a JOIN + "
+                            "GROUP BY on the categorical column, not a column named '..._dist' or '..._breakdown' "
+                            "that doesn't exist anywhere in the schema).]",
+                            history, schema,
+                        )
+                        raw_fix = _call_llm(retry_prompt)
+                        parsed_fix = _parse_response(raw_fix)
+                        sql_fix = _sanitize_sql((parsed_fix.get("sql") or "").strip())
+                        if sql_fix and _safe_sql(sql_fix):
+                            table_fix = _exec_sql(sql_fix)
+                            if table_fix and table_fix.get("columns"):
+                                sql = sql_fix
+                                table = table_fix
+                                narrative = (parsed_fix.get("narrative") or narrative or "").strip()
+                                follow_ups = parsed_fix.get("follow_ups") or follow_ups
+                                llm_chart = parsed_fix.get("chart") or llm_chart
+                                _retried = True
+                                table = _auto_aggregate(table, llm_chart, sql=sql)
+                                _row_count = len(table.get("rows", []))
+                                if _row_count == 1:
+                                    chart = {"type": "none"}
+                                else:
+                                    chart = _resolve_chart(table["columns"], table["rows"], llm_chart, sql=sql, question=question)
+                                    if _row_count == 2 and chart and chart.get("type") not in ("line", "area"):
+                                        chart = {"type": "none"}
+                                logger.info("Segment AI: schema-error retry succeeded.")
+                    except Exception as _e3:
+                        logger.warning("Schema-error retry failed: %s", _e3)
+                        _raw_error = str(_e3)
 
                 if not _retried:
                     sql_error = _raw_error
@@ -2608,12 +2932,12 @@ def ask_chatbot(
         # a hallucinated figure structurally impossible to show, rather than merely
         # unlikely to slip past a detector.
         logger.info("Segment AI: regenerating narrative from real query results (strict grounding).")
-        grounded = _generate_grounded_narrative(question, table, total_count=_true_count, lead_hint=_lead_hint)
+        grounded = _generate_grounded_narrative(question, table, total_count=_true_count, lead_hint=_lead_hint, history=history)
         if grounded and _ungrounded_figures(grounded, table, sql=sql):
             logger.warning("Segment AI: grounded narrative still ungrounded — retrying once more.")
             grounded = None
         if not grounded:
-            grounded2 = _generate_grounded_narrative(question, table, total_count=_true_count, lead_hint=_lead_hint)
+            grounded2 = _generate_grounded_narrative(question, table, total_count=_true_count, lead_hint=_lead_hint, history=history)
             if grounded2 and not _ungrounded_figures(grounded2, table, sql=sql):
                 grounded = grounded2
             else:
@@ -2649,6 +2973,7 @@ def ask_chatbot(
         "follow_ups": follow_ups[:3],
         "sql_error": sql_error,
         "personas_registered": _PERSONAS_REGISTERED,
+        "token_usage": get_scope_usage(),
     }
 
 

@@ -1,4 +1,5 @@
 import React, { useState, useMemo, useRef, useEffect } from 'react';
+import { useSearchParams } from 'react-router-dom';
 import BankingAdSpend from './BankingAdSpend';
 import CustomerSearchSelect from '../../components/CustomerSearchSelect';
 import { useQuery } from '@tanstack/react-query';
@@ -51,6 +52,9 @@ type BankingAgentCUiState = {
   selectedCustomerId: string | null;
   explainOpen: boolean;
   selectedPersonaId: string | null;
+  /** Staged customer chosen from the persona-scoped search — NOT yet computed
+   * until "Compute Best Offer" is clicked (see personaCustomerId usage below). */
+  personaCustomerId: string | null;
   activeCommTab: 'push' | 'email' | 'flyer';
   offerScoreOpen: boolean;
   personaOfferScoreOpen: boolean;
@@ -63,6 +67,7 @@ const DEFAULT_AGENT_C_UI: BankingAgentCUiState = {
   selectedCustomerId: null,
   explainOpen: true,
   selectedPersonaId: null,
+  personaCustomerId: null,
   activeCommTab: 'push',
   offerScoreOpen: false,
   personaOfferScoreOpen: false,
@@ -2906,22 +2911,31 @@ function CommunicationPreviewPanel({
 
 export default function BankingAgentC() {
   const [ui, setUi] = useSessionStorageState<BankingAgentCUiState>(AGENT_C_UI_KEY, DEFAULT_AGENT_C_UI);
-  const { offerScope, churnRiskView, selectedCustomerId, explainOpen, selectedPersonaId, activeCommTab, offerScoreOpen, personaOfferScoreOpen, personaCommTab } = ui;
+  const { offerScope, churnRiskView, selectedCustomerId, explainOpen, selectedPersonaId, personaCustomerId, activeCommTab, offerScoreOpen, personaCommTab } = ui;
   const offerCardRef = useRef<HTMLDivElement>(null);
-  const personaOfferCardRef = useRef<HTMLDivElement>(null);
 
-  // Scroll to offer card when customer is selected (e.g. from churn "Get offer")
+  // Deep link from other pages (e.g. Dashboard's "View in Offer & Ad Spend" button):
+  // ?persona=<cluster_id> selects that persona in the offer scope and lets the
+  // existing scroll-to-offer effect below carry it into view.
+  const [searchParams, setSearchParams] = useSearchParams();
   useEffect(() => {
-    if (!selectedCustomerId || offerScope !== 'customer') return;
+    const personaParam = searchParams.get('persona');
+    if (!personaParam) return;
+    setUi((p) => ({ ...p, offerScope: 'persona', selectedPersonaId: personaParam }));
+    const next = new URLSearchParams(searchParams);
+    next.delete('persona');
+    setSearchParams(next, { replace: true });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [searchParams]);
+
+  // Scroll to offer card once a best offer has actually been computed — for
+  // either mode, since persona mode now funnels into the same shared
+  // selectedCustomerId + offer card once "Compute Best Offer" is clicked.
+  useEffect(() => {
+    if (!selectedCustomerId) return;
     const t = setTimeout(() => offerCardRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' }), 400);
     return () => clearTimeout(t);
-  }, [selectedCustomerId, offerScope]);
-
-  useEffect(() => {
-    if (!selectedPersonaId || offerScope !== 'persona') return;
-    const t = setTimeout(() => personaOfferCardRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' }), 400);
-    return () => clearTimeout(t);
-  }, [selectedPersonaId, offerScope]);
+  }, [selectedCustomerId]);
 
   const { data: customersData, isError: customersError, isSuccess: customersSuccess, isLoading: customersLoading } = useQuery({
     queryKey: ['banking-agent-a-customers', 500],
@@ -3024,24 +3038,40 @@ export default function BankingAgentC() {
 
   const personas = (personasData?.personas ?? []) as Array<{ id: string; name: string; size: number; percentage?: number }>;
 
+  // Customers scoped to the selected persona — lets the marketer search within
+  // just that segment instead of picking a generic representative customer.
+  // Mirrors the same pattern used by the Director tab (BankingAgentD.tsx).
   const {
-    data: personaOfferData,
-    isLoading: personaOfferLoading,
-    isFetching: personaOfferFetching,
+    data: personaCustomersData,
+    isLoading: personaCustomersLoading,
   } = useQuery({
-    queryKey: ['banking-persona-best-offer', selectedPersonaId],
+    queryKey: ['banking-agent-c-persona-customers', selectedPersonaId],
     queryFn: async () => {
-      const res = await fetch(`${API_BASE}/api/banking/agent_c/persona-best-offer?persona_id=${selectedPersonaId}`);
-      if (!res.ok) {
-        const err = await res.json().catch(() => ({}));
-        throw new Error(err.detail || 'Failed to load persona offer');
-      }
+      const res = await fetch(`${API_BASE}/api/banking/agent_a/customers?cluster_id=${encodeURIComponent(selectedPersonaId ?? '')}&limit=500&skip=0`);
+      if (!res.ok) throw new Error('Failed to fetch segment customers');
       return res.json();
     },
-    enabled: !!selectedPersonaId,
+    enabled: offerScope === 'persona' && !!selectedPersonaId,
   });
+  const personaCustomers = (personaCustomersData?.data?.customers ?? []) as Array<{
+    customer_id: string;
+    customer_name?: string;
+    [key: string]: unknown;
+  }>;
 
-  const personaOffer = personaOfferData?.data as PersonaBestOfferPayload | undefined;
+  // Pre-fill the search box with the segment's first customer (the same
+  // "default customer" this tab used to auto-compute for), without firing
+  // any compute — matches the Director tab's default-selection pattern.
+  useEffect(() => {
+    if (offerScope !== 'persona' || !selectedPersonaId) return;
+    if (personaCustomersData === undefined) return;
+    if (personaCustomers.length === 0) return;
+    const inList = personaCustomers.some((c) => String(c.customer_id) === String(personaCustomerId));
+    if (!personaCustomerId || !inList) {
+      setUi((p) => ({ ...p, personaCustomerId: String(personaCustomers[0].customer_id) }));
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- only re-run when the persona-scoped list changes
+  }, [offerScope, selectedPersonaId, personaCustomersData]);
 
   const offer = offerData?.data as OneBestOfferPayload | undefined;
   const cohortHighRisk = useMemo(
@@ -3143,21 +3173,77 @@ export default function BankingAgentC() {
                   emptyListLabel="Run Segmentation and load data first to use Best Offer."
                   placeholder="Search by name or ID..."
                 />
+                {!selectedCustomerId && (
+                  <div className="mt-6 rounded-2xl border-2 border-dashed border-slate-200 bg-slate-50/50 p-12 text-center">
+                    <Target className="w-14 h-14 text-slate-300 mx-auto mb-4" />
+                    <p className="text-slate-500 font-medium">Select a customer to see their one best offer</p>
+                    <p className="text-slate-400 text-sm mt-1">Recommendation, score, reason, and channel plan</p>
+                  </div>
+                )}
+              </>
+            )}
+
+            {/* Persona-mode picker — kept above the shared result card (like Customer
+                mode's picker above) so the segment/customer controls stay reachable
+                and don't get scrolled out of view once a tall offer result renders. */}
+            {offerScope === 'persona' && customersSuccess && (customersData?.data?.customers?.length ?? 0) > 0 && (
+              <div className="space-y-4">
+                <p className="text-xs text-slate-500">
+                  Pick a segment, then search for the specific customer within it you want to market to — nothing
+                  is computed until you click <strong>Compute Best Offer</strong> below.
+                </p>
+                <div className="grid md:grid-cols-2 gap-4">
+                  <div>
+                    <label className="block text-sm font-semibold text-slate-700 mb-2">Segment (persona)</label>
+                    <select
+                      value={selectedPersonaId ?? ''}
+                      onChange={(e) => setUi((p) => ({ ...p, selectedPersonaId: e.target.value || null, personaCustomerId: null, selectedCustomerId: null }))}
+                      className="w-full rounded-xl border border-slate-200 bg-white px-4 py-3 shadow-sm focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500"
+                    >
+                      <option value="">Select a segment…</option>
+                      {personas.map((p) => (
+                        <option key={p.id} value={p.id}>
+                          {p.name} ({p.size} customers)
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+                  <div>
+                    <label className="block text-sm font-semibold text-slate-700 mb-2">Customer in this segment</label>
+                    <CustomerSearchSelect
+                      customers={personaCustomers}
+                      value={personaCustomerId ?? ''}
+                      onChange={(id) => setUi((p) => ({ ...p, personaCustomerId: id }))}
+                      loading={personaCustomersLoading}
+                      emptyListLabel={selectedPersonaId ? 'No customers found in this segment.' : 'Select a segment first.'}
+                      placeholder="Search by name or ID..."
+                    />
+                  </div>
+                </div>
+
+                <button
+                  onClick={() => setUi((p) => ({ ...p, selectedCustomerId: p.personaCustomerId }))}
+                  disabled={!personaCustomerId}
+                  className="w-full max-w-xl rounded-xl bg-indigo-600 text-white font-semibold px-4 py-3 shadow-sm hover:bg-indigo-700 disabled:bg-slate-200 disabled:text-slate-400 disabled:cursor-not-allowed transition-colors"
+                >
+                  Compute Best Offer
+                </button>
+              </div>
+            )}
+
+            {offerScope === 'persona' && (!customersSuccess || (customersData?.data?.customers?.length ?? 0) === 0) && !customersLoading && (
+              <p className="text-sm text-slate-500">Load customers from Segmentation to use persona mode.</p>
+            )}
+
+            {/* Shared result card — populated once selectedCustomerId is set, whether
+                from Customer mode's search above or Persona mode's "Compute Best Offer"
+                button above. Kept as a single render path so persona mode reuses the
+                exact same computation/markup instead of a separate implementation. */}
+            {!!selectedCustomerId && (
+              <>
                 <div className="mt-6">
                   <AnimatePresence mode="wait">
-                    {!selectedCustomerId ? (
-                      <motion.div
-                        key="empty"
-                        initial={{ opacity: 0 }}
-                        animate={{ opacity: 1 }}
-                        exit={{ opacity: 0 }}
-                        className="rounded-2xl border-2 border-dashed border-slate-200 bg-slate-50/50 p-12 text-center"
-                      >
-                        <Target className="w-14 h-14 text-slate-300 mx-auto mb-4" />
-                        <p className="text-slate-500 font-medium">Select a customer to see their one best offer</p>
-                        <p className="text-slate-400 text-sm mt-1">Recommendation, score, reason, and channel plan</p>
-                      </motion.div>
-                    ) : offerLoading || offerFetching ? (
+                    {offerLoading || offerFetching ? (
                       <motion.div
                         key="loading"
                         initial={{ opacity: 0 }}
@@ -3383,204 +3469,6 @@ export default function BankingAgentC() {
               </>
             )}
 
-            {offerScope === 'persona' && customersSuccess && (customersData?.data?.customers?.length ?? 0) > 0 && (
-              <div className="space-y-8">
-                <div>
-                  <label className="block text-sm font-semibold text-slate-700 mb-2">Segment (persona)</label>
-                  <p className="text-xs text-slate-500 mb-3">
-                    Representative best offer for the whole segment. Open <strong>Churn risk intelligence</strong> below for
-                    segment-level churn metrics.
-                  </p>
-                  <select
-                    value={selectedPersonaId ?? ''}
-                    onChange={(e) => setUi((p) => ({ ...p, selectedPersonaId: e.target.value || null }))}
-                    className="w-full max-w-xl rounded-xl border border-slate-200 bg-white px-4 py-3 shadow-sm focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500"
-                  >
-                    <option value="">Select a segment…</option>
-                    {personas.map((p) => (
-                      <option key={p.id} value={p.id}>
-                        {p.name} ({p.size} customers)
-                      </option>
-                    ))}
-                  </select>
-                </div>
-
-                {selectedPersonaId && (
-                  <>
-                    {personaOfferLoading || personaOfferFetching ? (
-                      <div className="rounded-2xl bg-slate-50 border border-slate-200 p-12 flex flex-col items-center justify-center min-h-[200px]">
-                        <Loader2 className="w-10 h-10 text-indigo-500 animate-spin mb-3" />
-                        <p className="text-slate-600 text-sm">Loading persona best offer…</p>
-                      </div>
-                    ) : personaOffer?.offer ? (
-                      <motion.div
-                        ref={personaOfferCardRef}
-                        initial={{ opacity: 0, y: 8 }}
-                        animate={{ opacity: 1, y: 0 }}
-                        className="rounded-2xl bg-white border border-indigo-200 shadow-lg overflow-hidden"
-                      >
-                        <div className="bg-indigo-50 px-6 py-3 border-b border-indigo-100">
-                          <p className="text-sm font-medium text-indigo-800">
-                            {personaOffer.persona_name} · {personaOffer.segment_size} customers
-                          </p>
-                          <p className="text-xs text-indigo-600 mt-0.5">
-                            Representative: {personaOffer.representative_customer_name} ({personaOffer.representative_customer_id})
-                          </p>
-                        </div>
-                        <div className="p-6 space-y-5">
-                          {/* ── Offer Hero Card ── */}
-                          {personaOffer.offer_intelligence?.available && personaOffer.offer_intelligence.selected_offer ? (
-                            <OfferHeroCard
-                              offerIntel={personaOffer.offer_intelligence}
-                              productName={personaOffer.offer.product_name}
-                              productCategory={personaOffer.offer.category}
-                              offerScoreOpen={personaOfferScoreOpen}
-                              onToggleScore={() => setUi((p) => ({ ...p, personaOfferScoreOpen: !p.personaOfferScoreOpen }))}
-                            />
-                          ) : (
-                            /* Product spotlight when no active offer */
-                            <div className={`rounded-2xl bg-gradient-to-br ${getSubcategoryGradient(personaOffer.offer.subcategory ?? personaOffer.offer.category)} p-7 relative overflow-hidden`}>
-                              <div className="absolute top-0 right-0 w-48 h-48 rounded-full bg-white/5 -translate-y-12 translate-x-12" />
-                              <p className="relative text-[10px] font-bold uppercase tracking-widest text-white/70 mb-3">Segment best offer</p>
-                              <p className="relative text-3xl font-black text-white leading-tight tracking-tight drop-shadow-sm">{personaOffer.offer.product_name}</p>
-                              {personaOffer.offer.category && (
-                                <p className="relative text-white/75 text-base font-medium mt-1.5">{personaOffer.offer.category}</p>
-                              )}
-                              <div className="relative mt-4 flex items-center gap-3">
-                                <span className="bg-white/20 border border-white/30 text-white text-sm font-bold px-3 py-1.5 rounded-full">
-                                  {((personaOffer.score ?? 0) * 100).toFixed(0)}% segment fit
-                                </span>
-                              </div>
-                            </div>
-                          )}
-
-                          {/* ── Product reason ── */}
-                          {personaOffer.reason && (
-                            <p className="text-sm text-slate-600 leading-relaxed">{personaOffer.reason}</p>
-                          )}
-
-                          {/* ── Channel Delivery Card ── */}
-                          {personaOffer.best_channel && (
-                            <ChannelDeliveryCard
-                              bestChannel={personaOffer.best_channel}
-                              bestChannelReason={personaOffer.best_channel_reason}
-                              channels={personaOffer.channels ?? []}
-                              offerPreferredChannel={personaOffer.offer_intelligence?.selected_offer?.preferred_channel}
-                              channelFatigue={undefined}
-                            />
-                          )}
-
-                          {/* ── Segment channel mix ── */}
-                          {personaOffer.channel_distribution && Object.keys(personaOffer.channel_distribution).length > 0 && (
-                            <div className="rounded-2xl border border-slate-200 bg-white shadow-sm overflow-hidden">
-                              <div className="px-5 py-3 border-b border-slate-100 bg-slate-50 flex items-center gap-2">
-                                <Users className="w-4 h-4 text-slate-500 flex-shrink-0" />
-                                <span className="text-sm font-bold text-slate-700">Segment channel mix</span>
-                              </div>
-                              <div className="p-5 space-y-2.5">
-                                {Object.entries(personaOffer.channel_distribution).sort((a, b) => b[1] - a[1]).map(([ch, pctVal]) => {
-                                  const cm = CHANNEL_META[ch] ?? { label: ch.replace(/_/g, ' '), color: 'text-indigo-600', bg: 'bg-indigo-400', border: '', activeBg: '' };
-                                  return (
-                                    <div key={ch} className="flex items-center gap-3">
-                                      <span className="w-4 h-4 flex-shrink-0">{channelIcons[ch] ?? <Mail className="w-4 h-4 text-slate-400" />}</span>
-                                      <span className="text-xs text-slate-600 w-28 shrink-0 capitalize">{cm.label}</span>
-                                      <div className="flex-1 h-2.5 bg-slate-100 rounded-full overflow-hidden">
-                                        <div className={`h-full rounded-full ${cm.bg}`} style={{ width: `${pctVal}%` }} />
-                                      </div>
-                                      <span className="text-xs font-bold text-slate-700 w-9 text-right tabular-nums">{pctVal}%</span>
-                                    </div>
-                                  );
-                                })}
-                              </div>
-                            </div>
-                          )}
-
-
-
-                          {personaOffer.agent_c_vs_agent_b?.recommendations_differ && personaOffer.agent_c_vs_agent_b?.explanation && (
-                            <div className="rounded-xl border border-blue-200 bg-gradient-to-br from-blue-50/90 to-indigo-50/50 px-4 py-4 shadow-sm">
-                              <div className="flex items-start justify-between gap-2 mb-2">
-                                <p className="text-sm font-bold text-slate-900 flex items-center gap-2">
-                                  <Sparkles className="w-4 h-4 text-blue-600 flex-shrink-0" />
-                                  Recommender vs Best Offer (representative customer)
-                                </p>
-                                {personaOffer.agent_c_vs_agent_b.explanation_source === 'llm' && (
-                                  <span className="text-[10px] uppercase tracking-wide font-semibold text-blue-700 bg-white/80 border border-blue-100 px-2 py-0.5 rounded-full">
-                                    AI explanation
-                                  </span>
-                                )}
-                              </div>
-                              <p className="text-xs text-slate-600 mb-2">
-                                Based on the segment&apos;s representative customer: Recommender fit rank vs Best Offer one best
-                                offer.
-                              </p>
-                              {personaOffer.agent_b_top_products && personaOffer.agent_b_top_products.length > 0 && (
-                                <p className="text-xs text-slate-500 mb-3">
-                                  Recommender top matches:{' '}
-                                  {personaOffer.agent_b_top_products.map((p, i) => (
-                                    <span key={p.product_id ?? i}>
-                                      <strong className="text-slate-700">{p.product_name ?? p.product_id}</strong>
-                                      {p.score != null && (
-                                        <span className="text-slate-400"> ({(p.score * 100).toFixed(0)}%)</span>
-                                      )}
-                                      {i < (personaOffer.agent_b_top_products?.length ?? 0) - 1 ? ' · ' : ''}
-                                    </span>
-                                  ))}
-                                </p>
-                              )}
-                              <p className="text-sm text-slate-800 leading-relaxed">{personaOffer.agent_c_vs_agent_b.explanation}</p>
-                            </div>
-                          )}
-
-                          {/* ── Email & SMS Outreach ── */}
-                          {personaOffer.personalized_communication && (personaOffer.personalized_communication.email_content || personaOffer.personalized_communication.sms_text) && (
-                            <CommunicationPreviewPanel
-                              comm={personaOffer.personalized_communication}
-                              subcategory={personaOffer.offer?.subcategory ?? personaOffer.offer?.category}
-                              activeTab="email"
-                              onTabChange={(t) => setUi((p) => ({ ...p, personaCommTab: t }))}
-                              customerId={personaOffer.representative_customer_id}
-                              customerName={personaOffer.representative_customer_name}
-                              offerIntelligence={personaOffer.offer_intelligence as Record<string, unknown>}
-                              personaName={personaOffer.persona}
-                            />
-                          )}
-                        </div>
-                      </motion.div>
-                    ) : (
-                      <div className="rounded-2xl bg-white border border-slate-200 shadow-sm overflow-hidden">
-                        <div className="bg-gradient-to-r from-amber-50 to-white px-5 py-4 border-b border-amber-100 flex items-center gap-3">
-                          <AlertTriangle className="w-5 h-5 text-amber-500 flex-shrink-0" />
-                          <p className="text-sm font-semibold text-slate-800">
-                            {personaOffer?.reason ?? 'No eligible offer found for this segment — manual review recommended.'}
-                          </p>
-                        </div>
-                        {personaOffer?.best_channel && (
-                          <div className="p-5">
-                            <ChannelDeliveryCard
-                              bestChannel={personaOffer.best_channel}
-                              bestChannelReason={personaOffer.best_channel_reason}
-                              channels={personaOffer.channels ?? []}
-                              channelFatigue={undefined}
-                            />
-                          </div>
-                        )}
-                      </div>
-                    )}
-                  </>
-                )}
-
-                {!selectedPersonaId && (
-                  <div className="rounded-xl border border-dashed border-slate-200 bg-slate-50/50 px-4 py-8 text-center text-slate-500 text-sm">
-                    Select a segment to load the representative best offer and segment churn detail.
-                  </div>
-                )}
-              </div>
-            )}
-
-            {offerScope === 'persona' && (!customersSuccess || (customersData?.data?.customers?.length ?? 0) === 0) && !customersLoading && (
-              <p className="text-sm text-slate-500">Load customers from Segmentation to use persona mode.</p>
-            )}
           </div>
         </motion.section>
 

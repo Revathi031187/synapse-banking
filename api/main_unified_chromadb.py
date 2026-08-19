@@ -9,6 +9,7 @@ Endpoints:
 """
 import sys
 import os
+import json
 
 # Load environment variables from .env file
 from dotenv import load_dotenv
@@ -238,6 +239,7 @@ system_state = {
         'agent_d_incomplete_rows': [],
         'agent_d_impression_rows': [],
         '_agent_d_csv_loaded': False,
+        'dashboard_persona_recs_cache': {},  # (cluster_id, weights_sig, agent_a_last_refreshed) -> Agent B execute() result
     }
 }
 
@@ -3580,6 +3582,260 @@ async def get_banking_personas():
         return {'personas': []}
 
 
+# Reference demographic profile for the 5 archetypes ad_spend_monthly.csv was
+# generated against (scripts/generate_ad_spend_history.py: Digital Native, Wealth
+# Builder, Everyday Essential, Retiree Anchor, At-Risk Saver). These numbers come
+# from segment_profiles.csv, which encodes the same 5 conceptual archetypes under
+# yet another naming. Agent A's cluster names are freshly LLM-generated on every
+# run and won't reliably string-match either scheme, so the Dashboard matches each
+# real segment to an ad-spend persona by demographic similarity instead — see
+# _match_ad_spend_personas below.
+_AD_SPEND_ARCHETYPE_PROFILES = {
+    "Retiree Anchor":     {"avg_balance": 184000, "avg_income": 62000,  "avg_credit_score": 779, "digital_adoption_pct": 25},
+    "Wealth Builder":     {"avg_balance": 175000, "avg_income": 195000, "avg_credit_score": 808, "digital_adoption_pct": 64},
+    "Everyday Essential": {"avg_balance": 52000,  "avg_income": 73000,  "avg_credit_score": 708, "digital_adoption_pct": 45},
+    "Digital Native":     {"avg_balance": 42600,  "avg_income": 83000,  "avg_credit_score": 698, "digital_adoption_pct": 91},
+    "At-Risk Saver":      {"avg_balance": 10000,  "avg_income": 35000,  "avg_credit_score": 568, "digital_adoption_pct": 52},
+}
+
+
+def _match_ad_spend_personas(segments: list) -> None:
+    """
+    Assigns each real Agent A segment the ad-spend archetype it most closely
+    resembles, via optimal (Hungarian) assignment on normalized demographic
+    distance — not name matching. Mutates each segment dict in place, adding
+    `ad_spend_persona`.
+    """
+    import numpy as np
+    from scipy.optimize import linear_sum_assignment
+
+    if not segments:
+        return
+
+    archetype_names = list(_AD_SPEND_ARCHETYPE_PROFILES.keys())
+    dims = ["avg_balance", "avg_income", "avg_credit_score", "digital_adoption_pct"]
+    # Normalize each dimension by its range across the 5 reference archetypes so
+    # balance (tens of thousands) doesn't dominate credit score (hundreds) purely
+    # by scale.
+    ranges = {}
+    for d in dims:
+        vals = [p[d] for p in _AD_SPEND_ARCHETYPE_PROFILES.values()]
+        ranges[d] = (min(vals), (max(vals) - min(vals)) or 1)
+
+    def _vec(profile: dict) -> "np.ndarray":
+        return np.array([(profile.get(d, 0) - ranges[d][0]) / ranges[d][1] for d in dims])
+
+    archetype_vecs = [_vec(_AD_SPEND_ARCHETYPE_PROFILES[n]) for n in archetype_names]
+    cost = np.zeros((len(segments), len(archetype_names)))
+    for i, seg in enumerate(segments):
+        seg_vec = _vec(seg)
+        for j, a_vec in enumerate(archetype_vecs):
+            cost[i, j] = float(np.linalg.norm(seg_vec - a_vec))
+    row_idx, col_idx = linear_sum_assignment(cost)
+    for i, j in zip(row_idx, col_idx):
+        segments[i]["ad_spend_persona"] = archetype_names[j]
+
+
+def _resolve_persona_representative_customer_id(persona) -> Optional[str]:
+    """
+    Resolve a persona/cluster id to ONE real representative customer — the
+    first row (by dataframe order) in Agent A's clustered customer list whose
+    cluster matches. This is the exact mechanism `/api/banking/agent_b/execute`
+    uses for "persona mode" (see below) — reusing it here, rather than a second
+    slightly-different implementation, is what keeps the Dashboard tab and the
+    Recommender tab showing identical recommendations for the same persona.
+    """
+    customers_with_clusters = (system_state['banking'].get('agent_a_results') or {}).get('customers_with_clusters', [])
+    customers_list = customers_with_clusters.to_dict('records') if hasattr(customers_with_clusters, 'to_dict') else customers_with_clusters
+    try:
+        persona_int = int(persona)
+    except (TypeError, ValueError):
+        return None
+    persona_customers = [c for c in customers_list if c.get('cluster', c.get('macro_segment_id')) == persona_int]
+    if not persona_customers:
+        return None
+    return str(persona_customers[0]['customer_id']).strip()
+
+
+def _get_persona_recommendations_cached(cluster_id, persona: dict, top_n: int = 5) -> Optional[dict]:
+    """
+    The SAME Agent B rule-based recommendation `/api/banking/agent_b/execute` computes
+    for "Persona Mode" on the Recommender tab, for use by the Dashboard tab — reused
+    in-process (not a second HTTP call) so the two tabs can never diverge. Cached
+    because `AgentB_Banking.execute()` makes a real, several-second LLM call for the
+    top-3 rationale on every invocation (agents/agent_b_banking_chromadb.py, gated only
+    on Claude/Together availability, not on `explain`) — looping this uncached across 5
+    personas on every Dashboard load would add 15-45s to page load. The cache key
+    includes the factor-weight state and Agent A's last-refresh timestamp, so it's
+    invalidated automatically whenever either changes.
+    """
+    rep_customer_id = _resolve_persona_representative_customer_id(cluster_id)
+    if not rep_customer_id:
+        return None
+
+    fw = system_state['banking'].get('agent_b_factor_weights_pct')
+    weights_sig = json.dumps(fw, sort_keys=True) if fw else "default"
+    agent_a_last_refreshed = (system_state['banking'].get('agent_a_results') or {}).get('last_refreshed')
+    cache_key = (str(cluster_id), weights_sig, agent_a_last_refreshed)
+
+    cache = system_state['banking'].setdefault('dashboard_persona_recs_cache', {})
+    if cache_key in cache:
+        return cache[cache_key]
+
+    init_banking_agent_b()
+    if banking_agent_b_chromadb is None:
+        return None
+
+    exec_params = {
+        'customer_id': rep_customer_id,
+        'persona': cluster_id,
+        'search_query': '',
+        'category': None,
+        'top_n': top_n,
+        'explain': True,
+    }
+    if fw:
+        exec_params['factor_weights'] = fw
+
+    try:
+        result = banking_agent_b_chromadb.execute(exec_params)
+    except Exception:
+        logger.exception("Dashboard: Agent B execute() failed for persona %s", cluster_id)
+        return None
+    if not isinstance(result, dict) or 'error' in result:
+        return None
+
+    result = numpy_to_python_types(result)
+    result['representative_customer_id'] = rep_customer_id
+    cache[cache_key] = result
+    return result
+
+
+@app.get("/api/banking/dashboard/segments")
+async def get_banking_dashboard_segments():
+    """
+    Live segment snapshot for the marketing-facing Dashboard tab.
+
+    Every figure here is real, tied to Agent A's actual cluster assignments —
+    NOT an independent heuristic. If Agent A hasn't been run yet, there is no
+    real segmentation to show, so this returns `ready: false` rather than
+    fabricating or approximating one; the frontend prompts the user to load
+    data and run clustering instead.
+
+    - Segment identity + size + the characteristic aggregates (balance, income,
+      credit score, digital engagement, cross-sell receptivity) come straight
+      from `banking_agent_a.personas[cluster_id]['characteristics']` — the same
+      numbers Agent A itself computed during clustering.
+    - Churn is the real `churn_probability` column from customers.csv, averaged
+      over the customers actually assigned to that cluster.
+    - Top products and the featured offer are the real top-3 products by actual
+      transaction count within that cluster (transactions.csv joined to
+      products.csv) — not a curated/static pick, and not routed through the
+      full Agent B/C/LLM offer pipeline, which would make every Dashboard load
+      trigger live LLM calls per segment.
+    """
+    try:
+        # Same readiness check as the other persona-scoped endpoints
+        # (agent_c/persona-best-offer, agent_c/churn-by-persona) — Agent A must
+        # have actually run so `banking_agent_a.personas` reflects real clusters.
+        if not system_state['banking'].get('agent_a_results') or not getattr(banking_agent_a, "personas", None):
+            return {"success": True, "ready": False}
+
+        _sync_banking_cluster_column()
+        df = getattr(banking_agent_a, "customers_df", None)
+        if df is None or "cluster" not in df.columns:
+            return {"success": True, "ready": False}
+
+        total_customers = len(df)
+
+        segments = []
+
+        for cluster_id, persona in banking_agent_a.personas.items():
+            seg_df = df[df["cluster"] == cluster_id]
+            if len(seg_df) == 0:
+                try:
+                    seg_df = df[df["cluster"].astype(int) == int(cluster_id)]
+                except (TypeError, ValueError):
+                    seg_df = df.iloc[0:0]
+            if len(seg_df) == 0:
+                continue
+
+            seg_name = persona.get("persona_name") or f"Segment {cluster_id}"
+            chars = persona.get("characteristics") or {}
+            count = int(persona.get("size") or len(seg_df))
+
+            # The SAME rule-based recommendations the Recommender tab computes for
+            # "Persona Mode" + this persona + "All product types" — reused in-process
+            # (see _get_persona_recommendations_cached) so the two tabs can never show
+            # different products/scores for the same segment.
+            agent_b_result = _get_persona_recommendations_cached(cluster_id, persona, top_n=5)
+            recommendations = (agent_b_result or {}).get("recommendations") or []
+            representative_customer_id = (agent_b_result or {}).get("representative_customer_id")
+
+            top_products_detail = []
+            for rec in recommendations[:5]:
+                top_products_detail.append({
+                    "rank": rec.get("rank"),
+                    "product_id": rec.get("product_id"),
+                    "name": rec.get("product_name") or str(rec.get("product_id")),
+                    "category": rec.get("category"),
+                    "subcategory": rec.get("subcategory"),
+                    "description": rec.get("description"),
+                    "annual_fee": rec.get("annual_fee"),
+                    "monthly_fee": rec.get("monthly_fee"),
+                    "interest_rate": rec.get("interest_rate"),
+                    "min_balance": rec.get("min_balance"),
+                    "score_pct": round(float(rec.get("score") or 0) * 100, 1),
+                    "match_level": rec.get("match_level"),
+                    "rank_explanation": rec.get("rank_explanation"),
+                    "llm_rationale": rec.get("llm_rationale"),
+                    "detailed_calculation": rec.get("detailed_calculation"),
+                })
+
+            top = top_products_detail[0] if top_products_detail else None
+            offer_product = dict(top) if top else None
+            featured_offer = f"{top['name']} — {top['score_pct']:.0f}% match" if top else ""
+
+            churn_pct = round(float(seg_df["churn_probability"].mean()) * 100, 1) if "churn_probability" in seg_df.columns and len(seg_df) else 0.0
+            health = "at-risk" if churn_pct >= 25 else "growing" if churn_pct < 10 else "stable"
+
+            segments.append({
+                "id": str(cluster_id),
+                "name": seg_name,
+                "short_code": (persona.get("short_name") or seg_name[:2]).upper()[:2],
+                "count": count,
+                "pct_of_base": round(count / total_customers * 100, 1) if total_customers else 0.0,
+                "avg_balance": round(float(chars.get("avg_deposits") or 0), 0),
+                "avg_income": round(float(chars.get("avg_income") or 0), 0),
+                "avg_credit_score": round(float(chars.get("avg_credit_score") or 0), 0),
+                "digital_adoption_pct": round(float(chars.get("avg_digital_engagement") or 0) * 100, 1),
+                "cross_sell_pct": round(float(chars.get("avg_cross_sell_receptivity") or 0) * 100, 1),
+                "churn_pct": churn_pct,
+                "health": health,
+                "description": persona.get("description") or "",
+                "top_products": top_products_detail,
+                "featured_offer": featured_offer,
+                "offer_product": offer_product,
+                "representative_customer_id": representative_customer_id,
+            })
+
+        _match_ad_spend_personas(segments)
+        segments.sort(key=lambda s: -s["count"])
+
+        portfolio = {
+            "total_customers": total_customers,
+            "avg_balance": round(float(df["total_deposits"].mean()), 0) if total_customers else 0,
+            "cross_sell_pct": round(float(df["cross_sell_receptivity"].mean()) * 100, 1) if total_customers else 0,
+            "churn_pct": round(float(df["churn_probability"].mean()) * 100, 1) if total_customers else 0,
+        }
+
+        return {"success": True, "ready": True, "segments": numpy_to_python_types(segments), "portfolio": portfolio}
+    except Exception as e:
+        logger.error(f"Error building dashboard segment snapshot: {e}")
+        logger.error(traceback.format_exc())
+        raise HTTPException(status_code=500, detail=str(e))
+
+
 @app.get("/api/banking/customers")
 async def get_banking_customers():
     """Get list of all banking customers (alias for agent_a/customers for Agent B compatibility)"""
@@ -3802,24 +4058,15 @@ async def execute_banking_agent_b(request: dict = Body(...)):
                 detail="Please run customer segmentation (Agent A) before running recommendations."
             )
 
-        # If persona provided, get a random customer from that persona
+        # If persona provided, resolve a representative customer from that persona.
+        # Shared with the Dashboard tab's per-segment recommendations
+        # (_get_persona_recommendations_cached) so both tabs always agree.
         if persona and not customer_id:
-            customers_with_clusters = system_state['banking']['agent_a_results'].get('customers_with_clusters', [])
-            if hasattr(customers_with_clusters, 'to_dict'):
-                customers_list = customers_with_clusters.to_dict('records')
-            else:
-                customers_list = customers_with_clusters
-
-            print(f"[AGENT-B] persona mode: {len(customers_list)} customers in cache, looking for cluster={persona}", flush=True)
-            # Find customers in this persona (use 'cluster' column)
-            persona_customers = [c for c in customers_list if c.get('cluster', c.get('macro_segment_id')) == int(persona)]
-
-            if not persona_customers:
+            rep_id = _resolve_persona_representative_customer_id(persona)
+            if not rep_id:
                 print(f"[AGENT-B] No customers found for persona {persona}", flush=True)
                 raise HTTPException(status_code=404, detail=f"No customers found for persona {persona}")
-
-            # Pick first customer from persona
-            customer_id = str(persona_customers[0]['customer_id']).strip()
+            customer_id = rep_id
             logger.info(f"Persona mode: Selected customer {customer_id} from persona {persona}")
 
         logger.info("="*80)
@@ -6081,6 +6328,8 @@ async def rephrase_banking_offer_content(req: RephraseOfferRequest):
             ),
             max_tokens=400,
             temperature=0.8,
+            agent_name="agent_d",
+            call_type="rephrase_email_body",
         )
 
         subject_prompt = (
@@ -6097,6 +6346,8 @@ async def rephrase_banking_offer_content(req: RephraseOfferRequest):
             system_message="Write only the email subject line, nothing else.",
             max_tokens=60,
             temperature=0.7,
+            agent_name="agent_d",
+            call_type="rephrase_email_subject",
         )
 
         return {
@@ -6546,13 +6797,26 @@ async def landing_chat(body: dict):
             "Reply as Meridian Guide (max 60 words):"
         )
 
-        from utils.together_ai import together_ai as _tai
-        reply = _tai.generate_text(
+        from utils.claude_client import get_claude_client
+        _llm = get_claude_client()
+        reply = _llm.generate_text(
             prompt=prompt,
-            system_message=system_msg,
+            system=system_msg,
             max_tokens=130,
             temperature=0.55,
+            agent_name="landing",
+            call_type="chat",
         )
+        if not reply:
+            from utils.together_ai import together_ai as _tai
+            reply = _tai.generate_text(
+                prompt=prompt,
+                system_message=system_msg,
+                max_tokens=130,
+                temperature=0.55,
+                agent_name="landing",
+                call_type="chat",
+            )
 
         if not reply or "Error generating" in reply:
             reply = (

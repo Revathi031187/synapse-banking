@@ -301,6 +301,8 @@ Hard rules for "rationales" (max 280 characters each):
             ),
             max_tokens=1600,
             temperature=0.0,
+            agent_name="agent_b",
+            call_type="factor_weight_rationale",
         )
         if raw and "Error generating" not in raw[:80]:
             data = _parse_llm_json(raw)

@@ -936,6 +936,8 @@ P4: ...
                 system_message="You write concise banker-facing coaching copy. Follow the P1–P4 format exactly.",
                 max_tokens=560,
                 temperature=0.35,
+                agent_name="agent_d",
+                call_type="pin_story",
             )
         except Exception as e:
             logger.debug("pin story LLM skipped: %s", e)

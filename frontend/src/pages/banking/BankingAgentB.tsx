@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useMemo, useRef } from 'react';
-import { Link } from 'react-router-dom';
+import { Link, useSearchParams } from 'react-router-dom';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import {
   Search,
@@ -668,6 +668,51 @@ export default function BankingAgentB() {
       }));
     },
   });
+
+  // Deep link from other pages (e.g. Dashboard's "View in Recommender" button):
+  // ?persona=<cluster_id>&category=<type|''> selects persona mode with that
+  // persona/category and fires the search immediately, so the page lands
+  // already showing computed recommendations instead of just a pre-filled form.
+  //
+  // The URL params are deliberately NOT stripped until the fetch actually
+  // *succeeds* (in the .then() below), not the instant we notice them. This
+  // route can genuinely mount twice in a row on this navigation (observed via
+  // logging: a first instance starts the request, unmounts before it
+  // resolves, and a second instance is what the user actually keeps looking
+  // at) — stripping the URL eagerly would let that first, doomed attempt
+  // "consume" the deep link and leave the surviving instance with nothing.
+  // Leaving the URL alone until success means whichever instance is still
+  // mounted when a request finally resolves is the one that gets to react to
+  // it, and an orphaned attempt simply gets superseded by a retry on the next
+  // mount instead of silently swallowing the deep link.
+  const [searchParams, setSearchParams] = useSearchParams();
+  useEffect(() => {
+    const personaParam = searchParams.get('persona');
+    if (personaParam === null || executeMutation.isPending) return;
+    const categoryParam = searchParams.get('category') || '';
+    setUi((p) => ({ ...p, mode: 'persona', persona: personaParam, category: categoryParam }));
+    executeMutation
+      .mutateAsync()
+      .then((data: { _factorWeightsUsed?: Record<string, number> }) => {
+        setUi((p) => ({
+          ...p,
+          executeData: data,
+          lastRunFactorWeights: data?._factorWeightsUsed ?? p.lastRunFactorWeights,
+        }));
+        setSearchParams((current) => {
+          const next = new URLSearchParams(current);
+          next.delete('persona');
+          next.delete('category');
+          return next;
+        }, { replace: true });
+      })
+      .catch(() => {
+        // Leave the URL params in place — a genuine backend error will fail
+        // the same way on retry, but an orphaned-by-remount attempt gets a
+        // real chance to succeed on whichever mount survives.
+      });
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- fires once per deep link, not on every mutation identity change
+  }, [searchParams]);
 
   const isFirstContextEffect = useRef(true);
   // Only clear when customer/persona/mode changes — do NOT depend on `executeMutation`:
