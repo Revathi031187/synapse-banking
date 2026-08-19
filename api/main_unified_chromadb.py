@@ -2422,6 +2422,41 @@ async def get_new_visitor_recommendations():
 # BANKING PLATFORM ENDPOINTS
 # ============================================================================
 
+# Banking dataset tables beyond customers/products/transactions (those three
+# are handled specially by each caller since one gates dataset readiness and
+# another needs the large_file_loader fallback). Shared by the dataset
+# listing (GET) and load (POST) endpoints so a "loaded" report always names
+# every table explicitly (loaded: False if missing) instead of silently
+# omitting whichever ones aren't found.
+_BANKING_EXTRA_TABLES = [
+    ("customer_profile", "Customer Profile", "customer_profile.csv"),
+    ("customer_engagement", "Customer Engagement", "customer_engagement.csv"),
+    ("mta_touchpoint_history", "MTA Touchpoint History", "mta_touchpoint_history.csv"),
+    ("ad_spend_monthly", "Ad Spend Monthly", "ad_spend_monthly.csv"),
+    ("recommendation_impressions", "Recommendation Impressions", "recommendation_impressions.csv"),
+    ("wishlist", "Wishlist", "wishlist.csv"),
+    ("incomplete_applications", "Incomplete Applications", "incomplete_applications.csv"),
+]
+
+
+def _check_banking_extra_tables(data_path: Path) -> list:
+    """Existence + row-count for every optional banking table — always one
+    entry per table (loaded: False if the file is missing), never silently
+    omitted just because it wasn't found."""
+    out = []
+    for name, display_name, fname in _BANKING_EXTRA_TABLES:
+        file_path = data_path / fname
+        loaded = file_path.exists()
+        row_count = 0
+        if loaded:
+            try:
+                row_count = len(pd.read_csv(file_path))
+            except Exception:
+                row_count = -1  # exists but couldn't be read/counted
+        out.append({"name": name, "display_name": display_name, "row_count": row_count, "loaded": loaded})
+    return out
+
+
 @app.get("/api/banking/datasets")
 async def list_banking_datasets():
     """List available Banking datasets"""
@@ -2468,12 +2503,6 @@ async def list_banking_datasets():
                     except Exception:
                         transaction_count = -1  # file exists but couldn't count rows
 
-                profile_file = data_path / "customer_profile.csv"
-                profile_count = len(pd.read_csv(profile_file)) if profile_file.exists() else 0
-
-                engagement_file = data_path / "customer_engagement.csv"
-                engagement_count = len(pd.read_csv(engagement_file)) if engagement_file.exists() else 0
-
                 tables = [
                     {
                         "name": "customers",
@@ -2493,67 +2522,7 @@ async def list_banking_datasets():
                         "row_count": transaction_count,
                         "loaded": _txn_resolved.exists()
                     }
-                ]
-                if profile_count > 0:
-                    tables.append({
-                        "name": "customer_profile",
-                        "display_name": "Customer Profile",
-                        "row_count": profile_count,
-                        "loaded": True
-                    })
-                if engagement_count > 0:
-                    tables.append({
-                        "name": "customer_engagement",
-                        "display_name": "Customer Engagement",
-                        "row_count": engagement_count,
-                        "loaded": True
-                    })
-
-                mta_file = data_path / "mta_touchpoint_history.csv"
-                if mta_file.exists():
-                    mta_count = len(pd.read_csv(mta_file))
-                    tables.append({
-                        "name": "mta_touchpoint_history",
-                        "display_name": "MTA Touchpoint History",
-                        "row_count": mta_count,
-                        "loaded": True
-                    })
-
-                ad_spend_file = data_path / "ad_spend_monthly.csv"
-                if ad_spend_file.exists():
-                    tables.append({
-                        "name": "ad_spend_monthly",
-                        "display_name": "Ad Spend Monthly",
-                        "row_count": len(pd.read_csv(ad_spend_file)),
-                        "loaded": True
-                    })
-
-                impressions_file = data_path / "recommendation_impressions.csv"
-                if impressions_file.exists():
-                    tables.append({
-                        "name": "recommendation_impressions",
-                        "display_name": "Recommendation Impressions",
-                        "row_count": len(pd.read_csv(impressions_file)),
-                        "loaded": True
-                    })
-
-                wishlist_file = data_path / "wishlist.csv"
-                if wishlist_file.exists():
-                    tables.append({
-                        "name": "wishlist",
-                        "display_name": "Wishlist",
-                        "row_count": len(pd.read_csv(wishlist_file)),
-                        "loaded": True
-                    })
-
-                incomplete_file = data_path / "incomplete_applications.csv"
-                if incomplete_file.exists():
-                    tables.append({
-                        "name": "incomplete_applications",
-                        "display_name": "Incomplete Applications",
-                        "row_count": len(pd.read_csv(incomplete_file)),
-                        "loaded": True
-                    })
+                ] + _check_banking_extra_tables(data_path)
 
                 datasets.append({
                     "name": "banking_v1",
@@ -2766,15 +2735,34 @@ async def load_banking_dataset(request: dict):
         system_state['banking']['customers'] = customers_df
         system_state['banking']['banking_data_loaded'] = True
 
-        logger.info(f"✅ Banking dataset loaded successfully")
-        
+        # Full per-table breakdown for this load — every table gets an entry
+        # (loaded: False if missing) so the UI can report exactly how many
+        # tables loaded and name any that didn't, instead of a generic
+        # "success" that hides a partially-loaded dataset.
+        tables = [
+            {"name": "customers", "display_name": "Customers", "row_count": len(customers_df), "loaded": True},
+            {"name": "products", "display_name": "Products", "row_count": len(products_df), "loaded": True},
+            {"name": "transactions", "display_name": "Transactions", "row_count": len(transactions_df), "loaded": resolved_txn.exists()},
+        ] + _check_banking_extra_tables(data_path)
+        tables_loaded = [t for t in tables if t["loaded"]]
+        tables_missing = [t["display_name"] for t in tables if not t["loaded"]]
+
+        logger.info(
+            f"✅ Banking dataset loaded: {len(tables_loaded)}/{len(tables)} tables"
+            + (f" — missing: {', '.join(tables_missing)}" if tables_missing else "")
+        )
+
         return {
             "status": "success",
             "message": "Banking dataset loaded",
             "dataset": dataset_name,
             "customer_count": len(customers_df),
             "product_count": len(products_df),
-            "transaction_count": len(transactions_df)
+            "transaction_count": len(transactions_df),
+            "tables": tables,
+            "tables_loaded_count": len(tables_loaded),
+            "tables_total_count": len(tables),
+            "tables_missing": tables_missing,
         }
         
     except Exception as e:
@@ -2889,7 +2877,7 @@ def _run_agent_a_background(config_dict: dict):
         start_time = datetime.now()
 
         results = banking_agent_a.execute(config_dict)
-        system_state['banking']['agent_a_progress'] = 0.9
+        system_state['banking']['agent_a_progress'] = 0.75
 
         results = numpy_to_python_types(results)
         system_state['banking']['agent_a_results'] = results
@@ -2905,8 +2893,6 @@ def _run_agent_a_background(config_dict: dict):
             pass
         global _churn_df_cache
         _churn_df_cache = None  # invalidate so next call recomputes from fresh transactions
-        system_state['banking']['agent_a_status'] = 'complete'
-        system_state['banking']['agent_a_progress'] = 1.0
 
         # Push persona assignments into the chatbot's DuckDB engine
         try:
@@ -2918,9 +2904,36 @@ def _run_agent_a_background(config_dict: dict):
         except Exception as _pe:
             logger.warning("Could not register personas in chatbot engine: %s", _pe)
 
+        # Pre-warm the Dashboard tab's per-persona Agent B + LLM-rationale cache
+        # and the Segments tab's micro-segment breakdowns for every persona, all
+        # as part of THIS background task — so status only flips to 'complete'
+        # once both tabs' data is already computed and cached. Without this,
+        # each tab's first visit after segmentation would pay its own several-
+        # second compute cost (and previously, the Dashboard tab would also show
+        # a stale "please segment" message from before this run — see the
+        # invalidateQueries fix on the frontend for that part).
+        system_state['banking']['agent_a_progress'] = 0.85
+        personas = results.get('personas') or {}
+        for cluster_id, persona in personas.items():
+            try:
+                _get_persona_recommendations_cached(cluster_id, persona, top_n=5)
+            except Exception as _we:
+                logger.warning(f"Pre-warm: dashboard recommendations failed for cluster {cluster_id}: {_we}")
+
+        system_state['banking']['agent_a_progress'] = 0.95
+        for cluster_id in personas.keys():
+            try:
+                mid = int(cluster_id) if str(cluster_id).lstrip('-').isdigit() else cluster_id
+                _compute_micro_segments_sync(mid)
+            except Exception as _we:
+                logger.warning(f"Pre-warm: micro-segments failed for cluster {cluster_id}: {_we}")
+
+        system_state['banking']['agent_a_status'] = 'complete'
+        system_state['banking']['agent_a_progress'] = 1.0
+
         _persist_agent_a_cache(results)
         execution_time = (datetime.now() - start_time).total_seconds()
-        logger.info(f"Agent A background task completed in {execution_time:.2f}s")
+        logger.info(f"Agent A background task completed in {execution_time:.2f}s (incl. dashboard/micro-segment pre-warm)")
     except Exception as e:
         system_state['banking']['agent_a_status'] = 'failed'
         system_state['banking']['agent_a_progress'] = 0.0
@@ -3345,79 +3358,85 @@ async def get_banking_macro_segments():
 # BANKING MICRO SEGMENTATION ENDPOINTS (NEW - Matching Academy Sports)
 # ============================================================================
 
+def _compute_micro_segments_sync(macro_segment_id: int, n_micro_segments: int = 4) -> dict:
+    """
+    Core micro-segmentation compute + cache-store logic — shared by the
+    on-demand POST endpoint below and the post-Agent-A pre-warm step
+    (_run_agent_a_background), which is a plain background-thread function
+    and so can't `await` the async endpoint directly.
+
+    Raises ValueError (segment not found) or RuntimeError (dataset/Agent A
+    not ready, or the micro-agent itself failed) — callers translate as needed.
+    """
+    # Require explicit dataset load + Agent A run
+    if not system_state['banking']['banking_data_loaded']:
+        raise RuntimeError("Please load the banking dataset first.")
+    if not system_state['banking']['agent_a_results']:
+        raise RuntimeError("Please run customer segmentation (Agent A) first.")
+
+    # Get Agent A results
+    agent_a_results = system_state['banking']['agent_a_results']
+    customers_df = pd.DataFrame(agent_a_results['customers_with_clusters'])
+    personas = agent_a_results['personas']
+
+    # Validate macro segment exists (check both int and str versions)
+    if macro_segment_id not in personas and str(macro_segment_id) not in personas:
+        # Try converting personas keys to int
+        int_personas = {int(k) if isinstance(k, str) and k.isdigit() else k: v for k, v in personas.items()}
+        if macro_segment_id not in int_personas:
+            available_segments = list(personas.keys())
+            raise ValueError(f"Macro segment {macro_segment_id} not found. Available segments: {available_segments}")
+
+    # Initialize micro segmentation agent, passing all names used in previous runs
+    from agents.agent_a_banking_micro import AgentA_Banking_Micro
+    global_names = system_state['banking'].get('used_micro_names', set())
+    micro_agent = AgentA_Banking_Micro(customers_df, personas, global_used_names=global_names)
+
+    # Execute micro segmentation
+    logger.info(f"  Executing banking micro segmentation agent...")
+    result = micro_agent.execute(macro_segment_id, n_micro_segments)
+
+    # execute() returns {'error': ...} on failure instead of raising — detect and propagate
+    if result.get('error') or not result.get('micro_segments'):
+        err_msg = result.get('error') or 'Micro segmentation produced no segments'
+        logger.error(f"Micro segmentation failed for segment {macro_segment_id}: {err_msg}")
+        raise RuntimeError(err_msg)
+
+    # Accumulate all generated micro names so future runs avoid them
+    new_names = {seg['name'] for seg in result.get('micro_segments', []) if seg.get('name')}
+    system_state['banking']['used_micro_names'] = global_names | new_names
+
+    # Store in system state (only store valid results)
+    if 'banking_micro_segments' not in system_state['banking']:
+        system_state['banking']['banking_micro_segments'] = {}
+
+    system_state['banking']['banking_micro_segments'][macro_segment_id] = result
+
+    micro_count = len(result.get('micro_segments', []))
+    logger.info(f"✅ Successfully created {micro_count} banking micro segments for macro segment {macro_segment_id}")
+
+    return numpy_to_python_types(result)
+
+
 @app.post("/api/banking/micro-segments/{macro_segment_id}")
 async def create_banking_micro_segments(macro_segment_id: int, n_micro_segments: int = 4):
     """
     Create micro segments for a specific banking macro segment
-    
+
     Args:
         macro_segment_id: ID of macro segment to sub-segment
         n_micro_segments: Number of micro segments to create (default 4)
     """
+    logger.info(f"🚀 Creating banking micro segments for macro segment {macro_segment_id}")
     try:
-        logger.info(f"🚀 Creating banking micro segments for macro segment {macro_segment_id}")
-        
-        # Require explicit dataset load + Agent A run
-        if not system_state['banking']['banking_data_loaded']:
-            raise HTTPException(status_code=400, detail="Please load the banking dataset first.")
-        if not system_state['banking']['agent_a_results']:
-            raise HTTPException(
-                status_code=400,
-                detail="Please run customer segmentation (Agent A) first."
-            )
-        
-        # Get Agent A results
-        agent_a_results = system_state['banking']['agent_a_results']
-        customers_df = pd.DataFrame(agent_a_results['customers_with_clusters'])
-        personas = agent_a_results['personas']
-        
-        # Validate macro segment exists (check both int and str versions)
-        if macro_segment_id not in personas and str(macro_segment_id) not in personas:
-            # Try converting personas keys to int
-            int_personas = {int(k) if isinstance(k, str) and k.isdigit() else k: v for k, v in personas.items()}
-            if macro_segment_id not in int_personas:
-                available_segments = list(personas.keys())
-                raise HTTPException(
-                    status_code=404,
-                    detail=f"Macro segment {macro_segment_id} not found. Available segments: {available_segments}"
-                )
-        
-        # Initialize micro segmentation agent, passing all names used in previous runs
-        from agents.agent_a_banking_micro import AgentA_Banking_Micro
-        global_names = system_state['banking'].get('used_micro_names', set())
-        micro_agent = AgentA_Banking_Micro(customers_df, personas, global_used_names=global_names)
-
-        # Execute micro segmentation
-        logger.info(f"  Executing banking micro segmentation agent...")
-        result = micro_agent.execute(macro_segment_id, n_micro_segments)
-
-        # execute() returns {'error': ...} on failure instead of raising — detect and propagate
-        if result.get('error') or not result.get('micro_segments'):
-            err_msg = result.get('error') or 'Micro segmentation produced no segments'
-            logger.error(f"Micro segmentation failed for segment {macro_segment_id}: {err_msg}")
-            raise HTTPException(status_code=500, detail=err_msg)
-
-        # Accumulate all generated micro names so future runs avoid them
-        new_names = {seg['name'] for seg in result.get('micro_segments', []) if seg.get('name')}
-        system_state['banking']['used_micro_names'] = global_names | new_names
-
-        # Store in system state (only store valid results)
-        if 'banking_micro_segments' not in system_state['banking']:
-            system_state['banking']['banking_micro_segments'] = {}
-
-        system_state['banking']['banking_micro_segments'][macro_segment_id] = result
-        
-        micro_count = len(result.get('micro_segments', []))
-        logger.info(f"✅ Successfully created {micro_count} banking micro segments for macro segment {macro_segment_id}")
-        
-        # Convert numpy types
-        result = numpy_to_python_types(result)
-        
-        return {
-            "success": True,
-            "result": result
-        }
-        
+        result = _compute_micro_segments_sync(macro_segment_id, n_micro_segments)
+        return {"success": True, "result": result}
+    except ValueError as e:
+        raise HTTPException(status_code=404, detail=str(e))
+    except RuntimeError as e:
+        msg = str(e)
+        not_ready = "load the banking dataset" in msg or "run customer segmentation" in msg
+        raise HTTPException(status_code=400 if not_ready else 500, detail=msg)
     except HTTPException:
         raise
     except Exception as e:

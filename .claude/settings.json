@@ -316,7 +316,18 @@
       "Bash(python \"/c/Users/SAVIOS~1.LV/AppData/Local/Temp/claude/c--Users-saviosajan-m-lv-Documents-personalization-agent-banking/97b819b5-b736-4f0f-a148-c81438d42a94/scratchpad/cdp_check_error.py\" \"ws://localhost:9333/devtools/page/7C50724E61C98C7E47548834612D2FC5\")",
       "Bash(curl -s -o /dev/null -w \"frontend:%{http_code}\\\\n\" http://localhost:5173/)",
       "Bash(curl -s -o /dev/null -w \"backend:%{http_code}\\\\n\" http://localhost:8002/docs)",
-      "Bash('C:\\\\Program Files\\\\Python310\\\\python.exe' -c ' *)"
+      "Bash('C:\\\\Program Files\\\\Python310\\\\python.exe' -c ' *)",
+      "Bash(sort -k5 -n -r)",
+      "Bash(git ls-tree *)",
+      "Bash(awk '$4 > 10485760 {print $4, $5}')",
+      "Bash('/c/Program Files/Python310/python.exe' -c ' *)",
+      "Bash(rmdir /tmp/meridian_bank)",
+      "Bash(rm -rf /tmp/meridian_bank)",
+      "PowerShell(Get-CimInstance Win32_Process -Filter \"ProcessId=24312 or ProcessId=25872\")",
+      "Bash(taskkill //PID 25872 //F)",
+      "Bash(taskkill //PID 24312 //F)",
+      "Bash(\"/c/Program Files/Python310/python.exe\" -m py_compile api/main_unified_chromadb.py)",
+      "Bash(curl -s -X POST http://localhost:8002/api/banking/datasets/load -H \"Content-Type: application/json\" -d '{\"dataset_name\": \"banking_v1\"}')"
     ]
   }
 }

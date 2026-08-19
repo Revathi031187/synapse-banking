@@ -166,6 +166,9 @@ function KpiTile({
 // Hover-to-explain bubble used next to KPIs, chart titles, and section headers —
 // tells a marketer (not a data analyst) what a number means and where it comes
 // from (which agent / which data file) without cluttering the UI permanently.
+const INFO_TIP_WIDTH = 224; // px, matches w-56
+const INFO_TIP_VIEWPORT_MARGIN = 8; // px, keep clear of the screen edge
+
 function InfoTip({ text }: { text: string }) {
   const anchorRef = useRef<HTMLSpanElement>(null);
   const [pos, setPos] = useState<{ top: number; left: number } | null>(null);
@@ -173,10 +176,15 @@ function InfoTip({ text }: { text: string }) {
   function show() {
     const rect = anchorRef.current?.getBoundingClientRect();
     if (!rect) return;
-    // Anchor to the icon's center; the bubble itself is translated up/left
-    // via inline style below so it never depends on a CSS stacking context
-    // that could be clipped by an ancestor's overflow-hidden.
-    setPos({ top: rect.top, left: rect.left + rect.width / 2 });
+    // Anchor to the icon's center, then clamp so the (fixed-width) bubble
+    // never runs past the left/right edge of the viewport — e.g. for KPIs
+    // near the right side of the screen, centering on the icon alone would
+    // push the tooltip's right edge off-screen.
+    const centerX = rect.left + rect.width / 2;
+    const idealLeft = centerX - INFO_TIP_WIDTH / 2;
+    const maxLeft = window.innerWidth - INFO_TIP_WIDTH - INFO_TIP_VIEWPORT_MARGIN;
+    const clampedLeft = Math.max(INFO_TIP_VIEWPORT_MARGIN, Math.min(idealLeft, maxLeft));
+    setPos({ top: rect.top, left: clampedLeft });
   }
   function hide() {
     setPos(null);
@@ -199,7 +207,7 @@ function InfoTip({ text }: { text: string }) {
             style={{
               top: pos.top,
               left: pos.left,
-              transform: 'translate(-50%, calc(-100% - 8px))',
+              transform: 'translateY(calc(-100% - 8px))',
               zIndex: 9999,
             }}
           >

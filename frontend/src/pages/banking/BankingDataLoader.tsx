@@ -351,8 +351,19 @@ export default function BankingDataLoader() {
               <div>
                 <div className="text-green-900 font-bold text-lg mb-1">Dataset Loaded Successfully!</div>
                 <p className="text-green-800 text-sm">
+                  {typeof loadMutation.data?.tables_loaded_count === 'number' && (
+                    <>
+                      {loadMutation.data.tables_loaded_count} of {loadMutation.data.tables_total_count} tables were
+                      successfully loaded.{' '}
+                    </>
+                  )}
                   The banking dataset has been loaded into ChromaDB. Configure and run Customer Segmentation below.
                 </p>
+                {!!loadMutation.data?.tables_missing?.length && (
+                  <p className="text-amber-700 text-sm mt-2">
+                    Not loaded: {loadMutation.data.tables_missing.join(', ')}.
+                  </p>
+                )}
               </div>
             </div>
           </motion.div>

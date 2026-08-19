@@ -87,6 +87,16 @@ export default function BankingAgentA() {
               queryClient.setQueryData(['banking-agent-a-results'], resultsData.results || resultsData);
               setUi((prev) => ({ ...prev, resultsEnabled: true }));
             }
+            // The backend now pre-warms the Dashboard tab's per-persona cache and
+            // the Segments tab's micro-segment breakdowns before reporting
+            // 'complete' (see _run_agent_a_background), so these refetches land
+            // fast. Without this invalidation, the Dashboard tab's ['dashboard-
+            // segments'] query keeps serving its 60s-stale "please segment
+            // first" response from before this run until a full page reload.
+            queryClient.invalidateQueries({ queryKey: ['dashboard-segments'] });
+            queryClient.invalidateQueries({ queryKey: ['banking-agent-a-customers'] });
+            queryClient.invalidateQueries({ queryKey: ['ad-spend-metrics'] });
+            queryClient.invalidateQueries({ queryKey: ['ad-spend-monthly'] });
             setPollingStatus('complete');
           } else if (statusData.status === 'failed') {
             clearInterval(pollRef.current!);
