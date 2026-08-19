@@ -26,7 +26,8 @@ logger.add(
     "logs/app_{time}.log",
     rotation="500 MB",
     retention="10 days",
-    level="DEBUG"
+    level="DEBUG",
+    encoding="utf-8",
 )
 
 

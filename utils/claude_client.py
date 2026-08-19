@@ -16,6 +16,8 @@ import json
 import logging
 from pathlib import Path
 
+from utils.token_tracker import log_llm_call
+
 logger = logging.getLogger(__name__)
 
 # ── load .env ─────────────────────────────────────────────────────────────────
@@ -120,11 +122,12 @@ class ClaudeClient:
             return ""
 
         t0 = time.monotonic()
+        provider = "anthropic" if self._anthropic_client else "together"
         try:
             if self._anthropic_client:
-                result = self._call_anthropic(prompt, system, max_tokens, temperature, model)
+                result, usage = self._call_anthropic(prompt, system, max_tokens, temperature, model)
             else:
-                result = self._call_together(prompt, system, max_tokens, temperature)
+                result, usage = self._call_together(prompt, system, max_tokens, temperature)
 
             if first_line_only:
                 result = (result or "").strip().split("\n")[0].strip()
@@ -133,7 +136,18 @@ class ClaudeClient:
 
             duration_ms = int((time.monotonic() - t0) * 1000)
             self._consecutive_failures = 0
-            _log_llm_call(agent_name, call_type, duration_ms, True, False)
+            log_llm_call(
+                provider=provider,
+                agent=agent_name,
+                call_type=call_type,
+                duration_ms=duration_ms,
+                success=True,
+                model=usage.get("model", model or ""),
+                prompt_tokens=usage.get("prompt_tokens", 0),
+                completion_tokens=usage.get("completion_tokens", 0),
+                total_tokens=usage.get("total_tokens", 0),
+                fallback_used=False,
+            )
             return result
 
         except Exception as e:
@@ -146,7 +160,15 @@ class ClaudeClient:
             if self._consecutive_failures >= _CB_FAILURE_THRESHOLD:
                 self._circuit_open_until = time.time() + _CB_COOLDOWN_SECONDS
                 logger.warning("Circuit breaker OPEN for %ds", _CB_COOLDOWN_SECONDS)
-            _log_llm_call(agent_name, call_type, duration_ms, False, True)
+            log_llm_call(
+                provider=provider,
+                agent=agent_name,
+                call_type=call_type,
+                duration_ms=duration_ms,
+                success=False,
+                fallback_used=True,
+                note=str(e)[:200],
+            )
             return ""
 
     # ── high-level helpers ────────────────────────────────────────────────────
@@ -599,11 +621,12 @@ class ClaudeClient:
 
     # ── private backends ──────────────────────────────────────────────────────
 
-    def _call_anthropic(self, prompt: str, system: str, max_tokens: int, temperature: float, model: str) -> str:
-        """Call Anthropic Claude API. Returns full response (caller decides truncation)."""
+    def _call_anthropic(self, prompt: str, system: str, max_tokens: int, temperature: float, model: str):
+        """Call Anthropic Claude API. Returns (text, usage_dict) — never raises silently."""
         import anthropic
+        model_used = model or "claude-haiku-4-5-20251001"
         kwargs = dict(
-            model=model or "claude-haiku-4-5-20251001",
+            model=model_used,
             max_tokens=max(max_tokens, 10),
             temperature=temperature,
             messages=[{"role": "user", "content": prompt}],
@@ -612,10 +635,18 @@ class ClaudeClient:
             kwargs["system"] = system
         response = self._anthropic_client.messages.create(**kwargs)
         raw = response.content[0].text if response.content else ""
-        return raw.strip()
+        usage = getattr(response, "usage", None)
+        prompt_tokens = int(getattr(usage, "input_tokens", 0) or 0) if usage else 0
+        completion_tokens = int(getattr(usage, "output_tokens", 0) or 0) if usage else 0
+        return raw.strip(), {
+            "model": model_used,
+            "prompt_tokens": prompt_tokens,
+            "completion_tokens": completion_tokens,
+            "total_tokens": prompt_tokens + completion_tokens,
+        }
 
-    def _call_together(self, prompt: str, system: str, max_tokens: int, temperature: float) -> str:
-        """Call Together AI chat completions with model fallback chain."""
+    def _call_together(self, prompt: str, system: str, max_tokens: int, temperature: float):
+        """Call Together AI chat completions with model fallback chain. Returns (text, usage_dict)."""
         import requests, urllib3
         urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 
@@ -649,22 +680,15 @@ class ClaudeClient:
                 resp.raise_for_status()
                 data = resp.json()
                 raw = data["choices"][0]["message"]["content"]
-                return (raw or "").strip()
+                usage = data.get("usage") or {}
+                return (raw or "").strip(), {
+                    "model": model,
+                    "prompt_tokens": int(usage.get("prompt_tokens", 0) or 0),
+                    "completion_tokens": int(usage.get("completion_tokens", 0) or 0),
+                    "total_tokens": int(usage.get("total_tokens", 0) or 0),
+                }
             except Exception as e:
                 last_err = e
                 continue
 
         raise RuntimeError(f"All Together AI models failed. Last error: {last_err}")
-
-
-# ── structured logging helper ─────────────────────────────────────────────────
-
-def _log_llm_call(agent, call_type, duration_ms, success, fallback_used):
-    logger.info(json.dumps({
-        "type": "llm_call",
-        "agent": agent,
-        "call_type": call_type,
-        "duration_ms": duration_ms,
-        "success": success,
-        "fallback_used": fallback_used,
-    }))

@@ -1,4 +1,5 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
+import { createPortal } from 'react-dom';
 import { Search, User } from 'lucide-react';
 
 export interface CustomerSearchOption {
@@ -63,6 +64,7 @@ export default function CustomerSearchSelect({
   const containerRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLInputElement>(null);
   const lastSyncedValue = useRef<string | null>(null);
+  const [dropdownRect, setDropdownRect] = useState<{ top: number; left: number; width: number } | null>(null);
 
   // Keep the input text in sync with externally-driven selection changes
   // (e.g. a "Get offer" button elsewhere selecting a customer), without
@@ -74,15 +76,36 @@ export default function CustomerSearchSelect({
     setQuery(value ? labelFor(match, value) : '');
   }, [value, customers]);
 
+  const dropdownRef = useRef<HTMLDivElement>(null);
+
   useEffect(() => {
     function onDocMouseDown(e: MouseEvent) {
-      if (containerRef.current && !containerRef.current.contains(e.target as Node)) {
-        setOpen(false);
-      }
+      const target = e.target as Node;
+      if (containerRef.current?.contains(target)) return;
+      if (dropdownRef.current?.contains(target)) return;
+      setOpen(false);
     }
     document.addEventListener('mousedown', onDocMouseDown);
     return () => document.removeEventListener('mousedown', onDocMouseDown);
   }, []);
+
+  // The dropdown renders in a portal (to escape clipping by any ancestor's
+  // overflow-hidden/scroll container), so its position has to be measured
+  // from the input's real screen coordinates and kept in sync while open.
+  useEffect(() => {
+    if (!open) return;
+    function updateRect() {
+      const rect = containerRef.current?.getBoundingClientRect();
+      if (rect) setDropdownRect({ top: rect.bottom + 6, left: rect.left, width: rect.width });
+    }
+    updateRect();
+    window.addEventListener('scroll', updateRect, true);
+    window.addEventListener('resize', updateRect);
+    return () => {
+      window.removeEventListener('scroll', updateRect, true);
+      window.removeEventListener('resize', updateRect);
+    };
+  }, [open]);
 
   const results = useMemo(() => {
     const q = query.trim().toLowerCase();
@@ -161,44 +184,52 @@ export default function CustomerSearchSelect({
         />
       </div>
 
-      {open && !disabled && !loading && !showEmptyListNotice && (
-        <div
-          role="listbox"
-          onMouseDown={(e) => e.preventDefault()}
-          className="absolute z-20 mt-1.5 w-full max-h-64 overflow-y-auto rounded-xl border border-slate-200 bg-white shadow-lg"
-        >
-          {trimmedQuery === '' ? (
-            <div className="px-4 py-3 text-sm text-slate-400">
-              No results
-              <div className="text-xs text-slate-400 mt-0.5">Start typing a customer name or ID to search.</div>
-            </div>
-          ) : results.length === 0 ? (
-            <div className="px-4 py-3 text-sm text-slate-400">
-              No results for &ldquo;{trimmedQuery}&rdquo;
-            </div>
-          ) : (
-            results.map((c, i) => (
-              <button
-                key={c.customer_id}
-                type="button"
-                role="option"
-                aria-selected={String(c.customer_id) === String(value)}
-                onClick={() => selectCustomer(c)}
-                onMouseEnter={() => setHighlight(i)}
-                className={`w-full flex items-center gap-2.5 px-4 py-2.5 text-left border-b border-slate-100 last:border-0 transition-colors ${
-                  i === highlight ? 'bg-blue-50' : 'bg-white'
-                } ${String(c.customer_id) === String(value) ? 'text-blue-700' : 'text-slate-800'}`}
-              >
-                <User className="w-4 h-4 text-slate-400 flex-shrink-0" />
-                <div className="min-w-0 flex-1">
-                  <p className="font-medium truncate">{c.customer_name || c.customer_id}</p>
-                  <p className="text-xs text-slate-500 truncate">{c.customer_id}</p>
-                </div>
-              </button>
-            ))
-          )}
-        </div>
-      )}
+      {open &&
+        !disabled &&
+        !loading &&
+        !showEmptyListNotice &&
+        dropdownRect &&
+        createPortal(
+          <div
+            ref={dropdownRef}
+            role="listbox"
+            onMouseDown={(e) => e.preventDefault()}
+            className="fixed max-h-64 overflow-y-auto rounded-xl border border-slate-200 bg-white shadow-lg"
+            style={{ top: dropdownRect.top, left: dropdownRect.left, width: dropdownRect.width, zIndex: 9999 }}
+          >
+            {trimmedQuery === '' ? (
+              <div className="px-4 py-3 text-sm text-slate-400">
+                No results
+                <div className="text-xs text-slate-400 mt-0.5">Start typing a customer name or ID to search.</div>
+              </div>
+            ) : results.length === 0 ? (
+              <div className="px-4 py-3 text-sm text-slate-400">
+                No results for &ldquo;{trimmedQuery}&rdquo;
+              </div>
+            ) : (
+              results.map((c, i) => (
+                <button
+                  key={c.customer_id}
+                  type="button"
+                  role="option"
+                  aria-selected={String(c.customer_id) === String(value)}
+                  onClick={() => selectCustomer(c)}
+                  onMouseEnter={() => setHighlight(i)}
+                  className={`w-full flex items-center gap-2.5 px-4 py-2.5 text-left border-b border-slate-100 last:border-0 transition-colors ${
+                    i === highlight ? 'bg-blue-50' : 'bg-white'
+                  } ${String(c.customer_id) === String(value) ? 'text-blue-700' : 'text-slate-800'}`}
+                >
+                  <User className="w-4 h-4 text-slate-400 flex-shrink-0" />
+                  <div className="min-w-0 flex-1">
+                    <p className="font-medium truncate">{c.customer_name || c.customer_id}</p>
+                    <p className="text-xs text-slate-500 truncate">{c.customer_id}</p>
+                  </div>
+                </button>
+              ))
+            )}
+          </div>,
+          document.body,
+        )}
     </div>
   );
 }

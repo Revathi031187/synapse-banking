@@ -1,493 +1,1083 @@
-import React, { useState, useEffect, useRef } from 'react';
-import { X } from 'lucide-react';
+import { useEffect, useMemo, useRef, useState } from 'react';
+import { createPortal } from 'react-dom';
+import { useQuery } from '@tanstack/react-query';
+import { useNavigate } from 'react-router-dom';
+import {
+  LayoutDashboard, TrendingUp, ChevronLeft, ChevronRight, Info,
+  AlertTriangle, Star, PenSquare, Database, X,
+} from 'lucide-react';
 
-// ─── Types ────────────────────────────────────────────────────────────────────
-interface Rec { rank: number; name: string; type: string; desc: string }
-interface Segment {
-  name: string; short: string; color: string; rgb: string; intentColor: string;
-  // raw numeric values drive the count-up animation
-  countRaw: number;    // actual customer count
-  balanceRaw: number;  // avg balance in dollars (e.g. 184000)
-  digitalRaw: number;  // digital adoption 0–100
-  intentRaw: number;   // intent score 0–100
-  income: string; credit: number; desc: string;
-  health: 'growing' | 'stable' | 'at-risk';
-  recs: Rec[];
-  offer: { headline: string; product: string; sub: string };
+const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || 'http://localhost:8002';
+
+// ─── Types ──────────────────────────────────────────────────────────────────
+// A per-factor entry from Banking12FactorScorer.score_product()'s breakdown —
+// same shape Agent B's Recommender tab uses for its "How is Suitability Score
+// calculated?" panel.
+interface FactorDetail {
+  score: number;
+  weight: number;
+  raw_score?: number;
+  calculation?: string;
+  explanation?: string;
+}
+interface TopProduct {
+  rank: number;
+  product_id: string;
+  name: string;
+  category: string | null;
+  subcategory: string | null;
+  description: string | null;
+  annual_fee: number | null;
+  monthly_fee: number | null;
+  interest_rate: number | null;
+  min_balance: number | null;
+  score_pct: number;               // Agent B's real 12-factor score (0-100), rule-based, persona mode
+  match_level: string | null;      // e.g. "Perfect Match", "Great Match"
+  rank_explanation: string | null;
+  llm_rationale: string | null;
+  detailed_calculation: Record<string, FactorDetail> | null;
+}
+type OfferProduct = TopProduct;
+interface SegmentData {
+  id: string;
+  name: string;
+  short_code: string;
+  count: number;
+  pct_of_base: number;
+  avg_balance: number;
+  avg_income: number;
+  avg_credit_score: number;
+  digital_adoption_pct: number;
+  cross_sell_pct: number;
+  churn_pct: number;
+  health: 'growing' | 'stable' | 'at-risk' | string;
+  description: string;
+  top_products: TopProduct[];
+  featured_offer: string;
+  offer_product: OfferProduct | null;
+  ad_spend_persona: string;
+  representative_customer_id: string | null;
+}
+interface Portfolio {
+  total_customers: number;
+  avg_balance: number;
+  cross_sell_pct: number;
+  churn_pct: number;
+}
+interface ChannelMetric {
+  spend_usd: number;
+  attributed_revenue_usd: number;
+  roas: number;
+}
+interface AdSpendMetrics {
+  personas: Record<string, Record<string, ChannelMetric>>;
+  summary: {
+    total_spend_usd: number;
+    total_revenue_usd: number;
+    blended_roas: number;
+    total_roi_pct: number;
+    reallocation_opportunity_usd: number;
+  };
+}
+interface MonthlyRow { month: number; month_name: string; spend_usd: number; revenue_usd: number }
+interface AdSpendMonthly { data: Record<string, Record<string, MonthlyRow[]>> }
+
+// ─── Constants ──────────────────────────────────────────────────────────────
+const CHANNELS = ['in_app', 'email', 'sms', 'branch'];
+const CHANNEL_LABELS: Record<string, string> = { in_app: 'In-App', email: 'Email', sms: 'SMS', branch: 'Branch' };
+
+// Segment identity colors. Agent A's cluster names are freshly LLM-generated on
+// every run, so they can't be looked up in a fixed name → color map (that map
+// would silently miss any name it wasn't written for, leaving `background`
+// undefined and white text invisible on the page's white background — the bug
+// that prompted this fix). Hashing the name into a fixed palette instead
+// guarantees every segment always resolves to a real, visible color.
+const SEGMENT_PALETTE = ['#5A7A2E', '#1B3C8C', '#0C7A6A', '#7127B0', '#0E9B6A', '#B45309', '#BE185D'];
+function colorForSegment(name: string): string {
+  let hash = 0;
+  for (let i = 0; i < name.length; i++) hash = (hash * 31 + name.charCodeAt(i)) >>> 0;
+  return SEGMENT_PALETTE[hash % SEGMENT_PALETTE.length];
 }
 
-// ─── Segment data ─────────────────────────────────────────────────────────────
-const SEGMENTS: Segment[] = [
-  {
-    name: 'Retiree Depositor', short: 'RD',
-    color: '#5A7A2E', rgb: '90,122,46', intentColor: '#D97706',
-    countRaw: 900, balanceRaw: 184000, digitalRaw: 25, intentRaw: 41.7,
-    income: '$62K', credit: 779, health: 'stable',
-    desc: 'Long-standing loyal customers who prefer in-branch banking and value personal relationships above all else',
-    recs: [
-      { rank: 1, name: 'Meridian Money Market',  type: 'Savings Account',        desc: 'Competitive yield with full daily liquidity and no lock-in period' },
-      { rank: 2, name: 'Meridian 12-Month CD',   type: 'Certificate of Deposit', desc: 'Locked-in guaranteed return — ideal for near-term income needs' },
-      { rank: 3, name: 'Meridian 24-Month CD',   type: 'Certificate of Deposit', desc: 'Higher APY for customers comfortable with a two-year horizon' },
-    ],
-    offer: {
-      headline: '+0.20% APY on balances over $25K',
-      product: 'Meridian Money Market',
-      sub: "An exclusive rate boost for Meridian's most loyal long-term depositors — rewarding tenure with a premium yield.",
-    },
-  },
-  {
-    name: 'Wealth Accumulator', short: 'WA',
-    color: '#1B3C8C', rgb: '27,60,140', intentColor: '#059669',
-    countRaw: 950, balanceRaw: 175000, digitalRaw: 64, intentRaw: 61.7,
-    income: '$195K', credit: 808, health: 'growing',
-    desc: 'High earners with strong savings discipline who hold multiple Meridian products and pursue long-term wealth goals',
-    recs: [
-      { rank: 1, name: 'Meridian HELOC',           type: 'Home Equity Line',       desc: 'Flexible access to home equity at competitive variable rates' },
-      { rank: 2, name: 'Meridian Roth IRA',        type: 'Retirement Account',     desc: 'Tax-free growth for high earners building long-term wealth' },
-      { rank: 3, name: 'Meridian Traditional IRA', type: 'Retirement Account',     desc: 'Pre-tax contributions to reduce current-year income exposure' },
-    ],
-    offer: {
-      headline: '$0 annual fee your first year',
-      product: 'Meridian HELOC',
-      sub: 'Unlock your home equity with no commitment cost in year one — for customers with strong savings discipline and excellent credit.',
-    },
-  },
-  {
-    name: 'Everyday Essential', short: 'EE',
-    color: '#0C7A6A', rgb: '12,122,106', intentColor: '#D97706',
-    countRaw: 1493, balanceRaw: 52000, digitalRaw: 45, intentRaw: 33.2,
-    income: '$73K', credit: 708, health: 'stable',
-    desc: 'Core everyday customers relying on checking, savings, and debit — middle-income earners with steady transaction habits',
-    recs: [
-      { rank: 1, name: 'Meridian FHA Mortgage', type: 'Home Loan',               desc: 'Low down-payment path to homeownership for middle-income earners' },
-      { rank: 2, name: 'Meridian Money Market', type: 'Savings Account',          desc: 'Everyday savings with competitive yield and no minimums required' },
-      { rank: 3, name: 'Meridian 12-Month CD',  type: 'Certificate of Deposit',   desc: 'A simple guaranteed return for surplus short-term savings' },
-    ],
-    offer: {
-      headline: '4.50% APY for the first 6 months',
-      product: 'Meridian Money Market',
-      sub: "An introductory rate designed to grow everyday savings — built for Meridian's largest and most active customer segment.",
-    },
-  },
-  {
-    name: 'Digital Trendsetter', short: 'DT',
-    color: '#7127B0', rgb: '113,39,176', intentColor: '#D97706',
-    countRaw: 857, balanceRaw: 42600, digitalRaw: 91, intentRaw: 36.5,
-    income: '$83K', credit: 698, health: 'stable',
-    desc: 'Mobile-first customers who manage all banking through the app — frequent transactions and high engagement with digital features',
-    recs: [
-      { rank: 1, name: 'Meridian Roth IRA',    type: 'Retirement Account',     desc: 'Tax-free growth for digitally-engaged earners building long-term wealth' },
-      { rank: 2, name: 'Meridian 12-Month CD', type: 'Certificate of Deposit', desc: 'Short-horizon guaranteed return for customers between investments' },
-      { rank: 3, name: 'Meridian 24-Month CD', type: 'Certificate of Deposit', desc: 'Higher yield for customers with a two-year savings horizon' },
-    ],
-    offer: {
-      headline: 'No annual fee until you turn 35',
-      product: 'Meridian Roth IRA',
-      sub: "An age-gated fee waiver for the bank's most digitally engaged segment — removing the barrier to long-term wealth building.",
-    },
-  },
-  {
-    name: 'At-Risk Saver', short: 'AR',
-    color: '#0E9B6A', rgb: '14,155,106', intentColor: '#DC2626',
-    countRaw: 800, balanceRaw: 10000, digitalRaw: 52, intentRaw: 8.0,
-    income: '$35K', credit: 568, health: 'at-risk',
-    desc: 'Financially stretched customers with limited savings and a higher likelihood of leaving — requiring proactive retention outreach',
-    recs: [
-      { rank: 1, name: 'Meridian Secured Card', type: 'Secured Credit Card',    desc: 'Build or rebuild credit with a fully secured, low-risk card product' },
-      { rank: 2, name: 'Meridian 12-Month CD',  type: 'Certificate of Deposit', desc: 'Preserve and grow limited savings with a guaranteed short-term return' },
-      { rank: 3, name: 'Meridian 24-Month CD',  type: 'Certificate of Deposit', desc: 'A longer-term CD for customers establishing a consistent savings habit' },
-    ],
-    offer: {
-      headline: '$0 annual fee for your first year',
-      product: 'Meridian Secured Card',
-      sub: 'Zero-cost entry into credit building — removing the fee barrier for customers who need a financial fresh start.',
-    },
-  },
-];
-
-// ─── Portfolio totals (computed once) ─────────────────────────────────────────
-const PORTFOLIO = (() => {
-  const totalCustomers = SEGMENTS.reduce((s, seg) => s + seg.countRaw, 0);
-  const totalAUM = SEGMENTS.reduce((s, seg) => s + seg.countRaw * seg.balanceRaw, 0);
-  const fmtAUM = totalAUM >= 1e9
-    ? '$' + (totalAUM / 1e9).toFixed(1) + 'B'
-    : '$' + Math.round(totalAUM / 1e6) + 'M';
-  return { totalCustomers, fmtAUM };
-})();
-
-// ─── Health badge config ──────────────────────────────────────────────────────
-const HEALTH = {
-  growing:  { label: '↑ Growing',  bg: 'rgba(16,185,129,0.18)',  text: '#6EE7B7' },
-  stable:   { label: '→ Stable',   bg: 'rgba(255,255,255,0.09)', text: 'rgba(255,255,255,0.45)' },
-  'at-risk':{ label: '↓ At Risk',  bg: 'rgba(239,68,68,0.18)',   text: '#FCA5A5' },
-} as const;
-
-// ─── Count-up hook ────────────────────────────────────────────────────────────
-function useCountUp(target: number, duration = 550): number {
-  const [current, setCurrent] = useState(target);
-  const fromRef = useRef(target);
-  const rafRef  = useRef<number>(0);
-
-  useEffect(() => {
-    const from = fromRef.current;
-    if (from === target) return;
-    const start = performance.now();
-
-    const tick = (now: number) => {
-      const t = Math.min((now - start) / duration, 1);
-      // ease-out cubic
-      const eased = 1 - Math.pow(1 - t, 3);
-      setCurrent(from + (target - from) * eased);
-      if (t < 1) {
-        rafRef.current = requestAnimationFrame(tick);
-      } else {
-        setCurrent(target);
-        fromRef.current = target;
-      }
-    };
-
-    cancelAnimationFrame(rafRef.current);
-    rafRef.current = requestAnimationFrame(tick);
-    return () => cancelAnimationFrame(rafRef.current);
-  }, [target, duration]);
-
-  return current;
+// Segment descriptions are LLM-generated multi-sentence paragraphs — trim to
+// the first 1-2 sentences for the header; line-clamp is a CSS safety net for
+// any sentence that's still too long on its own.
+function shortDescription(desc: string): string {
+  if (!desc) return desc;
+  const sentences = desc.match(/[^.!?]+[.!?]+/g) || [desc];
+  return sentences.slice(0, 2).join(' ').trim();
 }
 
-// ─── Format helpers ───────────────────────────────────────────────────────────
-function fmtCount(n: number)   { return Math.round(n).toLocaleString(); }
-function fmtBalance(n: number) {
-  const k = n / 1000;
-  return '$' + (k >= 100 ? Math.round(k) : +k.toFixed(1)) + 'K';
-}
-function fmtPct(n: number)     { return Math.round(n) + '%'; }
-function fmtIntent(n: number)  { return n.toFixed(1) + '%'; }
+const MONTH_NAMES = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
 
-// ─── AnimatedMetric ───────────────────────────────────────────────────────────
-function AnimatedMetric({
-  raw, fmt, label, color, rgb, segColor,
-}: {
-  raw: number; fmt: (n: number) => string; label: string;
-  color?: string; rgb: string; segColor: string;
-}) {
-  const animated = useCountUp(raw);
+// ─── Format helpers ─────────────────────────────────────────────────────────
+function fmtUSD(n: number): string {
+  if (Math.abs(n) >= 1_000_000) return '$' + (n / 1_000_000).toFixed(n % 1_000_000 === 0 ? 0 : 1) + 'M';
+  if (Math.abs(n) >= 1000) return '$' + Math.round(n / 1000) + 'K';
+  return '$' + Math.round(n);
+}
+function fmtInt(n: number): string { return Math.round(n).toLocaleString('en-US'); }
+function churnTone(pct: number): 'good' | 'warning' | 'critical' {
+  return pct >= 25 ? 'critical' : pct >= 14 ? 'warning' : 'good';
+}
+function roasTone(roas: number): 'good' | 'warning' | 'critical' {
+  return roas >= 3.5 ? 'good' : roas >= 2.2 ? 'warning' : 'critical';
+}
+function roasLabel(roas: number): string {
+  return roas >= 3.5 ? 'Opportunity' : roas >= 2.2 ? 'Mixed' : 'Underperform';
+}
+
+const TONE_CLASSES: Record<string, string> = {
+  good: 'bg-green-50 text-green-700',
+  warning: 'bg-amber-50 text-amber-700',
+  critical: 'bg-red-50 text-red-700',
+};
+const TONE_TEXT: Record<string, string> = {
+  good: 'text-green-600',
+  warning: 'text-amber-600',
+  critical: 'text-red-600',
+};
+const TONE_STRIP: Record<string, string> = {
+  good: 'bg-green-500',
+  warning: 'bg-amber-500',
+  critical: 'bg-red-500',
+};
+
+// ─── Small shared UI pieces ─────────────────────────────────────────────────
+function KpiTile({
+  label, value, caption, tone, highlight, tip,
+}: { label: string; value: string; caption: string; tone?: 'good' | 'warning' | 'critical'; highlight?: boolean; tip?: string }) {
+  const stripColor = highlight ? 'bg-amber-500' : tone ? TONE_STRIP[tone] : null;
   return (
-    <div
-      className="rounded-[9px] px-3 py-2.5 transition-all duration-300"
-      style={{ background: `rgba(${rgb},0.05)`, border: `1px solid rgba(${rgb},0.12)` }}
-    >
-      <div
-        className="text-[18px] font-extrabold tabular-nums leading-tight"
-        style={{ color: color || '#0F172A', letterSpacing: '-0.3px' }}
-      >
-        {fmt(animated)}
+    <div className={`bg-white border rounded-xl shadow-sm overflow-hidden ${highlight ? 'border-amber-300' : 'border-gray-200'}`}>
+      {stripColor && <div className={`h-1 ${stripColor}`} />}
+      <div className={`p-4 ${highlight ? 'bg-gradient-to-b from-amber-50 to-white' : ''}`}>
+        <div className="flex items-center gap-1.5 mb-2">
+          <p className="text-[10.5px] font-bold uppercase tracking-wide text-gray-400">{label}</p>
+          {tip && <InfoTip text={tip} />}
+        </div>
+        <div className={`text-[22px] font-extrabold tabular-nums tracking-tight ${tone ? TONE_TEXT[tone] : 'text-gray-900'}`}>{value}</div>
+        <p className="text-[11px] text-gray-400 mt-0.5">{caption}</p>
       </div>
-      <div className="text-[9px] uppercase tracking-[0.4px] text-gray-500 mt-0.5">{label}</div>
     </div>
   );
 }
 
-// ─── Offer Details Modal ───────────────────────────────────────────────────────
-function OfferDetailsModal({ seg, onClose }: { seg: Segment; onClose: () => void }) {
-  useEffect(() => {
-    const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape') onClose(); };
-    window.addEventListener('keydown', onKey);
-    return () => window.removeEventListener('keydown', onKey);
-  }, [onClose]);
+// Hover-to-explain bubble used next to KPIs, chart titles, and section headers —
+// tells a marketer (not a data analyst) what a number means and where it comes
+// from (which agent / which data file) without cluttering the UI permanently.
+function InfoTip({ text }: { text: string }) {
+  const anchorRef = useRef<HTMLSpanElement>(null);
+  const [pos, setPos] = useState<{ top: number; left: number } | null>(null);
 
-  const h = HEALTH[seg.health];
-  const matchedRec = seg.recs.find(r => r.name === seg.offer.product);
+  function show() {
+    const rect = anchorRef.current?.getBoundingClientRect();
+    if (!rect) return;
+    // Anchor to the icon's center; the bubble itself is translated up/left
+    // via inline style below so it never depends on a CSS stacking context
+    // that could be clipped by an ancestor's overflow-hidden.
+    setPos({ top: rect.top, left: rect.left + rect.width / 2 });
+  }
+  function hide() {
+    setPos(null);
+  }
 
   return (
-    <div
-      className="fixed inset-0 bg-black bg-opacity-60 z-50 flex items-center justify-center p-4 backdrop-blur-sm animate-fadeIn"
-      onClick={onClose}
+    <span
+      ref={anchorRef}
+      className="relative inline-flex"
+      onMouseEnter={show}
+      onMouseLeave={hide}
+      onFocus={show}
+      onBlur={hide}
     >
-      <div
-        className="bg-white rounded-2xl shadow-2xl w-full max-w-lg max-h-[92vh] overflow-y-auto relative"
-        onClick={e => e.stopPropagation()}
-      >
-        <div
-          className="absolute top-0 left-0 right-0 h-[3px]"
-          style={{ background: seg.color }}
+      <Info tabIndex={0} className="w-3 h-3 text-gray-300 cursor-help" />
+      {pos &&
+        createPortal(
+          <span
+            className="fixed w-56 rounded-lg bg-gray-900 text-white text-[11px] leading-snug px-2.5 py-1.5 pointer-events-none transition-opacity"
+            style={{
+              top: pos.top,
+              left: pos.left,
+              transform: 'translate(-50%, calc(-100% - 8px))',
+              zIndex: 9999,
+            }}
+          >
+            {text}
+          </span>,
+          document.body,
+        )}
+    </span>
+  );
+}
+
+function StatusBadge({ tone, label }: { tone: 'good' | 'warning' | 'critical'; label: string }) {
+  return (
+    <span className={`inline-flex items-center gap-1 text-[11px] font-bold px-2.5 py-0.5 rounded-full ${TONE_CLASSES[tone]}`}>
+      {label}
+    </span>
+  );
+}
+
+function SegmentDot({ name, size = 10 }: { name: string; size?: number }) {
+  return <span className="rounded-full flex-shrink-0" style={{ width: size, height: size, background: colorForSegment(name) }} />;
+}
+
+// ─── Monthly trend chart (spend bars + revenue line, hover tooltip) ────────
+function TrendChart({ spend, revenue, title }: { spend: number[]; revenue: number[]; title: string }) {
+  const [hoverIdx, setHoverIdx] = useState<number | null>(null);
+  const W = 720, H = 220, padL = 46, padR = 12, padT = 16, padB = 26;
+  const plotW = W - padL - padR, plotH = H - padT - padB;
+  const maxVal = Math.max(...revenue, ...spend) * 1.15 || 1;
+  const n = spend.length;
+  const stepX = plotW / n;
+  const x = (i: number) => padL + stepX * i + stepX / 2;
+  const y = (v: number) => padT + plotH - (v / maxVal) * plotH;
+
+  const revPts = revenue.map((v, i) => [x(i), y(v)] as const);
+  const linePath = 'M' + revPts.map(([px, py]) => `${px.toFixed(1)} ${py.toFixed(1)}`).join(' L');
+  const areaPath = linePath + ` L${revPts[n - 1][0].toFixed(1)} ${padT + plotH} L${revPts[0][0].toFixed(1)} ${padT + plotH} Z`;
+  const barW = Math.min(18, stepX * 0.42);
+
+  return (
+    <div className="relative">
+      <svg viewBox={`0 0 ${W} ${H}`} className="w-full h-[220px] block" role="img" aria-label={title}>
+        {[0, 0.5, 1].map((f) => {
+          const v = maxVal * f, gy = y(v);
+          return (
+            <g key={f}>
+              <line x1={padL} x2={W - padR} y1={gy} y2={gy} stroke="#EEF1F6" strokeWidth={1} />
+              <text x={4} y={gy + 3} fontSize={9.5} fill="#9CA3AF">{fmtUSD(v)}</text>
+            </g>
+          );
+        })}
+        <line x1={padL} x2={W - padR} y1={padT + plotH} y2={padT + plotH} stroke="#D1D5DB" strokeWidth={1} />
+        {spend.map((v, i) => {
+          const by = y(v);
+          return (
+            <rect key={i} x={x(i) - barW / 2} y={by} width={barW} height={padT + plotH - by} rx={2.5} fill="#CBD5E1" opacity={0.7} />
+          );
+        })}
+        <path d={areaPath} fill="#DBEAFE" opacity={0.6} />
+        <path d={linePath} fill="none" stroke="#2563EB" strokeWidth={2.2} strokeLinejoin="round" strokeLinecap="round" />
+        {revPts.map(([px, py], i) => (
+          <circle key={i} cx={px} cy={py} r={i === n - 1 ? 3.6 : 2.2} fill="#2563EB" />
+        ))}
+        {MONTH_NAMES.slice(0, n).map((m, i) => (
+          <text key={m} x={x(i)} y={H - 6} fontSize={9.5} fill="#9CA3AF" textAnchor="middle">{m}</text>
+        ))}
+        {hoverIdx !== null && (
+          <line x1={x(hoverIdx)} x2={x(hoverIdx)} y1={padT} y2={padT + plotH} stroke="#94A3B8" strokeWidth={1} strokeDasharray="3,3" />
+        )}
+        <rect
+          x={padL} y={padT} width={plotW} height={plotH} fill="transparent"
+          onMouseMove={(e) => {
+            const rect = (e.target as SVGRectElement).getBoundingClientRect();
+            const relX = ((e.clientX - rect.left) / rect.width) * plotW;
+            const i = Math.max(0, Math.min(n - 1, Math.round((relX - stepX / 2) / stepX)));
+            setHoverIdx(i);
+          }}
+          onMouseLeave={() => setHoverIdx(null)}
         />
-
-        <button
-          onClick={onClose}
-          className="absolute top-3.5 right-3.5 text-gray-400 hover:text-gray-700 hover:bg-gray-100 rounded-lg p-1.5 transition-colors"
-          aria-label="Close"
+      </svg>
+      {hoverIdx !== null && (
+        <div
+          className="absolute bg-gray-900 text-white text-[11.5px] rounded-lg px-2.5 py-2 pointer-events-none shadow-lg"
+          style={{ left: `${(x(hoverIdx) / W) * 100}%`, top: y(Math.max(spend[hoverIdx], revenue[hoverIdx])) - 8, transform: 'translate(-50%, -100%)' }}
         >
-          <X className="w-5 h-5" />
-        </button>
+          <div className="font-bold mb-1">{MONTH_NAMES[hoverIdx]}</div>
+          <div className="flex justify-between gap-3"><span>Spend</span><span>{fmtUSD(spend[hoverIdx])}</span></div>
+          <div className="flex justify-between gap-3"><span>Revenue</span><span>{fmtUSD(revenue[hoverIdx])}</span></div>
+        </div>
+      )}
+    </div>
+  );
+}
 
-        <div className="p-5">
-          <div
-            className="inline-flex items-center gap-1 text-white text-[9px] font-bold uppercase tracking-[0.7px] px-2.5 py-1 rounded-full mb-2.5"
-            style={{ background: seg.color }}
-          >
-            ★ Best Offer · {seg.name}
+function ChannelTable({ rows, subtitle }: { rows: { name: string; roas: number }[]; subtitle: string }) {
+  const sorted = [...rows].sort((a, b) => b.roas - a.roas);
+  return (
+    <div className="bg-white border border-gray-200 rounded-xl shadow-sm p-4 flex flex-col">
+      <div className="flex items-center gap-1.5">
+        <p className="text-[14px] font-bold text-gray-900">Channel Performance</p>
+        <InfoTip text="ROAS per marketing channel (email, SMS, in-app, branch) — Opportunity ≥3.5×, Mixed 2.2-3.5×, Underperform below that." />
+      </div>
+      <p className="text-[11.5px] text-gray-400 mb-3">{subtitle}</p>
+      <div className="grid grid-cols-[1.3fr_1fr_0.7fr] gap-x-2 text-[10px] font-bold uppercase tracking-wide text-gray-400 pb-2">
+        <span>Channel</span><span>Status</span><span className="text-right">ROAS</span>
+      </div>
+      {sorted.map((c) => (
+        <div key={c.name} className="grid grid-cols-[1.3fr_1fr_0.7fr] gap-x-2 items-center py-2.5 border-t border-gray-100 text-[12.5px]">
+          <span className="font-semibold text-gray-900">{c.name}</span>
+          <StatusBadge tone={roasTone(c.roas)} label={roasLabel(c.roas)} />
+          <span className="text-right font-extrabold tabular-nums">{c.roas.toFixed(1)}&times;</span>
+        </div>
+      ))}
+    </div>
+  );
+}
+
+// ─── Data hooks ─────────────────────────────────────────────────────────────
+function useSegments() {
+  return useQuery({
+    queryKey: ['dashboard-segments'],
+    queryFn: async () => {
+      const res = await fetch(`${API_BASE_URL}/api/banking/dashboard/segments`);
+      if (!res.ok) throw new Error('Failed to load segment data');
+      const json = await res.json();
+      return json as { ready: boolean; segments?: SegmentData[]; portfolio?: Portfolio };
+    },
+    staleTime: 60_000,
+  });
+}
+function useAdSpendMetrics(enabled: boolean) {
+  return useQuery({
+    queryKey: ['ad-spend-metrics'],
+    queryFn: async () => {
+      const res = await fetch(`${API_BASE_URL}/api/banking/ad_spend/metrics`);
+      if (!res.ok) throw new Error('Failed to load ad spend metrics');
+      return (await res.json()) as AdSpendMetrics;
+    },
+    enabled,
+    staleTime: 60_000,
+  });
+}
+function useAdSpendMonthly(enabled: boolean) {
+  return useQuery({
+    queryKey: ['ad-spend-monthly'],
+    queryFn: async () => {
+      const res = await fetch(`${API_BASE_URL}/api/banking/ad_spend/monthly`);
+      if (!res.ok) throw new Error('Failed to load ad spend monthly trend');
+      return (await res.json()) as AdSpendMonthly;
+    },
+    enabled,
+    staleTime: 60_000,
+  });
+}
+
+// ─── Aggregation helpers (client-side, over already-real API data) ────────
+function blendedChannels(metrics: AdSpendMetrics): { name: string; roas: number }[] {
+  return CHANNELS.map((ch) => {
+    let spend = 0, revenue = 0;
+    Object.values(metrics.personas).forEach((personaChannels) => {
+      const m = personaChannels[ch];
+      if (m) { spend += m.spend_usd; revenue += m.attributed_revenue_usd; }
+    });
+    return { name: CHANNEL_LABELS[ch], roas: spend > 0 ? revenue / spend : 0 };
+  });
+}
+function blendedMonthly(monthly: AdSpendMonthly): { spend: number[]; revenue: number[] } {
+  const spend = Array(12).fill(0), revenue = Array(12).fill(0);
+  Object.values(monthly.data).forEach((personaChannels) => {
+    Object.values(personaChannels).forEach((rows) => {
+      rows.forEach((r) => { spend[r.month - 1] += r.spend_usd; revenue[r.month - 1] += r.revenue_usd; });
+    });
+  });
+  return { spend, revenue };
+}
+function personaMonthly(monthly: AdSpendMonthly, persona: string): { spend: number[]; revenue: number[] } {
+  const spend = Array(12).fill(0), revenue = Array(12).fill(0);
+  const channels = monthly.data[persona] || {};
+  Object.values(channels).forEach((rows) => {
+    rows.forEach((r) => { spend[r.month - 1] += r.spend_usd; revenue[r.month - 1] += r.revenue_usd; });
+  });
+  return { spend, revenue };
+}
+function personaChannels(metrics: AdSpendMetrics, persona: string): { name: string; roas: number }[] {
+  const channels = metrics.personas[persona] || {};
+  return CHANNELS.filter((ch) => channels[ch]).map((ch) => ({ name: CHANNEL_LABELS[ch], roas: channels[ch].roas }));
+}
+
+// ─── Component ──────────────────────────────────────────────────────────────
+type Tab = 'overview' | 'marketing';
+
+export default function BankingSegmentDashboard() {
+  const [tab, setTab] = useState<Tab>('overview');
+  const [segId, setSegId] = useState<string | null>(null);
+  const [descExpanded, setDescExpanded] = useState(false);
+  const navigate = useNavigate();
+
+  const segmentsQuery = useSegments();
+  const adSpendQuery = useAdSpendMetrics(tab === 'marketing');
+  const monthlyQuery = useAdSpendMonthly(tab === 'marketing');
+
+  const segments = segmentsQuery.data?.segments ?? [];
+  const portfolio = segmentsQuery.data?.portfolio;
+  const activeSeg = useMemo(() => segments.find((s) => s.id === segId) ?? null, [segments, segId]);
+  const activeIdx = activeSeg ? segments.indexOf(activeSeg) : -1;
+
+  // Collapse the expanded description again whenever the viewed segment changes.
+  useEffect(() => { setDescExpanded(false); }, [segId]);
+
+  if (segmentsQuery.isLoading) {
+    return <div className="flex-1 flex items-center justify-center text-gray-400 text-sm">Loading segment data…</div>;
+  }
+  if (segmentsQuery.isError) {
+    return (
+      <div className="flex-1 flex items-center justify-center text-center px-6">
+        <div>
+          <p className="text-gray-700 font-semibold mb-1">Couldn't load segment data</p>
+          <p className="text-gray-400 text-sm">Make sure the backend API is running, then refresh.</p>
+        </div>
+      </div>
+    );
+  }
+  if (segmentsQuery.data?.ready === false || segments.length === 0) {
+    return (
+      <div className="flex-1 flex items-center justify-center text-center px-6">
+        <div className="max-w-md">
+          <div className="w-12 h-12 rounded-xl bg-blue-50 flex items-center justify-center mx-auto mb-4">
+            <Database className="w-6 h-6 text-blue-600" />
           </div>
-
-          <h3 className="text-[19px] font-extrabold text-gray-900 mb-1.5 leading-tight" style={{ letterSpacing: '-0.4px' }}>
-            {seg.offer.headline}
-          </h3>
-          <p className="text-[12.5px] text-gray-600 leading-relaxed mb-3.5">{seg.offer.sub}</p>
-
-          {/* Product card */}
-          <div
-            className="rounded-xl p-3.5 mb-3.5"
-            style={{ background: `rgba(${seg.rgb},0.05)`, border: `1px solid rgba(${seg.rgb},0.15)` }}
-          >
-            <p className="text-[9px] font-bold uppercase tracking-[0.5px] text-gray-400 mb-1">Featured Product</p>
-            <p className="text-[14px] font-bold text-gray-900 mb-0.5">{seg.offer.product}</p>
-            {matchedRec && (
-              <>
-                <p className="text-[10px] uppercase tracking-[0.3px] text-gray-400 mb-1">{matchedRec.type}</p>
-                <p className="text-[11.5px] text-gray-600 leading-snug">{matchedRec.desc}</p>
-              </>
-            )}
-          </div>
-
-          {/* Segment fit — header row carries the portfolio-health badge to save a row */}
-          <div className="flex items-center justify-between mb-2">
-            <p className="text-[10px] font-bold uppercase tracking-[0.8px] text-gray-500">Segment Fit</p>
-            <span
-              className="text-[9px] font-bold px-2 py-0.5 rounded-full whitespace-nowrap"
-              style={{ background: h.bg.includes('rgba(255') ? '#F1F5F9' : h.bg, color: h.bg.includes('rgba(255') ? '#64748B' : h.text }}
-            >
-              {h.label}
-            </span>
-          </div>
-          <div className="grid grid-cols-4 gap-2 mb-3.5">
-            <div className="rounded-lg px-2 py-2 border border-gray-200 text-center">
-              <p className="text-[13px] font-extrabold text-gray-900 tabular-nums">{fmtBalance(seg.balanceRaw)}</p>
-              <p className="text-[8px] uppercase tracking-[0.3px] text-gray-500 mt-0.5 leading-tight">Avg Balance</p>
-            </div>
-            <div className="rounded-lg px-2 py-2 border border-gray-200 text-center">
-              <p className="text-[13px] font-extrabold text-gray-900 tabular-nums">{seg.credit}</p>
-              <p className="text-[8px] uppercase tracking-[0.3px] text-gray-500 mt-0.5 leading-tight">Credit Score</p>
-            </div>
-            <div className="rounded-lg px-2 py-2 border border-gray-200 text-center">
-              <p className="text-[13px] font-extrabold text-gray-900 tabular-nums">{seg.income}</p>
-              <p className="text-[8px] uppercase tracking-[0.3px] text-gray-500 mt-0.5 leading-tight">Avg Income</p>
-            </div>
-            <div className="rounded-lg px-2 py-2 border border-gray-200 text-center">
-              <p className="text-[13px] font-extrabold text-gray-900 tabular-nums">{fmtIntent(seg.intentRaw)}</p>
-              <p className="text-[8px] uppercase tracking-[0.3px] text-gray-500 mt-0.5 leading-tight">Intent Score</p>
-            </div>
-          </div>
-
-          <p className="text-[11px] text-gray-500 leading-relaxed mb-4">{seg.desc}</p>
-
+          <p className="text-gray-900 font-bold text-[15px] mb-2">No segment data yet</p>
+          <p className="text-gray-500 text-[13.5px] leading-relaxed mb-5">
+            This dashboard shows real figures from Agent A's customer clusters. Load the banking dataset and run
+            clustering first, then come back — every number here will reflect the actual customer segments.
+          </p>
           <button
-            onClick={onClose}
-            className="w-full text-white text-[13px] font-bold px-4 py-2.5 rounded-lg transition-all hover:opacity-90"
-            style={{ background: seg.color }}
+            onClick={() => navigate('/banking/data-loader')}
+            className="bg-blue-600 text-white text-[13.5px] font-semibold px-4 py-2.5 rounded-lg hover:bg-blue-700 transition-colors"
           >
-            Close
+            Go to Data Loader →
           </button>
         </div>
       </div>
+    );
+  }
+
+  return (
+    <div className="flex-1 flex overflow-hidden min-h-0 bg-gray-50">
+
+      {/* Vertical tab rail (Overview / Marketing Performance) */}
+      <nav className="w-48 flex-shrink-0 bg-white border-r border-gray-200 flex flex-col py-4">
+        <p className="px-4 pb-2 text-[10.5px] font-bold uppercase tracking-wide text-gray-400">Dashboard</p>
+        {(['overview', 'marketing'] as Tab[]).map((t) => (
+          <button
+            key={t}
+            onClick={() => setTab(t)}
+            className={`flex items-center gap-2.5 mx-2 px-3 py-2.5 rounded-lg text-[13.5px] font-semibold text-left transition-colors ${
+              tab === t ? 'bg-blue-50 text-blue-600' : 'text-gray-600 hover:bg-gray-50'
+            }`}
+          >
+            {t === 'overview' ? <LayoutDashboard className="w-4 h-4 flex-shrink-0" /> : <TrendingUp className="w-4 h-4 flex-shrink-0" />}
+            {t === 'overview' ? 'Overview' : 'Marketing Performance'}
+          </button>
+        ))}
+      </nav>
+
+      {/* Right side: segment rail (fixed) + scrollable content */}
+      <div className="flex-1 flex flex-col overflow-hidden min-h-0">
+
+        {/* Top strip — segment/cluster rail only */}
+        <div className="bg-white border-b border-gray-200 flex-shrink-0">
+          <div className="px-6 py-2.5 flex gap-2 overflow-x-auto">
+            <button
+              onClick={() => setSegId(null)}
+              className={`flex items-center gap-2 flex-shrink-0 rounded-full px-3 py-1.5 text-[12.5px] font-semibold border ${
+                segId === null ? 'bg-blue-50 border-blue-300 text-gray-900' : 'bg-gray-50 border-gray-200 text-gray-600 hover:border-gray-300'
+              }`}
+            >
+              <span className="w-2.5 h-2.5 rounded-full bg-blue-600" />
+              All Segments <span className="text-gray-400 tabular-nums">{fmtInt(portfolio?.total_customers ?? 0)}</span>
+            </button>
+            {segments.map((s) => (
+              <button
+                key={s.id}
+                onClick={() => setSegId(s.id)}
+                className={`flex items-center gap-2 flex-shrink-0 rounded-full px-3 py-1.5 text-[12.5px] font-semibold border ${
+                  segId === s.id ? 'bg-blue-50 border-blue-300 text-gray-900' : 'bg-gray-50 border-gray-200 text-gray-600 hover:border-gray-300'
+                }`}
+              >
+                <SegmentDot name={s.name} size={9} />
+                {s.name} <span className="text-gray-400 tabular-nums">{fmtInt(s.count)}</span>
+              </button>
+            ))}
+          </div>
+        </div>
+
+        {/* Scrollable content — segment header now scrolls with everything else */}
+        <div className="flex-1 overflow-y-auto bg-gradient-to-b from-blue-50/50 via-gray-50 to-gray-50">
+          <div className="max-w-6xl mx-auto px-6 py-6">
+
+            {activeSeg && (
+              <div className="bg-white border border-gray-200 rounded-xl shadow-sm mb-6 overflow-hidden">
+                <div className="h-1.5" style={{ background: colorForSegment(activeSeg.name) }} />
+                <div className="px-5 py-4 flex gap-4 items-start">
+                  <div
+                    className="w-11 h-11 rounded-xl flex-shrink-0 flex items-center justify-center font-black text-white text-sm shadow-sm"
+                    style={{ background: colorForSegment(activeSeg.name) }}
+                  >
+                    {activeSeg.short_code}
+                  </div>
+                  <div className="flex-1 min-w-0">
+                    <div className="flex items-center gap-2 text-[10.5px] font-bold uppercase tracking-wide text-gray-400 mb-1">
+                      <button onClick={() => setSegId(segments[(activeIdx - 1 + segments.length) % segments.length].id)} className="w-5 h-5 rounded border border-gray-200 flex items-center justify-center hover:border-gray-400">
+                        <ChevronLeft className="w-3 h-3" />
+                      </button>
+                      SEGMENT {activeIdx + 1} OF {segments.length}
+                      <button onClick={() => setSegId(segments[(activeIdx + 1) % segments.length].id)} className="w-5 h-5 rounded border border-gray-200 flex items-center justify-center hover:border-gray-400">
+                        <ChevronRight className="w-3 h-3" />
+                      </button>
+                    </div>
+                    <h2 className="text-[19px] font-extrabold text-gray-900 mb-1">{activeSeg.name}</h2>
+                    {(() => {
+                      const short = shortDescription(activeSeg.description);
+                      const hasMore = short !== activeSeg.description;
+                      return (
+                        <div className="max-w-[62ch]">
+                          <p className={`text-[13px] text-gray-500 ${descExpanded ? 'leading-relaxed' : 'leading-snug line-clamp-2'}`}>
+                            {descExpanded ? activeSeg.description : short}
+                          </p>
+                          {hasMore && (
+                            <button
+                              onClick={() => setDescExpanded((v) => !v)}
+                              className="text-[12.5px] text-blue-600 font-semibold hover:underline mt-0.5"
+                            >
+                              {descExpanded ? 'less' : 'more'}
+                            </button>
+                          )}
+                        </div>
+                      );
+                    })()}
+                  </div>
+                  <span className="flex-shrink-0 text-[11.5px] font-bold text-gray-600 bg-gray-50 border border-gray-200 rounded-full px-3 py-1.5 tabular-nums">
+                    {fmtInt(activeSeg.count)} customers
+                  </span>
+                </div>
+              </div>
+            )}
+
+            {tab === 'overview'
+              ? (activeSeg ? <OverviewSegment seg={activeSeg} /> : <OverviewAll segments={segments} portfolio={portfolio!} onSelect={setSegId} />)
+              : (
+                <MarketingTab
+                  seg={activeSeg}
+                  segments={segments}
+                  metrics={adSpendQuery.data}
+                  monthly={monthlyQuery.data}
+                  loading={adSpendQuery.isLoading || monthlyQuery.isLoading}
+                  onSelect={setSegId}
+                />
+              )}
+          </div>
+        </div>
+      </div>
     </div>
   );
 }
 
-// ─── Component ────────────────────────────────────────────────────────────────
-export default function BankingSegmentDashboard() {
-  const [activeIdx, setActiveIdx] = useState(0);
-  const [showOfferModal, setShowOfferModal] = useState(false);
-  const seg = SEGMENTS[activeIdx];
+// ─── Overview: all segments ─────────────────────────────────────────────────
+function OverviewAll({ segments, portfolio, onSelect }: { segments: SegmentData[]; portfolio: Portfolio; onSelect: (id: string) => void }) {
+  const topOffers = [...segments].sort((a, b) => b.count - a.count).slice(0, 5);
+  return (
+    <>
+      <SectionHead
+        title="Portfolio Overview" hint={`All ${segments.length} segments · ${fmtInt(portfolio.total_customers)} customers`}
+        tip="Blended across all of Agent A's real customer segments for this dataset."
+      />
+      <div className="grid grid-cols-4 gap-3 mb-8">
+        <KpiTile
+          label="Addressable Customers" value={fmtInt(portfolio.total_customers)} caption="across 5 personas"
+          tip="Total customers across all Agent A segments — the full portfolio this platform can target."
+        />
+        <KpiTile
+          label="Avg. Customer Value" value={fmtUSD(portfolio.avg_balance)} caption="avg. deposit balance, blended"
+          tip="Average deposit balance across every customer in the portfolio."
+        />
+        <KpiTile
+          label="Offer Receptivity" value={`${portfolio.cross_sell_pct.toFixed(0)}%`} caption="propensity to accept a targeted offer"
+          tip="Average cross-sell receptivity score across the whole portfolio — how likely customers are to say yes to a new offer."
+        />
+        <KpiTile
+          label="Churn Risk" value={`${portfolio.churn_pct.toFixed(0)}%`} tone={churnTone(portfolio.churn_pct)}
+          caption={churnTone(portfolio.churn_pct) === 'good' ? 'within healthy range' : 'needs attention'}
+          tip="Average churn probability across the whole portfolio, from our churn model."
+        />
+      </div>
+
+      <SectionHead
+        title="Segment Snapshot" hint="Click a segment to see its full detail"
+        tip="One card per Agent A segment — best offer is Agent B's #1-ranked persona-mode recommendation for that segment."
+      />
+      <div className="grid grid-cols-5 gap-3 mb-8">
+        {segments.map((s) => (
+          <button
+            key={s.id}
+            onClick={() => onSelect(s.id)}
+            className="text-left bg-white border border-gray-200 border-l-[3px] rounded-xl shadow-sm p-4 hover:border-gray-300 hover:shadow-md transition-all"
+            style={{ borderLeftColor: colorForSegment(s.name) }}
+          >
+            <div className="flex items-center gap-2 mb-3">
+              <SegmentDot name={s.name} />
+              <div>
+                <div className="text-[13px] font-bold text-gray-900 leading-tight">{s.name}</div>
+                <div className="text-[11px] text-gray-400 tabular-nums">{fmtInt(s.count)} customers</div>
+              </div>
+            </div>
+            <div className="flex justify-between text-[11.5px] text-gray-500 mb-1">
+              <span>Best offer</span><span className="truncate ml-2 text-gray-700 font-medium">{s.offer_product?.name ?? s.top_products[0]?.name ?? '—'}</span>
+            </div>
+            <div className="flex justify-between items-center text-[11.5px] text-gray-500 mb-2">
+              <span>Churn risk</span><StatusBadge tone={churnTone(s.churn_pct)} label={`${s.churn_pct.toFixed(0)}%`} />
+            </div>
+            <span className="text-[11.5px] font-bold text-blue-600">View details &rarr;</span>
+          </button>
+        ))}
+      </div>
+
+      <SectionHead
+        title="Top Offers Across Segments" hint="Ranked by segment size"
+        tip="Each segment's #1 Agent B persona-mode recommendation, sorted by how many customers are in that segment."
+      />
+      <div className="bg-white border border-gray-200 rounded-xl shadow-sm p-4 overflow-x-auto">
+        <div className="grid grid-cols-[2fr_1.3fr_0.9fr_0.9fr] gap-x-3 min-w-[520px] text-[10px] font-bold uppercase tracking-wide text-gray-400 pb-2">
+          <span>Offer</span><span>Persona</span><span className="text-right">Segment Size</span><span className="text-right">Avg. Balance</span>
+        </div>
+        {topOffers.map((s) => (
+          <div key={s.id} className="grid grid-cols-[2fr_1.3fr_0.9fr_0.9fr] gap-x-3 min-w-[520px] items-center py-2.5 border-t border-gray-100 text-[12.5px]">
+            <span className="font-bold text-gray-900 truncate">{s.featured_offer.split(' — ')[0] || s.offer_product?.name || '—'}</span>
+            <span className="flex items-center gap-1.5 text-gray-600 truncate"><SegmentDot name={s.name} size={8} />{s.name}</span>
+            <span className="text-right tabular-nums text-gray-700">{fmtInt(s.count)}</span>
+            <span className="text-right tabular-nums font-bold text-gray-900">{fmtUSD(s.avg_balance)}</span>
+          </div>
+        ))}
+      </div>
+    </>
+  );
+}
+
+// ─── Overview: single segment ───────────────────────────────────────────────
+function matchScoreTone(pct: number): string {
+  if (pct >= 70) return 'text-emerald-700 bg-emerald-50';
+  if (pct >= 45) return 'text-blue-600 bg-blue-50';
+  return 'text-amber-700 bg-amber-50';
+}
+
+// products.csv has no real fee-waiver conditions we surface elsewhere; keep
+// factor labels human-readable rather than raw snake_case column names.
+function factorLabel(key: string): string {
+  return key.replace(/_/g, ' ').replace(/\b\w/g, (c) => c.toUpperCase());
+}
+
+// Agent B's rank_explanation/reason strings carry **bold**/*italic* Markdown
+// emphasis markers meant for a Markdown-aware renderer — this plain <p> isn't
+// one, so strip them rather than showing literal asterisks to the user.
+function stripMdEmphasis(s: string): string {
+  return s.replace(/\*\*(.*?)\*\*/g, '$1').replace(/\*(.*?)\*/g, '$1');
+}
+
+function ProductFactChip({ label, value }: { label: string; value: string }) {
+  return (
+    <div className="bg-gray-50 border border-gray-200 rounded-lg px-3 py-2.5">
+      <p className="text-[9.5px] font-bold uppercase text-gray-400 mb-0.5">{label}</p>
+      <p className="text-[14px] font-extrabold tabular-nums">{value}</p>
+    </div>
+  );
+}
+
+// Detail popup for a single recommended product — the full description, fees,
+// rank rationale, and 12-factor breakdown that the compact card intentionally
+// leaves out (see ProductCompactCard). Same plain-CSS overlay convention as
+// frontend/src/components/CustomerInsightModal.tsx.
+function ProductDetailModal({ product, onClose }: { product: TopProduct; onClose: () => void }) {
+  const factors = product.detailed_calculation
+    ? Object.entries(product.detailed_calculation).filter(([k]) => k !== 'total_score' && k !== 'total_percentage')
+    : [];
+  return (
+    <div className="fixed inset-0 bg-black/60 z-50 flex items-center justify-center p-4 backdrop-blur-sm" onClick={onClose}>
+      <div
+        className="bg-white rounded-2xl shadow-2xl max-w-lg w-full max-h-[85vh] overflow-hidden flex flex-col"
+        onClick={(e) => e.stopPropagation()}
+      >
+        <div className="px-6 py-5 flex items-start justify-between gap-3 flex-shrink-0" style={{ background: 'linear-gradient(120deg, #1B3C8C, #2563EB)' }}>
+          <div className="min-w-0">
+            <p className="text-[10.5px] font-bold uppercase tracking-wide text-white/75 mb-1">{product.subcategory || product.category || 'Product'}</p>
+            <h3 className="text-[18px] font-extrabold text-white leading-tight">{product.name}</h3>
+          </div>
+          <button onClick={onClose} className="text-white/80 hover:text-white hover:bg-white/20 rounded-full p-1.5 transition-colors flex-shrink-0">
+            <X className="w-5 h-5" />
+          </button>
+        </div>
+
+        <div className="flex-1 overflow-y-auto min-h-0 p-6 space-y-5">
+          <div className="flex items-center gap-2">
+            <span className={`text-[12px] font-bold rounded-full px-3 py-1 ${matchScoreTone(product.score_pct)}`}>
+              {product.score_pct.toFixed(0)}% match
+            </span>
+            {product.match_level && <span className="text-[12px] font-semibold text-gray-500">{product.match_level}</span>}
+          </div>
+
+          {product.description && <p className="text-[13px] text-gray-600 leading-relaxed">{product.description}</p>}
+
+          <div className="grid grid-cols-2 gap-2.5">
+            <ProductFactChip label="Annual Fee" value={product.annual_fee ? `$${product.annual_fee}` : 'None'} />
+            {!!product.interest_rate && <ProductFactChip label="Rate" value={`${(product.interest_rate * 100).toFixed(2)}% APY`} />}
+            {product.min_balance != null && <ProductFactChip label="Min. Balance" value={fmtUSD(product.min_balance)} />}
+            {!!product.monthly_fee && <ProductFactChip label="Monthly Fee" value={`$${product.monthly_fee}`} />}
+          </div>
+
+          {product.rank_explanation && (
+            <div className="bg-blue-50 border border-blue-100 rounded-lg p-3">
+              <p className="text-[10px] font-bold uppercase text-blue-500 mb-1">Why #{product.rank}</p>
+              <p className="text-[12.5px] text-blue-900 leading-relaxed">{stripMdEmphasis(product.rank_explanation)}</p>
+            </div>
+          )}
+
+          {product.llm_rationale && (
+            <p className="text-[12.5px] text-gray-500 italic leading-relaxed">&ldquo;{product.llm_rationale}&rdquo;</p>
+          )}
+
+          {factors.length > 0 && (
+            <div>
+              <p className="text-[10.5px] font-bold uppercase tracking-wide text-gray-400 mb-2">12-Factor Match Breakdown</p>
+              <div className="space-y-1.5">
+                {factors.map(([key, f]) => (
+                  <div key={key} className="flex items-center gap-2">
+                    <span className="text-[11.5px] text-gray-600 w-40 flex-shrink-0 truncate">{factorLabel(key)}</span>
+                    <div className="flex-1 h-1.5 bg-gray-100 rounded-full overflow-hidden">
+                      <div
+                        className="h-full bg-blue-500 rounded-full"
+                        style={{ width: `${Math.max(0, Math.min(100, (f.raw_score ?? 0) * 100))}%` }}
+                      />
+                    </div>
+                    <span className="text-[11px] font-bold text-gray-700 w-10 text-right tabular-nums">{Math.round((f.raw_score ?? 0) * 100)}%</span>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function ProductCompactCard({ product, onClick }: { product: TopProduct; onClick: () => void }) {
+  return (
+    <button
+      onClick={onClick}
+      className="w-full text-left bg-white border border-gray-200 rounded-xl shadow-sm p-3 hover:border-blue-300 hover:shadow-md transition-all"
+    >
+      <div className="flex justify-between items-start gap-3">
+        <div className="min-w-0">
+          <p className="text-[13.5px] font-bold text-gray-900 truncate">{product.name}</p>
+          <span className="text-[10.5px] font-bold uppercase tracking-wide text-blue-500">{product.subcategory || product.category || 'Product'}</span>
+        </div>
+        <span className={`text-[11px] font-bold rounded-full px-2 py-0.5 flex-shrink-0 whitespace-nowrap ${matchScoreTone(product.score_pct)}`}>
+          {product.score_pct.toFixed(0)}% match
+        </span>
+      </div>
+      <div className="flex items-center gap-2 mt-1.5 text-[10.5px] text-gray-400">
+        <span>{product.annual_fee ? `$${product.annual_fee}/yr` : 'No annual fee'}</span>
+        {!!product.interest_rate && (
+          <>
+            <span>·</span>
+            <span>{(product.interest_rate * 100).toFixed(2)}% APY</span>
+          </>
+        )}
+        <span className="ml-auto text-blue-600 font-semibold">Details →</span>
+      </div>
+    </button>
+  );
+}
+
+function OverviewSegment({ seg }: { seg: SegmentData }) {
+  const navigate = useNavigate();
+  const offer = seg.offer_product;
+  const [detailProduct, setDetailProduct] = useState<TopProduct | null>(null);
 
   return (
-    <div className="flex-1 flex overflow-hidden min-h-0">
+    <>
+      <div className="grid grid-cols-4 gap-3 mb-8">
+        <KpiTile
+          label="Segment Size" value={fmtInt(seg.count)} caption={`${seg.pct_of_base.toFixed(0)}% of portfolio`}
+          tip="Agent A's real cluster size — the number of customers K-Prototypes clustering assigned to this segment."
+        />
+        <KpiTile
+          label="Avg. Customer Value" value={fmtUSD(seg.avg_balance)} caption="avg. deposit balance"
+          tip="Average total deposit balance across this segment's real customers, from Agent A's cluster characteristics."
+        />
+        <KpiTile
+          label="Offer Receptivity" value={`${seg.cross_sell_pct.toFixed(0)}%`} caption="propensity to accept a targeted offer"
+          tip="Average cross-sell receptivity score for this segment's customers — how likely they are to say yes to a new product offer."
+        />
+        <KpiTile
+          label="Churn Risk" value={`${seg.churn_pct.toFixed(0)}%`} tone={churnTone(seg.churn_pct)}
+          caption={churnTone(seg.churn_pct) === 'good' ? 'within healthy range' : churnTone(seg.churn_pct) === 'warning' ? 'elevated — monitor' : 'high — prioritize retention'}
+          tip="Average churn probability across this segment's real customers, from our churn model."
+        />
+      </div>
 
-      {/* ══ LEFT SEGMENT SIDEBAR ════════════════════════════════════════ */}
-      <aside className="w-52 flex-shrink-0 bg-[#0C1B2E] border-r border-white/[0.07] flex flex-col">
-
-        <p className="px-4 pt-4 pb-2 text-[13px] font-bold uppercase tracking-widest text-white/70 flex-shrink-0">
-          Customer Segments
-        </p>
-
-        {/* Segment list — scrolls if needed */}
-        <div className="flex-1 overflow-y-auto flex flex-col gap-0.5 px-2 min-h-0">
-          {SEGMENTS.map((s, idx) => {
-            const h = HEALTH[s.health];
-            return (
+      <div className="grid grid-cols-[1.15fr_0.85fr] gap-5 items-stretch">
+        <div className="flex flex-col h-[420px]">
+          <SectionHead
+            title="Recommended Products"
+            hint="Agent B · rule-based · persona mode"
+            tip="The exact same products and scores Agent B's Recommender tab computes for this persona (rule-based scoring, all product types) — click a product for full details."
+          />
+          <div className="bg-white border border-gray-200 rounded-xl shadow-sm overflow-hidden flex flex-col flex-1 min-h-0">
+            <div className="flex-1 overflow-y-auto min-h-0 p-3 space-y-2">
+              {seg.top_products.length === 0 && (
+                <p className="text-[12.5px] text-gray-400 p-2">No eligible products found for this segment.</p>
+              )}
+              {seg.top_products.slice(0, 3).map((p) => (
+                <ProductCompactCard key={p.rank} product={p} onClick={() => setDetailProduct(p)} />
+              ))}
+            </div>
+            <div className="p-3 border-t border-gray-100 flex-shrink-0">
               <button
-                key={s.name}
-                onClick={() => setActiveIdx(idx)}
-                className={`w-full flex items-center gap-2.5 px-3 py-2.5 rounded-lg text-left transition-all ${
-                  activeIdx === idx ? 'bg-white/[0.08]' : 'hover:bg-white/[0.04]'
-                }`}
-                style={activeIdx === idx ? { boxShadow: `inset 3px 0 0 ${s.color}` } : undefined}
+                onClick={() => navigate(`/banking/agent-b?persona=${encodeURIComponent(seg.id)}&category=`)}
+                className="w-full flex items-center justify-center gap-1.5 text-[12px] font-bold text-white bg-blue-600 hover:bg-blue-700 rounded-lg py-2.5 transition-colors"
               >
-                <div className="w-2.5 h-2.5 rounded-full flex-shrink-0" style={{ background: s.color }} />
-                <div className="min-w-0 flex-1">
-                  <div className="text-[12.5px] font-semibold text-white/85 leading-tight truncate">{s.name}</div>
-                  <div className="text-[10.5px] text-white/40 mt-0.5 tabular-nums">{s.countRaw.toLocaleString()} customers</div>
-                </div>
-                {/* Health badge */}
-                <span
-                  className="flex-shrink-0 text-[9px] font-bold px-1.5 py-0.5 rounded-full whitespace-nowrap"
-                  style={{ background: h.bg, color: h.text }}
-                >
-                  {h.label}
-                </span>
+                View in Recommender
+                <ChevronRight className="w-3.5 h-3.5" />
               </button>
-            );
-          })}
-        </div>
-
-        {/* ── Portfolio Totals Footer ── */}
-        <div className="flex-shrink-0 border-t border-white/[0.07] px-4 py-3">
-          <p className="text-[9px] font-bold uppercase tracking-widest text-white/35 mb-2">Portfolio</p>
-          <div className="grid grid-cols-3 gap-1">
-            <div>
-              <div className="text-[13px] font-extrabold text-white/90 tabular-nums leading-tight">
-                {SEGMENTS.length}
-              </div>
-              <div className="text-[8.5px] text-white/35 uppercase tracking-wide mt-0.5">Segments</div>
-            </div>
-            <div>
-              <div className="text-[13px] font-extrabold text-white/90 tabular-nums leading-tight">
-                {(PORTFOLIO.totalCustomers / 1000).toFixed(1)}K
-              </div>
-              <div className="text-[8.5px] text-white/35 uppercase tracking-wide mt-0.5">Customers</div>
-            </div>
-            <div>
-              <div className="text-[13px] font-extrabold text-white/90 tabular-nums leading-tight">
-                {PORTFOLIO.fmtAUM}
-              </div>
-              <div className="text-[8.5px] text-white/35 uppercase tracking-wide mt-0.5">Total AUM</div>
             </div>
           </div>
         </div>
-      </aside>
 
-      {/* ══ CENTER CONTENT ══════════════════════════════════════════════ */}
-      <main className="flex-1 min-w-0 bg-[#F5F7FB] flex flex-col overflow-hidden">
-
-        {/* Scrollable content */}
-        <div className="flex-1 overflow-y-auto p-5 flex flex-col gap-4">
-
-          {/* Hero */}
-          <div className="bg-white rounded-xl border border-gray-200 p-5 relative overflow-hidden flex-shrink-0">
-            <div
-              className="absolute top-0 left-0 right-0 h-[3px] transition-colors duration-300"
-              style={{ background: seg.color }}
-            />
-            <div className="flex items-start gap-3.5 mb-4">
-              <div
-                className="w-11 h-11 rounded-[10px] flex-shrink-0 flex items-center justify-center transition-all duration-300"
-                style={{ background: `rgba(${seg.rgb},0.10)`, border: `1.5px solid rgba(${seg.rgb},0.20)` }}
-              >
-                <span className="text-sm font-black" style={{ color: seg.color }}>{seg.short}</span>
+        <div className="flex flex-col h-[420px]">
+          <SectionHead
+            title="Best Offer" hint=" "
+            tip="Rank #1 from Agent B's persona-mode recommendation list for this segment — the same computation as Recommended Products, just the top result."
+          />
+          <div className="bg-white border border-gray-200 rounded-xl shadow-sm overflow-hidden flex flex-col flex-1 min-h-0">
+            <div className="p-4 flex-shrink-0" style={{ background: `linear-gradient(120deg, ${colorForSegment(seg.name)}, #2563EB)` }}>
+              <div className="flex items-start justify-between gap-2 mb-1.5">
+                <p className="text-[10.5px] font-bold uppercase tracking-wide text-white/75">{offer?.category || 'Featured Offer'}</p>
+                {offer && (
+                  <span className="text-[10.5px] font-bold text-white bg-white/20 rounded-full px-2 py-0.5 flex-shrink-0 whitespace-nowrap">
+                    {offer.score_pct.toFixed(0)}% match
+                  </span>
+                )}
               </div>
-              <div>
-                <p
-                  className="text-[9px] font-bold uppercase tracking-[1.1px] mb-1 transition-colors duration-300"
-                  style={{ color: seg.color }}
-                >
-                  Segment {activeIdx + 1} of 5
-                </p>
-                <h2
-                  className="text-[21px] font-extrabold text-gray-900 leading-tight"
-                  style={{ letterSpacing: '-0.4px' }}
-                >
-                  {seg.name}
-                </h2>
-                <p className="text-[12px] text-gray-500 mt-1 max-w-[480px] leading-relaxed">{seg.desc}</p>
+              <p className="text-[15px] font-extrabold text-white leading-tight">{offer?.name || seg.featured_offer.split(' — ')[0]}</p>
+              {offer?.subcategory && <p className="text-[11px] text-white/70 mt-0.5">{offer.subcategory}</p>}
+            </div>
+            <div className="p-4 flex-1 overflow-y-auto min-h-0">
+              {offer?.description && <p className="text-[12px] text-gray-500 leading-relaxed mb-3">{offer.description}</p>}
+              {offer?.rank_explanation && (
+                <p className="text-[11.5px] text-gray-500 leading-relaxed mb-3 bg-gray-50 border border-gray-100 rounded-lg p-2.5">{stripMdEmphasis(offer.rank_explanation)}</p>
+              )}
+              <div className="grid grid-cols-2 gap-2.5">
+                <ProductFactChip label="Est. Reach" value={`${fmtInt(seg.count)} customers`} />
+                {!!offer?.interest_rate && <ProductFactChip label="Rate" value={`${(offer.interest_rate * 100).toFixed(2)}% APY`} />}
+                <ProductFactChip label="Annual Fee" value={offer?.annual_fee ? `$${offer.annual_fee}` : 'None'} />
+                {offer?.min_balance != null && <ProductFactChip label="Min. Balance" value={fmtUSD(offer.min_balance)} />}
               </div>
             </div>
-
-            {/* Animated metric grid */}
-            <div className="grid grid-cols-4 gap-2">
-              <AnimatedMetric raw={seg.countRaw}   fmt={fmtCount}   label="Total Customers"    rgb={seg.rgb} segColor={seg.color} />
-              <AnimatedMetric raw={seg.balanceRaw} fmt={fmtBalance} label="Avg Annual Balance"  rgb={seg.rgb} segColor={seg.color} />
-              <AnimatedMetric raw={seg.digitalRaw} fmt={fmtPct}     label="Digital Adoption"    rgb={seg.rgb} segColor={seg.color} />
-              <AnimatedMetric raw={seg.intentRaw}  fmt={fmtIntent}  label="Intent Score"        rgb={seg.rgb} segColor={seg.color} color={seg.intentColor} />
+            <div className="p-3 border-t border-gray-100 flex-shrink-0">
+              <button
+                onClick={() => navigate(`/banking/agent-c?persona=${encodeURIComponent(seg.id)}`)}
+                className="w-full flex items-center justify-center gap-1.5 text-[12px] font-bold text-white bg-blue-600 hover:bg-blue-700 rounded-lg py-2.5 transition-colors"
+              >
+                View in Offer & Ad Spend
+                <ChevronRight className="w-3.5 h-3.5" />
+              </button>
             </div>
           </div>
-
-          {/* Recommendations */}
-          <div className="flex-shrink-0">
-            <p className="text-[10px] font-bold uppercase tracking-[0.8px] text-gray-500 mb-2.5">Top 3 Recommendations</p>
-            <div className="grid grid-cols-3 gap-2.5">
-              {seg.recs.map(rec => {
-                const RANK_STYLES = [
-                  { bg: 'rgba(251,191,36,0.18)', border: 'rgba(217,119,6,0.35)',  color: '#B45309' }, // gold
-                  { bg: 'rgba(148,163,184,0.18)', border: 'rgba(100,116,139,0.30)', color: '#475569' }, // silver
-                  { bg: 'rgba(180,83,9,0.13)',    border: 'rgba(146,64,14,0.28)',  color: '#92400E' }, // bronze
-                ];
-                const rs = RANK_STYLES[(rec.rank - 1) % 3];
-                return (
-                  <div
-                    key={rec.rank}
-                    className="bg-white rounded-xl border-[1.5px] border-gray-200 p-3.5 transition-all duration-150 hover:-translate-y-0.5 hover:shadow-md cursor-default"
-                    onMouseEnter={e => { (e.currentTarget as HTMLDivElement).style.borderColor = `rgba(${seg.rgb},0.40)`; }}
-                    onMouseLeave={e => { (e.currentTarget as HTMLDivElement).style.borderColor = ''; }}
-                  >
-                    <div
-                      className="w-6 h-6 rounded-[6px] flex items-center justify-center text-[11px] font-bold mb-2.5"
-                      style={{ background: rs.bg, border: `1px solid ${rs.border}`, color: rs.color }}
-                    >
-                      {rec.rank}
-                    </div>
-                    <p className="text-[13px] font-bold text-gray-900 leading-snug mb-1">{rec.name}</p>
-                    <p className="text-[10px] uppercase tracking-[0.3px] text-gray-400 mb-2">{rec.type}</p>
-                    <p className="text-[11.5px] text-gray-500 leading-snug">{rec.desc}</p>
-                  </div>
-                );
-              })}
-            </div>
-          </div>
-
-          {/* Offer */}
-          <div className="flex-shrink-0">
-            <p className="text-[10px] font-bold uppercase tracking-[0.8px] text-gray-500 mb-2.5">Featured Offer</p>
-            <div
-              className="bg-white rounded-xl p-5 relative overflow-hidden transition-all duration-300"
-              style={{ border: `1.5px solid rgba(${seg.rgb},0.28)` }}
-            >
-              <div
-                className="absolute top-0 right-0 w-52 h-full pointer-events-none"
-                style={{ background: `radial-gradient(ellipse at top right, rgba(${seg.rgb},0.07), transparent 70%)` }}
-              />
-              <div
-                className="inline-flex items-center gap-1 text-white text-[9px] font-bold uppercase tracking-[0.7px] px-2.5 py-1 rounded-full mb-2 transition-colors duration-300"
-                style={{ background: seg.color }}
-              >
-                ★ Best Offer · {seg.name}
-              </div>
-              <h3
-                className="text-[22px] font-extrabold text-gray-900 mb-1 leading-tight"
-                style={{ letterSpacing: '-0.5px' }}
-              >
-                {seg.offer.headline}
-              </h3>
-              <p className="text-[12px] text-gray-500 max-w-[520px] leading-relaxed mb-4">{seg.offer.sub}</p>
-              <div className="flex items-center gap-2.5">
-                <button
-                  onClick={() => setShowOfferModal(true)}
-                  className="text-white text-[12px] font-bold px-4 py-2 rounded-lg transition-all hover:opacity-90 hover:-translate-y-px active:translate-y-0"
-                  style={{ background: seg.color }}
-                >
-                  View Offer Details →
-                </button>
-                <span className="text-[11px] text-gray-500 bg-gray-50 border border-gray-200 px-2.5 py-1.5 rounded-md">
-                  {seg.offer.product}
-                </span>
-              </div>
-            </div>
-          </div>
-
         </div>
-      </main>
+      </div>
 
-      {showOfferModal && (
-        <OfferDetailsModal seg={seg} onClose={() => setShowOfferModal(false)} />
+      {detailProduct && <ProductDetailModal product={detailProduct} onClose={() => setDetailProduct(null)} />}
+    </>
+  );
+}
+
+// ─── Marketing tab ───────────────────────────────────────────────────────────
+function MarketingTab({
+  seg, segments, metrics, monthly, loading, onSelect,
+}: {
+  seg: SegmentData | null; segments: SegmentData[]; metrics?: AdSpendMetrics; monthly?: AdSpendMonthly;
+  loading: boolean; onSelect: (id: string) => void;
+}) {
+  if (loading || !metrics || !monthly) {
+    return <div className="text-center text-gray-400 text-sm py-16">Loading marketing performance…</div>;
+  }
+  return seg
+    ? <MarketingSegment seg={seg} metrics={metrics} monthly={monthly} />
+    : <MarketingAll segments={segments} metrics={metrics} monthly={monthly} onSelect={onSelect} />;
+}
+
+function MarketingAll({
+  segments, metrics, monthly, onSelect,
+}: { segments: SegmentData[]; metrics: AdSpendMetrics; monthly: AdSpendMonthly; onSelect: (id: string) => void }) {
+  const channels = blendedChannels(metrics);
+  const best = channels.reduce((a, b) => (b.roas > a.roas ? b : a));
+  const worst = channels.reduce((a, b) => (b.roas < a.roas ? b : a));
+  const { spend, revenue } = blendedMonthly(monthly);
+
+  const segRevenue = segments.map((s) => {
+    const rev = Object.values(metrics.personas[s.ad_spend_persona] || {}).reduce((sum, m) => sum + m.attributed_revenue_usd, 0);
+    return { seg: s, revenue: rev };
+  });
+  const bestSegment = segRevenue.reduce((a, b) => (b.revenue > a.revenue ? b : a));
+  const bestSegmentPct = (bestSegment.revenue / metrics.summary.total_revenue_usd) * 100;
+
+  return (
+    <>
+      <SectionHead
+        title="Marketing Performance" hint="Spend, attributed revenue, and channel performance across all 5 segments"
+        tip="Mapped to each segment via its closest matching marketing persona."
+      />
+      <div className="grid grid-cols-4 gap-3 mb-8">
+        <KpiTile
+          label="Total Ad Spend" value={fmtUSD(metrics.summary.total_spend_usd)} caption="4 channels · 5 segments"
+          tip="Sum of spend across email, SMS, in-app, and branch channels, all segments."
+        />
+        <KpiTile
+          label="Attributed Revenue" value={fmtUSD(metrics.summary.total_revenue_usd)} caption="conversions × product value"
+          tip="Revenue attributed to marketing campaigns — conversions multiplied by the value of the product converted."
+        />
+        <KpiTile
+          label="Blended ROAS" value={`${metrics.summary.blended_roas.toFixed(2)}×`} tone={roasTone(metrics.summary.blended_roas)} caption="$ returned per $1 spent"
+          tip="Total attributed revenue ÷ total ad spend across the whole portfolio."
+        />
+        <KpiTile
+          label="Reallocation Opportunity" value={fmtUSD(metrics.summary.reallocation_opportunity_usd)} tone="warning" highlight caption="modeled upside from rebalancing"
+          tip="Modeled extra revenue if budget shifted from the lowest-ROAS channel toward the highest-ROAS channel."
+        />
+      </div>
+
+      <SectionHead title="What Needs Your Attention" hint="" tip="Automatically generated from the actual best/worst-performing channel and segment in the data below." />
+      <div className="grid grid-cols-3 gap-3 mb-8">
+        <InsightCard tone="good" icon={<Star className="w-3.5 h-3.5" />} title={`Move budget into ${best.name}`}>
+          <p className="text-[11.5px] text-gray-500 leading-relaxed mb-2">{best.name} returns {best.roas.toFixed(1)}&times; ROAS blended across segments — the strongest channel in the portfolio right now.</p>
+          <StatusBadge tone="good" label={`${best.roas.toFixed(1)}× return`} />
+        </InsightCard>
+        <InsightCard tone="critical" icon={<AlertTriangle className="w-3.5 h-3.5" />} title={`${worst.name} returns the least`}>
+          <p className="text-[11.5px] text-gray-500 leading-relaxed mb-2">This channel returns {worst.roas.toFixed(1)}&times; blended — the most room to improve of any channel in the portfolio.</p>
+          <StatusBadge tone="critical" label={`${worst.roas.toFixed(1)}× return`} />
+        </InsightCard>
+        <InsightCard tone="neutral" icon={<PenSquare className="w-3.5 h-3.5" />} title={`${bestSegment.seg.name} is your best segment`}>
+          <p className="text-[11.5px] text-gray-500 leading-relaxed mb-2">Just {bestSegment.seg.pct_of_base.toFixed(0)}% of customers, driven mainly through {personaChannels(metrics, bestSegment.seg.ad_spend_persona).sort((a, b) => b.roas - a.roas)[0]?.name}, deliver a disproportionate share of attributed revenue.</p>
+          <StatusBadge tone="good" label={`${bestSegmentPct.toFixed(0)}% of revenue`} />
+        </InsightCard>
+      </div>
+
+      <div className="grid grid-cols-[1.6fr_1fr] gap-4 mb-8 items-stretch">
+        <div className="bg-white border border-gray-200 rounded-xl shadow-sm p-4">
+          <div className="flex justify-between items-baseline mb-2">
+            <div className="flex items-center gap-1.5">
+              <p className="text-[14px] font-bold text-gray-900">Spend vs. Attributed Revenue</p>
+              <InfoTip text="Monthly spend (bars) vs. attributed revenue (line), blended across all segments." />
+            </div>
+            <div className="flex gap-4 text-[11.5px] text-gray-500">
+              <span className="flex items-center gap-1.5"><span className="w-2.5 h-2.5 rounded-sm bg-gray-300" />Spend</span>
+              <span className="flex items-center gap-1.5"><span className="w-2.5 h-0.5 rounded-full bg-blue-600" />Attributed Revenue</span>
+            </div>
+          </div>
+          <TrendChart spend={spend} revenue={revenue} title="Spend vs. Attributed Revenue, all segments" />
+        </div>
+        <ChannelTable rows={channels} subtitle="Blended across all segments" />
+      </div>
+
+      <SectionHead
+        title="Segment Snapshot" hint="Click a segment to see its own channel breakdown"
+        tip="Each segment's single best-performing marketing channel by ROAS."
+      />
+      <div className="grid grid-cols-5 gap-3">
+        {segments.map((s) => {
+          const best = [...personaChannels(metrics, s.ad_spend_persona)].sort((a, b) => b.roas - a.roas)[0];
+          return (
+            <button
+            key={s.id}
+            onClick={() => onSelect(s.id)}
+            className="text-left bg-white border border-gray-200 border-l-[3px] rounded-xl shadow-sm p-4 hover:border-gray-300 hover:shadow-md transition-all"
+            style={{ borderLeftColor: colorForSegment(s.name) }}
+          >
+              <div className="flex items-center gap-2 mb-3">
+                <SegmentDot name={s.name} />
+                <div>
+                  <div className="text-[13px] font-bold text-gray-900 leading-tight">{s.name}</div>
+                  <div className="text-[11px] text-gray-400 tabular-nums">{fmtInt(s.count)} customers</div>
+                </div>
+              </div>
+              <div className="flex justify-between text-[11.5px] text-gray-500 mb-2">
+                <span>Best channel</span><span className="text-gray-700 font-medium">{best ? `${best.name} · ${best.roas.toFixed(1)}×` : '—'}</span>
+              </div>
+              <span className="text-[11.5px] font-bold text-blue-600">View breakdown &rarr;</span>
+            </button>
+          );
+        })}
+      </div>
+    </>
+  );
+}
+
+function MarketingSegment({ seg, metrics, monthly }: { seg: SegmentData; metrics: AdSpendMetrics; monthly: AdSpendMonthly }) {
+  const persona = seg.ad_spend_persona;
+  const channels = [...personaChannels(metrics, persona)].sort((a, b) => b.roas - a.roas);
+  const best = channels[0], worst = channels[channels.length - 1];
+  const totalSpend = Object.values(metrics.personas[persona] || {}).reduce((s, m) => s + m.spend_usd, 0);
+  const totalRevenue = Object.values(metrics.personas[persona] || {}).reduce((s, m) => s + m.attributed_revenue_usd, 0);
+  const roas = totalSpend > 0 ? totalRevenue / totalSpend : 0;
+  const { spend, revenue } = personaMonthly(monthly, persona);
+
+  return (
+    <>
+      <div className="grid grid-cols-3 gap-3 mb-6">
+        <KpiTile
+          label="Segment Ad Spend" value={fmtUSD(totalSpend)} caption="FY2025 total"
+          tip={`Ad spend for the "${persona}" marketing persona this segment maps to.`}
+        />
+        <KpiTile
+          label="Attributed Revenue" value={fmtUSD(totalRevenue)} caption="conversions × product value"
+          tip="Revenue attributed to this segment's marketing campaigns — conversions multiplied by product value."
+        />
+        <KpiTile
+          label="Segment ROAS" value={`${roas.toFixed(2)}×`} tone={roasTone(roas)} caption="$ returned per $1 spent"
+          tip="This segment's attributed revenue ÷ its ad spend."
+        />
+      </div>
+
+      {best && worst && (
+        <InsightCard tone="neutral" icon={<Star className="w-3.5 h-3.5" />} title={`Best channel: ${best.name} (${best.roas.toFixed(1)}× ROAS)`} wide>
+          <p className="text-[11.5px] text-gray-500 leading-relaxed">
+            {seg.name}'s outreach performs best through {best.name} and worst through {worst.name} ({worst.roas.toFixed(1)}&times;) — consider shifting incremental budget accordingly.
+          </p>
+        </InsightCard>
       )}
 
+      <div className="grid grid-cols-[1.6fr_1fr] gap-4 mt-6 items-stretch">
+        <div className="bg-white border border-gray-200 rounded-xl shadow-sm p-4">
+          <div className="flex items-center gap-1.5 mb-2">
+            <p className="text-[14px] font-bold text-gray-900">Spend vs. Attributed Revenue — {seg.name}</p>
+            <InfoTip text={`Monthly spend vs. attributed revenue for the "${persona}" marketing persona.`} />
+          </div>
+          <TrendChart spend={spend} revenue={revenue} title={`Spend vs. Attributed Revenue, ${seg.name}`} />
+        </div>
+        <ChannelTable rows={channels} subtitle={`${seg.name} only`} />
+      </div>
+    </>
+  );
+}
+
+// ─── Shared bits ─────────────────────────────────────────────────────────────
+function SectionHead({ title, hint, tip }: { title: string; hint: string; tip?: string }) {
+  return (
+    <div className="flex items-baseline justify-between mb-3">
+      <div className="flex items-center gap-1.5">
+        <h3 className="text-[14.5px] font-bold text-gray-900">{title}</h3>
+        {tip && <InfoTip text={tip} />}
+      </div>
+      <p className="text-[12px] text-gray-400">{hint}</p>
+    </div>
+  );
+}
+
+function InsightCard({
+  tone, icon, title, children, wide,
+}: { tone: 'good' | 'critical' | 'neutral'; icon: React.ReactNode; title: string; children: React.ReactNode; wide?: boolean }) {
+  const borderColor = tone === 'good' ? 'border-l-green-500' : tone === 'critical' ? 'border-l-red-500' : 'border-l-blue-500';
+  const iconBg = tone === 'good' ? 'bg-green-50 text-green-600' : tone === 'critical' ? 'bg-red-50 text-red-600' : 'bg-blue-50 text-blue-600';
+  return (
+    <div className={`bg-white border border-gray-200 border-l-[3px] ${borderColor} rounded-xl shadow-sm p-4 ${wide ? 'mb-2' : ''}`}>
+      <div className="flex items-center gap-2 mb-1.5">
+        <span className={`w-5.5 h-5.5 rounded-md flex items-center justify-center ${iconBg}`}>{icon}</span>
+        <span className="text-[13px] font-bold text-gray-900">{title}</span>
+      </div>
+      {children}
     </div>
   );
 }

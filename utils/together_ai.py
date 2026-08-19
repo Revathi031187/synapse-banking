@@ -3,10 +3,12 @@ Together AI Service Integration
 Handles embeddings and LLM completions for persona generation
 """
 import os
+import time
 from typing import List, Dict, Any, Optional
 import requests
 import numpy as np
 from utils.logger import get_logger
+from utils.token_tracker import log_llm_call
 import urllib3
 urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 
@@ -71,32 +73,41 @@ class TogetherAIService:
         ]
         
         last_error = None
-        
+        t0 = time.monotonic()
+
         for model_name in models_to_try:
             try:
                 logger.info(f"🔮 Trying embeddings with model: {model_name} for {len(texts)} texts...")
-                
+
                 url = f"{TOGETHER_API_BASE}/embeddings"
                 payload = {
                     "model": model_name,
                     "input": texts
                 }
-                
+
                 response = requests.post(url, json=payload, headers=self.headers, verify=False, timeout=30)
-                
+
                 # Log response details for debugging
                 if response.status_code != 200:
                     logger.warning(f"⚠️  Response status: {response.status_code}")
                     logger.warning(f"⚠️  Response body: {response.text[:500]}")
-                
+
                 response.raise_for_status()
-                
+
                 data = response.json()
                 embeddings = np.array([item['embedding'] for item in data['data']])
-                
+                usage = data.get("usage") or {}
+                log_llm_call(
+                    provider="together", agent="embeddings", call_type="create_embeddings",
+                    duration_ms=int((time.monotonic() - t0) * 1000), success=True, model=model_name,
+                    prompt_tokens=int(usage.get("prompt_tokens", 0) or 0),
+                    total_tokens=int(usage.get("total_tokens", usage.get("prompt_tokens", 0)) or 0),
+                    note="" if usage else f"{len(texts)} texts embedded; provider did not report token usage",
+                )
+
                 logger.info(f"✅ Created embeddings with {model_name}: shape {embeddings.shape}")
                 return embeddings
-                
+
             except requests.exceptions.HTTPError as e:
                 last_error = e
                 logger.warning(f"⚠️  HTTP Error for {model_name}: {e}")
@@ -107,24 +118,32 @@ class TogetherAIService:
                 last_error = e
                 logger.warning(f"⚠️  Error for {model_name}: {e}")
                 continue
-        
+
         # If all models failed
+        log_llm_call(
+            provider="together", agent="embeddings", call_type="create_embeddings",
+            duration_ms=int((time.monotonic() - t0) * 1000), success=False, fallback_used=True,
+            note=str(last_error)[:200],
+        )
         logger.error(f"❌ All embedding models failed. Last error: {last_error}")
         logger.info("💡 Falling back to zero embeddings - search will use keyword matching")
         return np.zeros((len(texts), 1024))  # Updated to match BAAI/bge-large-en-v1.5 dimension
     
     def generate_text(
-        self, 
-        prompt: str, 
+        self,
+        prompt: str,
         system_message: str = "You are a helpful AI assistant specialized in marketing and customer analysis.",
         model: str = "meta-llama/Meta-Llama-3-8B-Instruct-Lite",
         max_tokens: int = 500,
-        temperature: float = 0.7
+        temperature: float = 0.7,
+        agent_name: str = "unknown",
+        call_type: str = "general",
     ) -> str:
         """
         Generate text using LLM. Tries several models if one returns 400/404 (Together often deprecates IDs).
         Set TOGETHER_CHAT_MODEL in .env to force a single model.
         """
+        t0 = time.monotonic()
         if not self.api_key or len(self.api_key) < 8:
             logger.debug("Together chat skipped: no API key")
             return "Error generating description"
@@ -184,6 +203,14 @@ class TogetherAIService:
                 generated_text = (choices[0].get("message") or {}).get("content") or ""
                 if not generated_text.strip():
                     continue
+                usage = data.get("usage") or {}
+                log_llm_call(
+                    provider="together", agent=agent_name, call_type=call_type,
+                    duration_ms=int((time.monotonic() - t0) * 1000), success=True, model=mname,
+                    prompt_tokens=int(usage.get("prompt_tokens", 0) or 0),
+                    completion_tokens=int(usage.get("completion_tokens", 0) or 0),
+                    total_tokens=int(usage.get("total_tokens", 0) or 0),
+                )
                 logger.info(f"✅ Generated {len(generated_text)} chars with {mname}")
                 return generated_text
 
@@ -192,6 +219,11 @@ class TogetherAIService:
                 logger.warning(f"Together chat request failed ({mname}): {e}")
                 continue
 
+        log_llm_call(
+            provider="together", agent=agent_name, call_type=call_type,
+            duration_ms=int((time.monotonic() - t0) * 1000), success=False, fallback_used=True,
+            note=str(last_detail)[:200] if last_detail else "",
+        )
         logger.error(f"❌ All Together chat models failed. Last detail: {last_detail}")
         return "Error generating description"
     
@@ -216,7 +248,9 @@ Generate ONLY the persona name, nothing else."""
             prompt=prompt,
             system_message="You are a marketing expert creating memorable customer personas. Be creative but professional.",
             max_tokens=20,
-            temperature=0.8
+            temperature=0.8,
+            agent_name="agent_a",
+            call_type="persona_name",
         ).strip()
     
     def generate_persona_description(self, persona_name: str, cluster_data: Dict[str, Any]) -> str:
@@ -247,7 +281,9 @@ Write in a professional but engaging tone."""
             prompt=prompt,
             system_message="You are a senior marketing strategist creating actionable customer personas.",
             max_tokens=400,
-            temperature=0.7
+            temperature=0.7,
+            agent_name="agent_a",
+            call_type="persona_description",
         )
     
     def generate_product_recommendations_reasoning(
@@ -272,7 +308,9 @@ Be specific and actionable."""
             reasoning = self.generate_text(
                 prompt=prompt,
                 max_tokens=100,
-                temperature=0.6
+                temperature=0.6,
+                agent_name="agent_b",
+                call_type="product_reasoning",
             ).strip()
             reasonings.append(reasoning)
         
@@ -309,7 +347,9 @@ Be concise and business-focused."""
             prompt=prompt,
             system_message="You are a data science consultant explaining ML results to marketing executives.",
             max_tokens=200,
-            temperature=0.7
+            temperature=0.7,
+            agent_name="agent_a",
+            call_type="clustering_quality_explanation",
         ).strip()
     
     def explain_visualization_pattern(
@@ -350,7 +390,9 @@ Be clear and actionable."""
             prompt=prompt,
             system_message="You are a marketing analytics expert explaining data visualizations.",
             max_tokens=150,
-            temperature=0.7
+            temperature=0.7,
+            agent_name="agent_a",
+            call_type="visualization_explanation",
         ).strip()
     
     def generate_persona_insights(self, persona_data: Dict[str, Any]) -> str:
@@ -386,7 +428,9 @@ Be concise and actionable."""
             prompt=prompt,
             system_message="You are a senior marketing strategist providing persona insights.",
             max_tokens=200,
-            temperature=0.7
+            temperature=0.7,
+            agent_name="agent_a",
+            call_type="persona_insights",
         ).strip()
     
     def generate_banking_product_explanation(
@@ -442,9 +486,11 @@ Be conversational but professional. No markdown formatting."""
             prompt=prompt,
             system_message=system_message,
             max_tokens=200,
-            temperature=0.7
+            temperature=0.7,
+            agent_name="agent_b",
+            call_type="banking_product_explanation",
         )
-    
+
     def generate_segment_product_reasoning(
         self,
         persona_name: str,
@@ -487,7 +533,9 @@ Be professional and strategic."""
             prompt=prompt,
             system_message=system_message,
             max_tokens=150,
-            temperature=0.7
+            temperature=0.7,
+            agent_name="agent_b",
+            call_type="segment_product_reasoning",
         )
 
     def generate_agent_b_vs_c_explanation(
@@ -531,6 +579,8 @@ Do not use markdown asterisks or numbered lists."""
             system_message=system_message,
             max_tokens=320,
             temperature=0.55,
+            agent_name="agent_c",
+            call_type="agent_b_vs_c_explanation",
         )
 
     def generate_marketing_opportunities(
@@ -572,7 +622,9 @@ Generate exactly 3 or 4 opportunities. RULES: Each bullet MUST be one short sent
                 prompt=prompt,
                 system_message=system_message,
                 max_tokens=280,
-                temperature=0.6
+                temperature=0.6,
+                agent_name="agent_a",
+                call_type="marketing_opportunities",
             )
             if not text or "Error generating" in text:
                 return []
@@ -704,6 +756,8 @@ Output ONLY the JSON object."""
             system_message=system_msg,
             max_tokens=650,
             temperature=0.6,
+            agent_name="agent_b",
+            call_type="complete_customer_analysis",
         )
 
         if not raw or "Error generating" in raw:
@@ -803,6 +857,8 @@ Output ONLY the JSON object."""
             system_message=system_msg,
             max_tokens=900,
             temperature=0.65,
+            agent_name="agent_c",
+            call_type="offer_communication_content",
         )
 
         if not raw or "Error generating" in raw:

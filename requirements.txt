@@ -26,6 +26,9 @@ huggingface-hub>=0.20.0
 requests==2.31.0
 httpx==0.25.1
 
+# LLM providers
+anthropic>=0.40.0
+
 # Databricks Genie (WorkspaceClient); UC upload uses httpx only
 databricks-sdk>=0.29.0,<1.0.0
 
