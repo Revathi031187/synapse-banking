@@ -2898,6 +2898,14 @@ def _load_agent_a_cache():
             # Auto-set banking_data_loaded so Agent B can run without an explicit
             # "Load Dataset" click when the Agent A cache (and thus full data) is present.
             system_state['banking']['banking_data_loaded'] = True
+            # Restore the LIVE banking_agent_a object's persona state too — not just
+            # system_state['banking']['agent_a_results']. Without this, every endpoint
+            # that reads system_state (e.g. /api/banking/status) reports segmentation
+            # as complete, while endpoints that read banking_agent_a.personas directly
+            # (e.g. /api/banking/dashboard/segments) see an empty dict and report
+            # "not ready" — the exact split that made the Dashboard tab show "No
+            # segment data yet" after a restart even though the cache said otherwise.
+            banking_agent_a.personas = data.get('personas') or {}
             print(f"[CACHE] loaded {len(data.get('personas', {}))} personas — banking_data_loaded=True", flush=True)
             logger.info(f"Agent A results loaded from cache ({len(data.get('personas', {}))} personas) — banking_data_loaded set to True")
             # Pre-populate chatbot DuckDB with persona assignments from cache
@@ -3763,6 +3771,215 @@ def _resolve_persona_representative_customer_id(persona) -> Optional[str]:
     return str(persona_customers[0]['customer_id']).strip()
 
 
+def _build_persona_aggregate_profile(seg_df: "pd.DataFrame", cluster_id) -> dict:
+    """
+    Collapse a segment's real customer rows into one synthetic 'aggregate customer'
+    profile — mean for numeric fields, mode for categorical fields. Scoring this one
+    profile against every product represents the segment as a whole, rather than
+    whichever individual customer happens to be first/representative in the dataframe.
+    """
+    def _mean(col, default):
+        if col in seg_df.columns:
+            v = pd.to_numeric(seg_df[col], errors='coerce').mean()
+            if pd.notna(v):
+                return float(v)
+        return default
+
+    def _mode(col, default):
+        if col in seg_df.columns:
+            m = seg_df[col].dropna().mode()
+            if len(m):
+                return m.iloc[0]
+        return default
+
+    credit_score = _mean('credit_score', 700)
+    if credit_score >= 740:
+        default_tier = 'excellent'
+    elif credit_score >= 670:
+        default_tier = 'good'
+    elif credit_score >= 580:
+        default_tier = 'fair'
+    else:
+        default_tier = 'poor'
+
+    total_deposits = _mean('total_deposits', 10000)
+
+    return {
+        'customer_id': f'__persona_agg_{cluster_id}__',
+        'cluster': cluster_id,
+        'age': _mean('age', 40),
+        'credit_score': credit_score,
+        'credit_tier': str(_mode('credit_tier', default_tier) or default_tier).lower(),
+        'income': _mean('income', 50000),
+        'total_deposits': total_deposits,
+        'avg_daily_balance': _mean('avg_daily_balance', total_deposits),
+        'num_products': _mean('num_products', 2),
+        'months_since_relationship_started': _mean('months_since_relationship_started', _mean('tenure_months', 12)),
+        'digital_engagement_score': _mean('digital_engagement_score', 0.5),
+        'cross_sell_receptivity': _mean('cross_sell_receptivity', 0.5),
+        'monthly_transaction_volume': _mean('monthly_transaction_volume', 0),
+        'financial_goal': str(_mode('financial_goal', '') or ''),
+        'life_stage': str(_mode('life_stage', '') or ''),
+        'preferred_rewards_type': str(_mode('preferred_rewards_type', 'none') or 'none'),
+        'fee_sensitivity_tier': str(_mode('fee_sensitivity_tier', 'medium') or 'medium'),
+        'has_direct_deposit': str(_mode('has_direct_deposit', 'False')),
+        'monthly_direct_deposit_amt': _mean('monthly_direct_deposit_amt', 0),
+        'outstanding_debt_total': _mean('outstanding_debt_total', 0),
+        'has_competitor_credit_card': str(_mode('has_competitor_credit_card', 'False')),
+        'high_overdraft_flag': _mean('high_overdraft_flag', 0),
+        'monthly_spend_in_primary_cat': _mean('monthly_spend_in_primary_cat', 200),
+        'credit_utilization_ratio': _mean('credit_utilization_ratio', 0.30),
+        'travel_frequency': str(_mode('travel_frequency', 'none') or 'none'),
+        'total_loan_balance': _mean('total_loan_balance', 0),
+        'churned': str(_mode('churned', '0')),
+    }
+
+
+def _compute_persona_aggregate_best_offer(cluster_id, persona: dict, seg_df: "pd.DataFrame") -> Optional[dict]:
+    """
+    Segment-level best offer computed WITHOUT anchoring on any single real customer.
+    Collapses the segment into one aggregate profile (_build_persona_aggregate_profile),
+    then scores every catalog product (~28, vs. potentially thousands of customers)
+    against that single profile using the same Banking12FactorScorer used everywhere
+    else. Deterministic — doesn't shift based on which customer happens to be first
+    in the dataframe — and cheap, since only the winning product needs formatting.
+    Cached per (cluster_id, factor-weight state, Agent A refresh), same pattern as
+    _get_persona_recommendations_cached.
+    """
+    agent_a_last_refreshed = (system_state['banking'].get('agent_a_results') or {}).get('last_refreshed')
+    fw = system_state['banking'].get('agent_b_factor_weights_pct')
+    weights_sig = json.dumps(fw, sort_keys=True) if fw else "default"
+    cache_key = (str(cluster_id), weights_sig, agent_a_last_refreshed)
+
+    cache = system_state['banking'].setdefault('dashboard_persona_aggregate_offer_cache', {})
+    if cache_key in cache:
+        return cache[cache_key]
+
+    # This is an optional dashboard enhancement layered on top of the existing segment
+    # snapshot — any failure here (bad data in one product row, an unexpected column
+    # type, etc.) must degrade to "no aggregate offer for this segment" rather than
+    # taking down the whole /api/banking/dashboard/segments response for every segment.
+    try:
+        result = _compute_persona_aggregate_best_offer_uncached(cluster_id, persona, seg_df, fw)
+    except Exception:
+        logger.exception("Persona aggregate best-offer computation failed for cluster %s", cluster_id)
+        result = None
+
+    cache[cache_key] = result
+    return result
+
+
+def _safe_float(value, default=0.0) -> float:
+    """float() that never raises — used when a value could be NaN, None, or a stray string."""
+    try:
+        v = float(value)
+        return default if (v != v) else v  # v != v is the NaN check
+    except (TypeError, ValueError):
+        return default
+
+
+def _compute_persona_aggregate_best_offer_uncached(cluster_id, persona: dict, seg_df: "pd.DataFrame", fw) -> Optional[dict]:
+    init_banking_agent_b()
+    scorer = getattr(banking_agent_b_chromadb, 'enhanced_scorer', None)
+    products_df = getattr(banking_agent_b_chromadb, 'products_df', None)
+    if scorer is None or products_df is None or len(products_df) == 0:
+        return None
+
+    agg_customer = _build_persona_aggregate_profile(seg_df, cluster_id)
+
+    best_score = -1.0
+    best_product = None
+    best_breakdown = None
+    for _, prod_row in products_df.iterrows():
+        product = prod_row.to_dict()
+        try:
+            breakdown = scorer.score_product(customer=agg_customer, product=product, persona=persona, factor_weights=fw)
+            total = _safe_float(breakdown.get('total_score', 0))
+        except Exception:
+            logger.exception("Persona aggregate scoring failed for product %s", product.get('product_id'))
+            continue
+        if total > best_score:
+            best_score = total
+            best_product = product
+            best_breakdown = breakdown
+
+    if best_product is None or best_breakdown is None:
+        return None
+
+    factor_items = [
+        (k, v) for k, v in best_breakdown.items()
+        if isinstance(v, dict) and 'score' in v and 'weight' in v
+    ]
+
+    # Bullet-point description: only factors that are genuinely a STRONG fit (raw
+    # score, not weighted contribution — a low-weight factor with an excellent fit
+    # is more worth telling a marketer than a high-weight factor with a mediocre
+    # one) make the cut. This intentionally yields 1-4 points, never padded with
+    # mediocre reasons just to hit a count.
+    STRONG_FIT_THRESHOLD = 0.75
+    ranked_by_fit = sorted(factor_items, key=lambda kv: -_safe_float(kv[1].get('raw_score')))
+    seen_expl = set()
+    description_points = []
+    for _, v in ranked_by_fit:
+        if _safe_float(v.get('raw_score')) < STRONG_FIT_THRESHOLD:
+            break  # remaining factors are weaker — not worth surfacing as a "reason"
+        expl = str(v.get('explanation') or '').strip()
+        if expl and expl not in seen_expl:
+            seen_expl.add(expl)
+            description_points.append(expl)
+        if len(description_points) >= 4:
+            break
+    if not description_points:
+        # Nothing cleared the "strong fit" bar — fall back to the single best-supported reason.
+        fallback_expl = str((ranked_by_fit[0][1].get('explanation') if ranked_by_fit else '') or '').strip()
+        description_points = [fallback_expl] if fallback_expl else ["Best aggregate fit for this segment based on 12-factor scoring."]
+
+    product_value = best_breakdown.get('product_value') or {}
+    financial_need = best_breakdown.get('financial_need_match') or {}
+    projected_revenue_value = (product_value.get('details') or {}).get('projected_bank_revenue_short_value') or '—'
+    segment_size = int(len(seg_df))
+
+    # Fixed KPI set for the dashboard card — Est. Reach, Product Value, Projected
+    # Revenue, Financial Fit — each with a tooltip explaining what it measures.
+    kpis = [
+        {
+            "label": "Est. Reach",
+            "value": f"{segment_size:,} customers",
+            "tip": "Number of real customers in this segment — everyone this offer would reach if launched as a segment-level campaign.",
+        },
+        {
+            "label": "Product Value",
+            "value": f"{_safe_float(product_value.get('raw_score')) * 100:.0f}%",
+            "tip": "How favorable this product is overall for the segment — blending its fee level, interest-rate competitiveness, minimum-balance accessibility, customer ROI, and the revenue it's projected to generate for the bank.",
+        },
+        {
+            "label": "Projected Revenue",
+            "value": projected_revenue_value,
+            "tip": "Estimated revenue this product would generate for the bank from this segment — interchange and interest for cards, net interest spread for loans, AUM fees for investments, or deposit float for savings/checking.",
+        },
+        {
+            "label": "Financial Fit",
+            "value": f"{_safe_float(financial_need.get('raw_score')) * 100:.0f}%",
+            "tip": "How well this product matches the segment's typical age, income, deposit level, and financial goals — the core need-alignment signal in the 12-factor score.",
+        },
+    ]
+
+    result = {
+        "product_id": best_product.get('product_id'),
+        "product_name": best_product.get('product_name'),
+        "category": best_product.get('category'),
+        "subcategory": best_product.get('subcategory'),
+        "score_pct": round(best_score * 100, 1),
+        "description_points": description_points,
+        "kpis": kpis,
+        "annual_fee": best_product.get('annual_fee'),
+        "min_balance": best_product.get('min_balance'),
+        "interest_rate_apy": best_product.get('interest_rate_apy') or best_product.get('interest_rate'),
+        "computation_method": "persona_aggregate_profile",
+    }
+    return numpy_to_python_types(result)
+
+
 def _get_persona_recommendations_cached(cluster_id, persona: dict, top_n: int = 5) -> Optional[dict]:
     """
     The SAME Agent B rule-based recommendation `/api/banking/agent_b/execute` computes
@@ -3841,10 +4058,20 @@ async def get_banking_dashboard_segments():
       trigger live LLM calls per segment.
     """
     try:
+        if not system_state['banking'].get('agent_a_results'):
+            return {"success": True, "ready": False}
+
+        # Lazily restore banking_agent_a.customers_df from disk after a process
+        # restart (e.g. --reload) — same recovery path Agent B already relies on
+        # (see init_banking_agent_b). Without this, a restarted process has real
+        # cached agent_a_results but an empty live customers_df, and the checks
+        # below would report "not ready" even though segmentation already ran.
+        init_banking_agent_b()
+
         # Same readiness check as the other persona-scoped endpoints
         # (agent_c/persona-best-offer, agent_c/churn-by-persona) — Agent A must
         # have actually run so `banking_agent_a.personas` reflects real clusters.
-        if not system_state['banking'].get('agent_a_results') or not getattr(banking_agent_a, "personas", None):
+        if not getattr(banking_agent_a, "personas", None):
             return {"success": True, "ready": False}
 
         _sync_banking_cluster_column()
@@ -3877,6 +4104,11 @@ async def get_banking_dashboard_segments():
             agent_b_result = _get_persona_recommendations_cached(cluster_id, persona, top_n=5)
             recommendations = (agent_b_result or {}).get("recommendations") or []
             representative_customer_id = (agent_b_result or {}).get("representative_customer_id")
+
+            # Segment-level best offer: scores the segment's aggregate profile (mean/mode
+            # across all real customers in seg_df) against every product, instead of using
+            # one representative customer's individual pick — see _compute_persona_aggregate_best_offer.
+            aggregate_best_offer = _compute_persona_aggregate_best_offer(cluster_id, persona, seg_df)
 
             top_products_detail = []
             for rec in recommendations[:5]:
@@ -3922,6 +4154,7 @@ async def get_banking_dashboard_segments():
                 "top_products": top_products_detail,
                 "featured_offer": featured_offer,
                 "offer_product": offer_product,
+                "aggregate_best_offer": aggregate_best_offer,
                 "representative_customer_id": representative_customer_id,
             })
 
