@@ -3,7 +3,7 @@ import { createPortal } from 'react-dom';
 import { useQuery } from '@tanstack/react-query';
 import { useNavigate } from 'react-router-dom';
 import {
-  LayoutDashboard, TrendingUp, ChevronLeft, ChevronRight, Info,
+  LayoutDashboard, TrendingUp, ChevronLeft, ChevronRight, ChevronUp, ChevronDown, Info,
   AlertTriangle, Star, PenSquare, Database, X,
 } from 'lucide-react';
 
@@ -610,8 +610,50 @@ export default function BankingSegmentDashboard() {
 }
 
 // ─── Overview: all segments ─────────────────────────────────────────────────
+type TopOffersSortKey = 'count' | 'avg_balance' | 'cross_sell_pct';
+
+// Small sortable column header — click to sort by this column, click again to
+// flip direction. Only the active column shows a solid arrow; inactive columns
+// show a faint one as an affordance without competing visually with the active sort.
+function SortableHeader({
+  label, active, dir, onClick,
+}: { label: string; active: boolean; dir: 'asc' | 'desc'; onClick: () => void }) {
+  return (
+    <button
+      onClick={onClick}
+      className={`w-full flex items-center justify-end gap-1 text-right uppercase tracking-wide font-bold text-[10px] transition-colors ${
+        active ? 'text-gray-700' : 'text-gray-400 hover:text-gray-600'
+      }`}
+    >
+      {label}
+      {active
+        ? (dir === 'desc' ? <ChevronDown className="w-3 h-3" /> : <ChevronUp className="w-3 h-3" />)
+        : <ChevronDown className="w-3 h-3 opacity-40" />}
+    </button>
+  );
+}
+
 function OverviewAll({ segments, portfolio, onSelect }: { segments: SegmentData[]; portfolio: Portfolio; onSelect: (id: string) => void }) {
-  const topOffers = [...segments].sort((a, b) => b.cross_sell_pct - a.cross_sell_pct).slice(0, 5);
+  const [sortKey, setSortKey] = useState<TopOffersSortKey>('cross_sell_pct');
+  const [sortDir, setSortDir] = useState<'asc' | 'desc'>('desc');
+
+  function toggleSort(key: TopOffersSortKey) {
+    if (key === sortKey) {
+      setSortDir((d) => (d === 'desc' ? 'asc' : 'desc'));
+    } else {
+      setSortKey(key);
+      setSortDir('desc');
+    }
+  }
+
+  const topOffers = useMemo(() => {
+    const sorted = [...segments].sort((a, b) => {
+      const diff = a[sortKey] - b[sortKey];
+      return sortDir === 'desc' ? -diff : diff;
+    });
+    return sorted.slice(0, 5);
+  }, [segments, sortKey, sortDir]);
+
   return (
     <>
       <SectionHead
@@ -669,12 +711,15 @@ function OverviewAll({ segments, portfolio, onSelect }: { segments: SegmentData[
       </div>
 
       <SectionHead
-        title="Top Offers Across Segments" hint="Ranked by offer receptivity"
-        tip="Each segment's #1 Agent B persona-mode recommendation, sorted by how likely that segment is to accept a targeted offer (cross-sell receptivity) — highest-converting segments first."
+        title="Top Offers Across Segments" hint="Click a column to sort"
+        tip="Each segment's #1 Agent B persona-mode recommendation. Click Segment Size, Avg. Balance, or Offer Receptivity to reorder by that metric; click again to flip direction."
       />
       <div className="bg-white border border-gray-200 rounded-xl shadow-sm p-4 overflow-x-auto">
         <div className="grid grid-cols-[2fr_1.2fr_0.85fr_0.85fr_1fr] gap-x-3 min-w-[620px] text-[10px] font-bold uppercase tracking-wide text-gray-400 pb-2">
-          <span>Offer</span><span>Persona</span><span className="text-right">Segment Size</span><span className="text-right">Avg. Balance</span><span className="text-right">Offer Receptivity</span>
+          <span>Offer</span><span>Persona</span>
+          <SortableHeader label="Segment Size" active={sortKey === 'count'} dir={sortDir} onClick={() => toggleSort('count')} />
+          <SortableHeader label="Avg. Balance" active={sortKey === 'avg_balance'} dir={sortDir} onClick={() => toggleSort('avg_balance')} />
+          <SortableHeader label="Offer Receptivity" active={sortKey === 'cross_sell_pct'} dir={sortDir} onClick={() => toggleSort('cross_sell_pct')} />
         </div>
         {topOffers.map((s) => (
           <div key={s.id} className="grid grid-cols-[2fr_1.2fr_0.85fr_0.85fr_1fr] gap-x-3 min-w-[620px] items-center py-2.5 border-t border-gray-100 text-[12.5px]">
@@ -873,7 +918,7 @@ function OverviewSegment({ seg }: { seg: SegmentData }) {
             </div>
             <div className="p-3 border-t border-gray-100 flex-shrink-0">
               <button
-                onClick={() => navigate(`/banking/agent-b?persona=${encodeURIComponent(seg.id)}&category=`)}
+                onClick={() => navigate(`/banking/recommender?persona=${encodeURIComponent(seg.id)}&category=`)}
                 className="w-full flex items-center justify-center gap-1.5 text-[12px] font-bold text-white bg-blue-600 hover:bg-blue-700 rounded-lg py-2.5 transition-colors"
               >
                 View in Recommender
@@ -920,7 +965,7 @@ function OverviewSegment({ seg }: { seg: SegmentData }) {
             </div>
             <div className="p-3 border-t border-gray-100 flex-shrink-0">
               <button
-                onClick={() => navigate(`/banking/agent-c?persona=${encodeURIComponent(seg.id)}`)}
+                onClick={() => navigate(`/banking/offer-ad-spend?persona=${encodeURIComponent(seg.id)}`)}
                 className="w-full flex items-center justify-center gap-1.5 text-[12px] font-bold text-white bg-blue-600 hover:bg-blue-700 rounded-lg py-2.5 transition-colors"
               >
                 View in Offer & Ad Spend
