@@ -9,6 +9,7 @@ import requests
 import numpy as np
 from utils.logger import get_logger
 from utils.token_tracker import log_llm_call
+from utils.llm_priority_config import get_together_models
 import urllib3
 urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 
@@ -25,15 +26,14 @@ logger = get_logger("TogetherAI")
 TOGETHER_API_KEY = (os.getenv("TOGETHER_API_KEY") or "").strip()
 TOGETHER_API_BASE = "https://api.together.xyz/v1"
 
-# Chat models to try in order (serverless / Lite first — Meta-Llama-3.1-8B-Instruct-Turbo is often
-# non-serverless on Together and returns 400 unless a dedicated endpoint exists)
-DEFAULT_CHAT_MODELS = [
-    "meta-llama/Meta-Llama-3-8B-Instruct-Lite",
-    "meta-llama/Llama-3.2-3B-Instruct-Turbo",
-    "Qwen/Qwen2.5-7B-Instruct-Turbo",
-    "meta-llama/Meta-Llama-3-8B-Instruct-Reference",
-    "meta-llama/Meta-Llama-3.1-8B-Instruct-Turbo",
-]
+# Which Together models to try, and in what order, is controlled by
+# config/llm_priority.json (utils/llm_priority_config.get_together_models())
+# so a human can reorder/prune them without touching code — see that file's
+# _readme for how. The old hardcoded list here was found (2026-08-20) to be
+# 100% dead — every one of its 5 models was either deprecated/non-serverless
+# or rate-limited, so every call silently wasted ~10s per model before giving
+# up empty. get_together_models() falls back to a working default list if the
+# config file is ever missing.
 
 if not TOGETHER_API_KEY:
     logger.warning("⚠️  TOGETHER_API_KEY is not set — LLM persona text will use fallbacks. Add it to .env")
@@ -133,20 +133,23 @@ class TogetherAIService:
         self,
         prompt: str,
         system_message: str = "You are a helpful AI assistant specialized in marketing and customer analysis.",
-        model: str = "meta-llama/Meta-Llama-3-8B-Instruct-Lite",
+        model: str = "",
         max_tokens: int = 500,
         temperature: float = 0.7,
         agent_name: str = "unknown",
         call_type: str = "general",
     ) -> str:
         """
-        Generate text using LLM. Tries several models if one returns 400/404 (Together often deprecates IDs).
-        Set TOGETHER_CHAT_MODEL in .env to force a single model.
+        Generate text using LLM. Tries several Together models in the order set by
+        config/llm_priority.json, then falls back to Claude/Anthropic (via
+        claude_client) if every Together model fails — so a Together outage
+        degrades to "slower" rather than "silently empty". Set TOGETHER_CHAT_MODEL
+        in .env, or pass `model=`, to force a specific model to the front of the list.
         """
         t0 = time.monotonic()
         if not self.api_key or len(self.api_key) < 8:
-            logger.debug("Together chat skipped: no API key")
-            return "Error generating description"
+            logger.debug("Together chat skipped: no API key — trying Claude fallback")
+            return self._claude_fallback(prompt, system_message, max_tokens, temperature, agent_name, call_type)
 
         env_model = (os.getenv("TOGETHER_CHAT_MODEL") or "").strip()
         models_to_try = []
@@ -154,7 +157,7 @@ class TogetherAIService:
             models_to_try.append(env_model)
         if model and model not in models_to_try:
             models_to_try.append(model)
-        for m in DEFAULT_CHAT_MODELS:
+        for m in get_together_models():
             if m not in models_to_try:
                 models_to_try.append(m)
 
@@ -225,8 +228,42 @@ class TogetherAIService:
             note=str(last_detail)[:200] if last_detail else "",
         )
         logger.error(f"❌ All Together chat models failed. Last detail: {last_detail}")
+        return self._claude_fallback(prompt, system_message, max_tokens, temperature, agent_name, call_type)
+
+    def _claude_fallback(
+        self, prompt: str, system_message: str, max_tokens: int, temperature: float,
+        agent_name: str, call_type: str,
+    ) -> str:
+        """
+        Safety net for direct-Together callers (e.g. generate_marketing_opportunities)
+        that have no fallback of their own: if every Together model just failed (or
+        there's no Together key at all), try Claude/Anthropic once directly before
+        giving up completely. Calls claude_client's Anthropic path directly (not its
+        generate_text()) so this doesn't re-try Together AI a second time — we
+        already know it just failed.
+        """
+        _t0 = time.monotonic()
+        try:
+            from utils.claude_client import get_claude_client
+            claude = get_claude_client()
+            if not claude._anthropic_client:
+                return "Error generating description"
+            result, usage = claude._call_anthropic(prompt, system_message, max_tokens, temperature, model="")
+            result = (result or "").strip()
+            if result:
+                log_llm_call(
+                    provider="anthropic", agent=agent_name, call_type=call_type,
+                    duration_ms=int((time.monotonic() - _t0) * 1000), success=True,
+                    model=usage.get("model", ""), prompt_tokens=usage.get("prompt_tokens", 0),
+                    completion_tokens=usage.get("completion_tokens", 0), total_tokens=usage.get("total_tokens", 0),
+                    fallback_used=True,
+                )
+                logger.info(f"[together_ai] Together unavailable for {call_type} — succeeded via Claude fallback")
+                return result
+        except Exception as e:
+            logger.warning(f"[together_ai] Claude fallback also failed: {e}")
         return "Error generating description"
-    
+
     def generate_persona_name(self, cluster_characteristics: Dict[str, Any]) -> str:
         """Generate a creative persona name based on cluster characteristics."""
         

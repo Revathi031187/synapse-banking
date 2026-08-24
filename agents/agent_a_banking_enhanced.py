@@ -728,7 +728,14 @@ class AgentA_Banking_Enhanced:
         # Clustering parameters
         n_clusters_input = params.get('n_clusters', 5)
         gamma = params.get('gamma', 0.75)  # INCREASED: Weight numeric features (deposits, transactions) more heavily for better separation
-        
+
+        import time as _time
+        _execute_start = _time.monotonic()
+        logger.info(
+            f"[Agent A] Starting K-Prototypes clustering — n_clusters={n_clusters_input}, "
+            f"gamma={gamma}, customers={len(self.customers_df)}"
+        )
+
         # Use exact number requested (no optimization search for speed)
         cluster_range = [n_clusters_input]
         
@@ -893,7 +900,8 @@ class AgentA_Banking_Enhanced:
             # Try different cluster numbers
             for n_clusters in cluster_range:
                 logger.info(f"Trying {n_clusters} clusters...")
-                
+                _attempt_start = _time.monotonic()
+
                 # OPTIMIZED: Single run with reduced iterations (50x faster!)
                 try:
                     model = KPrototypes(
@@ -905,12 +913,13 @@ class AgentA_Banking_Enhanced:
                         random_state=None,  # Non-deterministic: natural variation each run
                         verbose=0
                     )
-                    
+
                     clusters_temp = model.fit_predict(X_scaled.values, categorical=cat_indices)
                     best_model = model
                     best_cost = model.cost_
-                    logger.info(f"  Cost: {best_cost:.0f}")
-                    
+                    _attempt_ms = int((_time.monotonic() - _attempt_start) * 1000)
+                    logger.info(f"  Cost: {best_cost:.0f}  (fit_predict took {_attempt_ms}ms)")
+
                 except Exception as e:
                     logger.error(f"Clustering failed for {n_clusters} clusters: {e}")
                     continue
@@ -977,7 +986,8 @@ class AgentA_Banking_Enhanced:
                 min_deposits_per_customer=5000
             )
             
-            logger.info(f"✅ Clustering complete with {best_n_clusters} personas")
+            _total_ms = int((_time.monotonic() - _execute_start) * 1000)
+            logger.info(f"✅ Clustering complete with {best_n_clusters} personas — total duration {_total_ms}ms")
             logger.info(f"📊 Business constraints met: {constraints_validation['all_constraints_met']}")
             
             # Calculate silhouette score for validation

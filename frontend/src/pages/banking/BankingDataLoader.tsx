@@ -78,6 +78,19 @@ export default function BankingDataLoader() {
           } else {
             setPollingStatus('complete');
           }
+          // The backend pre-warms the Dashboard tab's per-persona cache and the
+          // Segments tab's micro-segment breakdowns before reporting 'complete'
+          // (see _run_agent_a_background), so these refetches land fast. Without
+          // this, the Dashboard tab's ['dashboard-segments'] query keeps serving
+          // its stale "please segment first" response from before this run until
+          // a full page reload — this is the actual page users run segmentation
+          // from, so this is the invalidation that matters (BankingAgentA.tsx has
+          // its own copy of this fix, but isn't the page most users hit).
+          queryClient.invalidateQueries({ queryKey: ['dashboard-segments'] });
+          queryClient.invalidateQueries({ queryKey: ['banking-agent-a-customers'] });
+          queryClient.invalidateQueries({ queryKey: ['ad-spend-metrics'] });
+          queryClient.invalidateQueries({ queryKey: ['ad-spend-monthly'] });
+          queryClient.invalidateQueries({ queryKey: ['banking-agent-a-results'] });
         } else if (statusData.status === 'failed') {
           clearInterval(pollRef.current!);
           pollRef.current = null;

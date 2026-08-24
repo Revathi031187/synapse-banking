@@ -327,7 +327,10 @@
       "Bash(taskkill //PID 25872 //F)",
       "Bash(taskkill //PID 24312 //F)",
       "Bash(\"/c/Program Files/Python310/python.exe\" -m py_compile api/main_unified_chromadb.py)",
-      "Bash(curl -s -X POST http://localhost:8002/api/banking/datasets/load -H \"Content-Type: application/json\" -d '{\"dataset_name\": \"banking_v1\"}')"
+      "Bash(curl -s -X POST http://localhost:8002/api/banking/datasets/load -H \"Content-Type: application/json\" -d '{\"dataset_name\": \"banking_v1\"}')",
+      "Bash(awk 'NR<=1568 && /^function |^const .* = \\\\\\(/' \"c:\\\\Users\\\\saviosajan.m.lv\\\\Documents\\\\personalization-agent-banking\\\\frontend\\\\src\\\\pages\\\\banking\\\\BankingAgentC.tsx\")",
+      "Bash(curl -s -o /dev/null -w \"status:%{http_code}\\\\n\" http://localhost:8002/docs)",
+      "Bash(curl -s http://localhost:8002/api/banking/status)"
     ]
   }
 }

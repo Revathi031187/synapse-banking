@@ -117,8 +117,11 @@ export default function BankingMacroDashboard() {
       const data = await response.json();
       return data.results || data;
     },
-    staleTime: 0,
-    refetchOnMount: true
+    // Relies on explicit invalidation (BankingDataLoader.tsx / BankingAgentA.tsx
+    // invalidate this key once a fresh segmentation run actually completes)
+    // rather than blindly refetching on every visit to this tab.
+    staleTime: Infinity,
+    refetchOnMount: false
   });
 
   // Load micro segments for a macro cluster
@@ -130,26 +133,35 @@ export default function BankingMacroDashboard() {
     setLoadingMicro(prev => [...prev, macroClusterId]);
 
     try {
-      console.log(`Creating micro segments for cluster ${macroClusterId}...`);
+      console.log(`Loading micro segments for cluster ${macroClusterId}...`);
 
-      // POST creates (or re-creates) micro segments on the backend
-      const createResponse = await fetch(
-        `${API_BASE_URL}/api/banking/micro-segments/${macroClusterId}`,
-        { method: 'POST' }
-      );
-
-      if (!createResponse.ok) {
-        const errBody = await createResponse.json().catch(() => ({}));
-        throw new Error(errBody?.detail || 'Failed to create micro segments');
-      }
-
-      // GET retrieves the stored result (POST already created it; GET is a cache read)
-      const fetchResponse = await fetch(
+      // GET first -- segmentation already pre-warms every persona's micro
+      // segments in the background, so this is normally an instant cache hit.
+      // The backend's GET handler computes on-demand (and caches) if the entry
+      // is genuinely missing, so we only need an explicit POST as a last resort
+      // for the "computed but came back broken" case.
+      let fetchResponse = await fetch(
         `${API_BASE_URL}/api/banking/micro-segments/${macroClusterId}`
       );
 
       if (!fetchResponse.ok) {
-        throw new Error('Failed to fetch micro segments');
+        console.log(`No cached micro segments for cluster ${macroClusterId} — creating...`);
+        const createResponse = await fetch(
+          `${API_BASE_URL}/api/banking/micro-segments/${macroClusterId}`,
+          { method: 'POST' }
+        );
+
+        if (!createResponse.ok) {
+          const errBody = await createResponse.json().catch(() => ({}));
+          throw new Error(errBody?.detail || 'Failed to create micro segments');
+        }
+
+        fetchResponse = await fetch(
+          `${API_BASE_URL}/api/banking/micro-segments/${macroClusterId}`
+        );
+        if (!fetchResponse.ok) {
+          throw new Error('Failed to fetch micro segments');
+        }
       }
 
       const data = await fetchResponse.json();
