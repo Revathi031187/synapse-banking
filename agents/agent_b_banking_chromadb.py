@@ -644,9 +644,13 @@ class AgentB_Banking:
         if customer_info:
             customer_deposits = customer_info.get('total_deposits', 0)
         
-        print(f"\n[Agent B] Scoring {len(products)} banking products for {persona_name}...", flush=True)
-        print(f"[Agent B]   enhanced_scorer: {self.enhanced_scorer is not None}", flush=True)
-        print(f"[Agent B]   customer_info: {customer_info is not None}", flush=True)
+        import time as _time
+        _score_start = _time.monotonic()
+        logger.info(
+            f"[Agent B] Scoring {len(products)} candidate products for persona='{persona_name}' "
+            f"(12-factor scorer={'on' if self.enhanced_scorer else 'off'}, "
+            f"customer_info={'provided' if customer_info else 'synthetic'})"
+        )
         
         for idx, product in enumerate(products):
             # Try to use Banking 12-Factor Scorer if available
@@ -916,6 +920,11 @@ class AgentB_Banking:
             except Exception as e:
                 logger.warning(f"Agent B LLM rationale failed: {e}")
 
+        _score_ms = int((_time.monotonic() - _score_start) * 1000)
+        logger.info(
+            f"[Agent B] Scoring complete for '{persona_name}': {len(recommendations)} products scored, "
+            f"top-{len(top_recommendations)} returned (duration={_score_ms}ms)"
+        )
         return recommendations
 
     def _refresh_rank_explanations_after_reorder(

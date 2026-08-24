@@ -1,0 +1,38 @@
+{
+  "_readme": [
+    "Controls which LLM provider this app tries FIRST for each area of the app,",
+    "and in what order it tries specific Together AI models before giving up.",
+    "Edit this file and save it -- changes apply on the very next LLM call,",
+    "no backend restart needed (it's re-read every time, since it's tiny).",
+    "",
+    "'providers' is an ordered list -- the first entry is tried first; if it",
+    "fails (or its API key isn't configured), the next one is tried. Valid",
+    "values are 'together' and 'anthropic'.",
+    "",
+    "'together_models' is the ordered list of specific Together AI models to",
+    "try, used whenever 'together' comes up in a provider list above. If a",
+    "model is discontinued/unavailable on your account, just delete its line",
+    "or move it lower -- no code changes needed.",
+    "",
+    "'anthropic_model' is the Claude model id used whenever 'anthropic' is tried."
+  ],
+
+  "agent_functions": {
+    "_description": "Every LLM call made by Agent A/B/C/D (segment naming, segment descriptions, product rationale, marketing copy, offer explanations, etc.) -- everything EXCEPT the Segment AI chatbot below.",
+    "providers": ["together", "anthropic"]
+  },
+
+  "chatbot": {
+    "_description": "The Segment AI chatbot only -- SQL generation and the grounded-narrative rewrite.",
+    "providers": ["anthropic", "together"]
+  },
+
+  "together_models": [
+    "meta-llama/Llama-3.3-70B-Instruct-Turbo",
+    "Qwen/Qwen2.5-72B-Instruct-Turbo",
+    "Qwen/Qwen2.5-7B-Instruct-Turbo",
+    "meta-llama/Meta-Llama-3-8B-Instruct-Lite"
+  ],
+
+  "anthropic_model": "claude-haiku-4-5-20251001"
+}

@@ -156,9 +156,18 @@ class AgentD_Banking:
         Args:
             persona_name: Display label for segment (e.g. from Agent A).
         """
+        import time as _time
+        _orch_start = _time.monotonic()
+        logger.info(
+            f"[Agent D] orchestrate: customer={customer_id}, persona={persona_name or 'Unknown'}, "
+            f"incomplete_applications={len(incomplete_applications or [])}, saved_goals={len(saved_goals or [])}, "
+            f"clicked_products={len(clicked_product_ids or [])}"
+        )
+
         if not isinstance(ledger, dict):
             ledger = _empty_ledger()
         ledger.setdefault("impressions", {})
+        _impressions_before = len(ledger.get("impressions", {}))
 
         deprioritize = self._deprioritize_set(ledger)
         b_ranked = _merge_b_lists(all_recs or {})
@@ -283,6 +292,12 @@ class AgentD_Banking:
 
         live_pids = [_pid(r.get("product_id")) for r in live if _pid(r.get("product_id"))]
         self._apply_ledger_updates(ledger, live_pids, clicked_product_ids)
+        _impressions_after = len(ledger.get("impressions", {}))
+        logger.info(
+            f"[Agent D] Ledger updated for customer={customer_id}: live_stack={len(live_pids)} products, "
+            f"impressions tracked {_impressions_before}->{_impressions_after}, "
+            f"clicks_applied={len(clicked_product_ids or [])}"
+        )
 
         # Next visit: recompute deprioritize after this session's impressions
         deprioritize_next = self._deprioritize_set(ledger)
@@ -405,6 +420,12 @@ class AgentD_Banking:
             focus_source, focus_product, offer, persona_name or "this segment"
         )
 
+        _orch_ms = int((_time.monotonic() - _orch_start) * 1000)
+        logger.info(
+            f"[Agent D] orchestrate complete for customer={customer_id}: focus={focus_source} "
+            f"(product={priority_pin}), directives boost={len(boost_ids)}/deprioritize={len(deprioritize_list)} "
+            f"(duration={_orch_ms}ms)"
+        )
         return {
             "customer_id": customer_id,
             "persona_name": (persona_name or "").strip() or "Unknown segment",

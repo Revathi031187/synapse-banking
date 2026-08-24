@@ -53,37 +53,48 @@ class AgentB_Banking_LogitEnhanced:
             self.banking_scorer = None
         
         # Try to load existing model
+        import time as _time
+        _init_start = _time.monotonic()
         try:
             self.logit_model.load_model()
+            _load_ms = int((_time.monotonic() - _init_start) * 1000)
             print("✅ Loaded existing banking hybrid recommendation model")
-            logger.info(f"✅ Loaded banking hybrid recommendation model")
+            logger.info(f"✅ Loaded cached banking hybrid model from {logit_model_path} in {_load_ms}ms")
         except FileNotFoundError:
             print("⚠️ No trained banking model found. Training new model...")
-            logger.warning(f"⚠️ No trained banking model found. Training new model...")
+            logger.warning("⚠️ No cached banking model found at %s — training a new one now", logit_model_path)
             try:
                 self.train_logit_model()
+                _train_ms = int((_time.monotonic() - _init_start) * 1000)
                 print("✅ Banking model training completed successfully")
+                logger.info(f"✅ Banking hybrid model trained and ready in {_train_ms}ms")
             except Exception as e:
                 print(f"❌ BANKING MODEL TRAINING FAILED: {e}")
                 import traceback
                 traceback.print_exc()
                 raise
-    
+
     def train_logit_model(self):
         """Train the logistic regression model on banking transaction data"""
+        import time as _time
+        _train_start = _time.monotonic()
         print("="*80)
         print("🎓 STARTING BANKING ML MODEL TRAINING")
         print("="*80)
         logger.info("="*60)
-        logger.info("🎓 TRAINING BANKING ML MODEL ON TRANSACTION DATA")
+        logger.info(
+            f"🎓 TRAINING BANKING ML MODEL — customers={len(self.customers_df)}, "
+            f"products={len(self.products_df)}, transactions={len(self.transactions_df)}"
+        )
         logger.info("="*60)
-        
+
         # Train on banking transaction data
         results = self.logit_model.train(
             self.customers_df,
             self.products_df,
             self.transactions_df
         )
+        _train_ms = int((_time.monotonic() - _train_start) * 1000)
         print("="*80)
         print(f"✅ BANKING ML MODEL TRAINED SUCCESSFULLY!")
         print(f"   Test AUC: {results.get('test_auc', 0):.3f}")
@@ -91,7 +102,7 @@ class AgentB_Banking_LogitEnhanced:
         print(f"   Features: {len(self.logit_model.feature_names)}")
         print("="*80)
         logger.info("="*60)
-        logger.info(f"✅ BANKING ML MODEL TRAINED SUCCESSFULLY!")
+        logger.info(f"✅ BANKING ML MODEL TRAINED SUCCESSFULLY in {_train_ms}ms")
         logger.info(f"   Test AUC: {results.get('test_auc', 0):.3f}")
         logger.info(f"   Train AUC: {results.get('train_auc', 0):.3f}")
         logger.info(f"   Features: {len(self.logit_model.feature_names)}")

@@ -10,6 +10,20 @@ Endpoints:
 import sys
 import os
 import json
+import threading
+from concurrent.futures import ThreadPoolExecutor, as_completed
+
+# Force unbuffered, line-flushed stdout/stderr as early as possible — this
+# must happen before any other import, since several modules print/log at
+# import time (e.g. utils/together_ai.py's "API key loaded" line). Without
+# this, Python fully buffers stdout/stderr whenever they aren't a direct
+# interactive terminal (e.g. redirected to a file, piped, or captured by a
+# process launcher) — every print()/logger call still fires, but nothing
+# appears in the console until the internal buffer fills or the process
+# exits, defeating live diagnostic visibility. reconfigure(line_buffering=True)
+# forces a flush on every newline regardless of how this process was launched.
+sys.stdout.reconfigure(line_buffering=True)
+sys.stderr.reconfigure(line_buffering=True)
 
 # Load environment variables from .env file
 from dotenv import load_dotenv
@@ -66,6 +80,31 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+
+@app.middleware("http")
+async def log_requests(request, call_next):
+    """
+    Log every API call's source, destination, and outcome — method, path,
+    client IP, response status, and duration. This is the single place that
+    gives a complete request-level trace of backend activity without every
+    endpoint needing its own entry/exit logging.
+    """
+    import time as _time
+    t0 = _time.monotonic()
+    client = f"{request.client.host}:{request.client.port}" if request.client else "unknown"
+    try:
+        response = await call_next(request)
+    except Exception:
+        duration_ms = int((_time.monotonic() - t0) * 1000)
+        logger.exception(f"API call FAILED  {request.method} {request.url.path}  from={client}  after {duration_ms}ms")
+        raise
+    duration_ms = int((_time.monotonic() - t0) * 1000)
+    logger.info(
+        f"API call  {request.method} {request.url.path}  "
+        f"from={client}  status={response.status_code}  duration={duration_ms}ms"
+    )
+    return response
 
 # Academy agents need correct path (relative to project root, not api dir)
 from pathlib import Path
@@ -534,9 +573,19 @@ def numpy_to_python_types(obj):
             return None
         return obj
     
+    # bool MUST be checked before int — Python's bool is a subclass of int, so
+    # without this branch every True/False value below falls into the int
+    # branch and silently becomes 1/0. That's harmless in most JSON consumers,
+    # but React renders the *number* 0 as visible text when used in a
+    # `{someBoolean && <Component/>}` guard (unlike `false`, which renders
+    # nothing) — this was the exact cause of stray "0" text appearing in the
+    # UI wherever a False flag from here reached a JSX boolean guard.
+    elif isinstance(obj, bool):
+        return obj
+
     elif isinstance(obj, int):
         return int(obj)
-    
+
     else:
         return obj
 
@@ -2920,13 +2969,30 @@ def _run_agent_a_background(config_dict: dict):
             except Exception as _we:
                 logger.warning(f"Pre-warm: dashboard recommendations failed for cluster {cluster_id}: {_we}")
 
+        # Micro-segments are the long pole here — each persona generates several
+        # sub-segments, each with its own LLM naming call, so this loop is the
+        # dominant cost of the whole pre-warm phase. Unlike the Agent B pre-warm
+        # above, this is safe to parallelize: each call builds its own fresh
+        # AgentA_Banking_Micro instance and only touches shared state through
+        # `used_micro_names` (guarded by _used_micro_names_lock) and a per-persona
+        # key in `banking_micro_segments` (distinct keys, safe under the GIL) — so
+        # running all personas concurrently gets the wall-clock time down to
+        # roughly one persona's worth of work instead of N personas' worth.
         system_state['banking']['agent_a_progress'] = 0.95
-        for cluster_id in personas.keys():
-            try:
-                mid = int(cluster_id) if str(cluster_id).lstrip('-').isdigit() else cluster_id
-                _compute_micro_segments_sync(mid)
-            except Exception as _we:
-                logger.warning(f"Pre-warm: micro-segments failed for cluster {cluster_id}: {_we}")
+        cluster_ids = list(personas.keys())
+
+        def _prewarm_micro(cluster_id):
+            mid = int(cluster_id) if str(cluster_id).lstrip('-').isdigit() else cluster_id
+            _compute_micro_segments_sync(mid)
+
+        with ThreadPoolExecutor(max_workers=min(5, len(cluster_ids) or 1)) as pool:
+            futures = {pool.submit(_prewarm_micro, cid): cid for cid in cluster_ids}
+            for future in as_completed(futures):
+                cluster_id = futures[future]
+                try:
+                    future.result()
+                except Exception as _we:
+                    logger.warning(f"Pre-warm: micro-segments failed for cluster {cluster_id}: {_we}")
 
         system_state['banking']['agent_a_status'] = 'complete'
         system_state['banking']['agent_a_progress'] = 1.0
@@ -3358,6 +3424,16 @@ async def get_banking_macro_segments():
 # BANKING MICRO SEGMENTATION ENDPOINTS (NEW - Matching Academy Sports)
 # ============================================================================
 
+# Guards the read-then-union-write on system_state['banking']['used_micro_names']
+# in _compute_micro_segments_sync below. That set is shared across every persona's
+# micro-segment generation; since those now run concurrently (see the pre-warm
+# ThreadPoolExecutor in _run_agent_a_background), the write side MUST always
+# merge into the current value under this lock rather than overwrite based on a
+# possibly-stale local snapshot, or one thread's newly-generated names can be
+# silently lost when another thread finishes and writes back first.
+_used_micro_names_lock = threading.Lock()
+
+
 def _compute_micro_segments_sync(macro_segment_id: int, n_micro_segments: int = 4) -> dict:
     """
     Core micro-segmentation compute + cache-store logic — shared by the
@@ -3387,9 +3463,15 @@ def _compute_micro_segments_sync(macro_segment_id: int, n_micro_segments: int = 
             available_segments = list(personas.keys())
             raise ValueError(f"Macro segment {macro_segment_id} not found. Available segments: {available_segments}")
 
-    # Initialize micro segmentation agent, passing all names used in previous runs
+    # Initialize micro segmentation agent, passing all names used in previous runs.
+    # Best-effort snapshot — if another persona's generation is concurrently in
+    # flight (see _run_agent_a_background's pre-warm pool), this may not include
+    # its not-yet-written names, so two concurrent personas could in rare cases
+    # pick the same name. The write-back below is the one that actually matters
+    # for correctness (never losing a reservation), so it merges under a lock.
     from agents.agent_a_banking_micro import AgentA_Banking_Micro
-    global_names = system_state['banking'].get('used_micro_names', set())
+    with _used_micro_names_lock:
+        global_names = set(system_state['banking'].get('used_micro_names', set()))
     micro_agent = AgentA_Banking_Micro(customers_df, personas, global_used_names=global_names)
 
     # Execute micro segmentation
@@ -3402,9 +3484,14 @@ def _compute_micro_segments_sync(macro_segment_id: int, n_micro_segments: int = 
         logger.error(f"Micro segmentation failed for segment {macro_segment_id}: {err_msg}")
         raise RuntimeError(err_msg)
 
-    # Accumulate all generated micro names so future runs avoid them
+    # Accumulate all generated micro names so future runs avoid them. Merge into
+    # whatever is CURRENT under the lock (not the `global_names` snapshot from
+    # before the — possibly several-second — LLM call above), so a concurrent
+    # persona's names written in the meantime are never clobbered.
     new_names = {seg['name'] for seg in result.get('micro_segments', []) if seg.get('name')}
-    system_state['banking']['used_micro_names'] = global_names | new_names
+    with _used_micro_names_lock:
+        current_names = system_state['banking'].get('used_micro_names', set())
+        system_state['banking']['used_micro_names'] = current_names | new_names
 
     # Store in system state (only store valid results)
     if 'banking_micro_segments' not in system_state['banking']:

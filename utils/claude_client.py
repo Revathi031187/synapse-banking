@@ -17,6 +17,7 @@ import logging
 from pathlib import Path
 
 from utils.token_tracker import log_llm_call
+from utils.llm_priority_config import get_provider_order, get_together_models, get_anthropic_model
 
 logger = logging.getLogger(__name__)
 
@@ -34,20 +35,10 @@ _ANTHROPIC_KEY   = (os.getenv("ANTHROPIC_API_KEY") or "").strip()
 _TOGETHER_KEY    = (os.getenv("TOGETHER_API_KEY") or "").strip()
 _TOGETHER_BASE   = "https://api.together.xyz/v1"
 
-# High-quality Together AI models for segment naming and rationale.
-# Llama 3.3 70B gives GPT-4-class quality for concise generation tasks. Confirmed
-# working again via direct API test on 2026-07-29 (3/3 successful calls, ~4-10s each)
-# after an earlier session saw HTTP 400 "non-serverless model" on every attempt —
-# that was transient (a 503 showed up on retry too), not a permanent account
-# restriction. Qwen2.5-7B kept as a fast, confirmed-working fallback in case the
-# larger models flake out again.
-_TOGETHER_MODELS = [
-    "meta-llama/Llama-3.3-70B-Instruct-Turbo",
-    "meta-llama/Meta-Llama-3.1-70B-Instruct-Turbo",
-    "Qwen/Qwen2.5-72B-Instruct-Turbo",
-    "Qwen/Qwen2.5-7B-Instruct-Turbo",
-    "meta-llama/Meta-Llama-3-8B-Instruct-Lite",
-]
+# Which specific Together AI models to try, and in what order — now controlled
+# by config/llm_priority.json (see utils/llm_priority_config.py) so a human can
+# reorder/prune them without a code change. get_together_models() supplies the
+# same sane defaults if that file is missing or malformed.
 
 # Circuit breaker settings
 _CB_FAILURE_THRESHOLD = 3
@@ -65,10 +56,13 @@ def get_claude_client():
 
 class ClaudeClient:
     """
-    Unified LLM client:
-    - Primary: Together AI (Llama 3.3 70B) using existing TOGETHER_API_KEY
-    - Optional override: Anthropic Claude Haiku if ANTHROPIC_API_KEY is set
-    - Circuit breaker: 3 consecutive failures -> 60s cooldown
+    Unified LLM client that can reach both Together AI and Anthropic Claude.
+    Which one is tried first is decided PER CALL, based on config/llm_priority.json:
+    - "agent_functions" scope (Agent A/B/C/D generation calls) defaults to Together AI first.
+    - "chatbot" scope (Segment AI) defaults to Anthropic Claude first.
+    Either way, if the first choice fails (or its key isn't configured), the
+    other provider is tried automatically — see generate_text().
+    Circuit breaker: 3 consecutive failures (across either provider) -> 60s cooldown.
     """
 
     def __init__(self):
@@ -83,17 +77,19 @@ class ClaudeClient:
             try:
                 import anthropic
                 self._anthropic_client = anthropic.Anthropic(api_key=self._anthropic_key)
-                logger.info("ClaudeClient: using Anthropic Claude Haiku (ANTHROPIC_API_KEY set)")
             except ImportError:
-                logger.info("ClaudeClient: anthropic package not installed, using Together AI")
+                logger.info("ClaudeClient: anthropic package not installed — Anthropic unavailable, Together AI only")
             except Exception as e:
-                logger.warning("ClaudeClient: Anthropic init failed (%s), using Together AI", e)
+                logger.warning("ClaudeClient: Anthropic init failed (%s) — Anthropic unavailable, Together AI only", e)
 
-        if not self._anthropic_client:
-            if self._together_key:
-                logger.info("ClaudeClient: using Together AI (Llama 3.3 70B) via TOGETHER_API_KEY")
-            else:
-                logger.warning("ClaudeClient: no API key found — LLM features will use rule-based fallbacks")
+        available = [
+            name for name, ok in (("together", bool(self._together_key)), ("anthropic", bool(self._anthropic_client)))
+            if ok
+        ]
+        if available:
+            logger.info(f"ClaudeClient: providers available = {available} (order decided per-call by config/llm_priority.json)")
+        else:
+            logger.warning("ClaudeClient: no API key found — LLM features will use rule-based fallbacks")
 
     # ── public ────────────────────────────────────────────────────────────────
 
@@ -116,60 +112,86 @@ class ClaudeClient:
         """
         Call the LLM and return the response text.
         Set first_line_only=True for single-word/single-line outputs (segment names).
-        Returns "" on circuit-open, missing keys, or any error.
+        Returns "" on circuit-open, missing keys, or if every configured provider fails.
+
+        Which provider is tried first (and which is tried second as a fallback)
+        is read fresh from config/llm_priority.json on every call, keyed by
+        scope: agent_name == "chatbot" uses the "chatbot" order, everything
+        else uses "agent_functions" — so an edit to that file takes effect
+        immediately without a restart.
         """
         if not self.is_available():
             return ""
 
+        scope = "chatbot" if agent_name == "chatbot" else "agent_functions"
+        provider_order = get_provider_order(scope)
+
         t0 = time.monotonic()
-        provider = "anthropic" if self._anthropic_client else "together"
-        try:
-            if self._anthropic_client:
-                result, usage = self._call_anthropic(prompt, system, max_tokens, temperature, model)
-            else:
-                result, usage = self._call_together(prompt, system, max_tokens, temperature)
+        last_err = None
+        last_provider = provider_order[0] if provider_order else "together"
+        tried_any = False
 
-            if first_line_only:
-                result = (result or "").strip().split("\n")[0].strip()
-            else:
-                result = (result or "").strip()
+        for provider in provider_order:
+            if provider == "anthropic" and not self._anthropic_client:
+                continue
+            if provider == "together" and not self._together_key:
+                continue
+            tried_any = True
+            last_provider = provider
+            try:
+                if provider == "anthropic":
+                    result, usage = self._call_anthropic(prompt, system, max_tokens, temperature, model)
+                else:
+                    result, usage = self._call_together(prompt, system, max_tokens, temperature)
 
-            duration_ms = int((time.monotonic() - t0) * 1000)
-            self._consecutive_failures = 0
-            log_llm_call(
-                provider=provider,
-                agent=agent_name,
-                call_type=call_type,
-                duration_ms=duration_ms,
-                success=True,
-                model=usage.get("model", model or ""),
-                prompt_tokens=usage.get("prompt_tokens", 0),
-                completion_tokens=usage.get("completion_tokens", 0),
-                total_tokens=usage.get("total_tokens", 0),
-                fallback_used=False,
-            )
-            return result
+                if first_line_only:
+                    result = (result or "").strip().split("\n")[0].strip()
+                else:
+                    result = (result or "").strip()
 
-        except Exception as e:
-            duration_ms = int((time.monotonic() - t0) * 1000)
-            self._consecutive_failures += 1
-            logger.warning(
-                "LLM call failed (%d/%d): %s",
-                self._consecutive_failures, _CB_FAILURE_THRESHOLD, e
-            )
-            if self._consecutive_failures >= _CB_FAILURE_THRESHOLD:
-                self._circuit_open_until = time.time() + _CB_COOLDOWN_SECONDS
-                logger.warning("Circuit breaker OPEN for %ds", _CB_COOLDOWN_SECONDS)
-            log_llm_call(
-                provider=provider,
-                agent=agent_name,
-                call_type=call_type,
-                duration_ms=duration_ms,
-                success=False,
-                fallback_used=True,
-                note=str(e)[:200],
-            )
-            return ""
+                duration_ms = int((time.monotonic() - t0) * 1000)
+                self._consecutive_failures = 0
+                log_llm_call(
+                    provider=provider,
+                    agent=agent_name,
+                    call_type=call_type,
+                    duration_ms=duration_ms,
+                    success=True,
+                    model=usage.get("model", model or ""),
+                    prompt_tokens=usage.get("prompt_tokens", 0),
+                    completion_tokens=usage.get("completion_tokens", 0),
+                    total_tokens=usage.get("total_tokens", 0),
+                    fallback_used=(provider != provider_order[0]),
+                )
+                return result
+
+            except Exception as e:
+                last_err = e
+                logger.warning(f"[{scope}] {provider} attempt failed for {call_type}: {e}")
+                continue
+
+        # Every configured (and actually-available) provider failed.
+        duration_ms = int((time.monotonic() - t0) * 1000)
+        self._consecutive_failures += 1
+        if not tried_any:
+            last_err = last_err or "no configured provider has a valid API key"
+        logger.warning(
+            "LLM call failed (%d/%d): %s",
+            self._consecutive_failures, _CB_FAILURE_THRESHOLD, last_err
+        )
+        if self._consecutive_failures >= _CB_FAILURE_THRESHOLD:
+            self._circuit_open_until = time.time() + _CB_COOLDOWN_SECONDS
+            logger.warning("Circuit breaker OPEN for %ds", _CB_COOLDOWN_SECONDS)
+        log_llm_call(
+            provider=last_provider,
+            agent=agent_name,
+            call_type=call_type,
+            duration_ms=duration_ms,
+            success=False,
+            fallback_used=True,
+            note=str(last_err)[:200],
+        )
+        return ""
 
     # ── high-level helpers ────────────────────────────────────────────────────
 
@@ -624,7 +646,7 @@ class ClaudeClient:
     def _call_anthropic(self, prompt: str, system: str, max_tokens: int, temperature: float, model: str):
         """Call Anthropic Claude API. Returns (text, usage_dict) — never raises silently."""
         import anthropic
-        model_used = model or "claude-haiku-4-5-20251001"
+        model_used = model or get_anthropic_model()
         kwargs = dict(
             model=model_used,
             max_tokens=max(max_tokens, 10),
@@ -666,7 +688,7 @@ class ClaudeClient:
         }
 
         last_err = None
-        for model in _TOGETHER_MODELS:
+        for model in get_together_models():
             try:
                 payload["model"] = model
                 resp = requests.post(

@@ -198,6 +198,12 @@ class AgentC_Banking:
         agent_b_reference_recs: Raw rows from rule-based Agent B execute (same order as UI #1–#3).
         When set, B vs C comparison uses execute #1 vs Agent C pick — otherwise raw merge rank vs churn-boosted pick.
         """
+        import time as _time
+        _offer_start = _time.monotonic()
+        logger.info(
+            f"[Agent C] get_one_best_offer: customer={customer_id}, persona={customer_details.get('persona')}, "
+            f"churn_category={churn_category}, agent_b_candidates={len(agent_b_reference_recs) if agent_b_reference_recs else 0}"
+        )
         persona_name = (customer_details.get("persona") or "Unknown").strip()
         metrics = customer_details.get("metrics") or {}
         digital = float(metrics.get("digital_engagement", 0.5))
@@ -305,6 +311,11 @@ class AgentC_Banking:
         if best is None:
             channels, best_channel, best_channel_reason = self._compute_channels(
                 persona_name, digital, churn_category, metrics
+            )
+            _offer_ms = int((_time.monotonic() - _offer_start) * 1000)
+            logger.info(
+                f"[Agent C] No eligible offer for customer={customer_id} after exclusions/compliance "
+                f"(duration={_offer_ms}ms) — falling back to manual review / retention outreach"
             )
             return {
                 "customer_id": customer_id,
@@ -575,6 +586,12 @@ class AgentC_Banking:
         except Exception as _e:
             logger.warning("Agentic analysis failed: %s", _e)
 
+        _offer_ms = int((_time.monotonic() - _offer_start) * 1000)
+        logger.info(
+            f"[Agent C] Best offer selected for customer={customer_id}: product={best.get('product_id')} "
+            f"({product_name}), score={score_val:.3f}, source={source}, "
+            f"selected_from_agent_b={selected_from_agent_b} (duration={_offer_ms}ms)"
+        )
         return {
             "customer_id": customer_id,
             "offer": {
