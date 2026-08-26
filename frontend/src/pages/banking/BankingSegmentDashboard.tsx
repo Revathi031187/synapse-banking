@@ -36,29 +36,39 @@ interface TopProduct {
   rank_explanation: string | null;
   llm_rationale: string | null;
   detailed_calculation: Record<string, FactorDetail> | null;
+  vote_count: number | null;        // how many sampled customers had this product in their own top picks
+  sampled_customers: number | null; // size of the customer sample this product was ranked from
 }
 type OfferProduct = TopProduct;
-// One KPI chip in the segment-level Best Offer card — Est. Reach, Product Value,
-// Annual Fee, or Financial Fit, each with a tooltip explaining what it measures.
+// One KPI chip in the segment-level Best Offer card — Est. Reach, Expected
+// Conversions, Projected Revenue, or Best Channel, each with a tooltip explaining
+// what it measures.
 interface AggregateOfferKpi {
   label: string;
   value: string;
   tip?: string | null;
 }
-// Best offer computed by scoring the segment's AGGREGATE profile (mean/mode across
-// every real customer in the segment) against all products — not any one customer's
+// Best offer: picks from the segment's top-3 Recommended Products (see bestOfferName /
+// the frequency-based recommendations below), scored against the segment's AGGREGATE
+// profile (mean/mode across every real customer) rather than any one customer's
 // individual pick. See _compute_persona_aggregate_best_offer on the backend.
 interface AggregateBestOffer {
   product_id: string;
   product_name: string;
+  offer_name: string | null;   // the actual Agent-C-selected offer/promo, when one is configured for this product
   category: string | null;
   subcategory: string | null;
   score_pct: number;
-  description_points: string[];
+  why_this_offer: string[];       // bulleted reasons — leads with Agent C's own tailored reason when available
+  how_to_earn: string | null;     // mechanics of qualifying, when a specific offer is configured
+  what_you_get: string | null;    // the offer's headline value proposition
+  benefits: string[];             // supporting benefit bullets under "what you get"
   kpis: AggregateOfferKpi[];
   annual_fee: number | null;
   min_balance: number | null;
   interest_rate_apy: number | null;
+  best_channel: string | null;
+  best_channel_reason: string | null;
   computation_method: string;
 }
 interface SegmentData {
@@ -132,6 +142,21 @@ function colorForSegment(name: string, churnPct: number): string {
     hue = 4;                                   // 25%+ stays red
   }
   return `hsl(${hue.toFixed(0)}, 70%, 38%)`;
+}
+
+// Display name for a segment's best offer — prefers the Agent-C-selected offer/promo
+// name from the aggregate-profile computation, falls back to that computation's
+// underlying product name, then to the older representative-customer pick, so a
+// segment still shows something sensible if the aggregate computation degraded
+// gracefully to null for any reason.
+function bestOfferName(s: SegmentData): string {
+  return (
+    s.aggregate_best_offer?.offer_name ||
+    s.aggregate_best_offer?.product_name ||
+    s.offer_product?.name ||
+    s.top_products[0]?.name ||
+    '—'
+  );
 }
 
 // Segment descriptions are LLM-generated multi-sentence paragraphs — trim to
@@ -682,7 +707,7 @@ function OverviewAll({ segments, portfolio, onSelect }: { segments: SegmentData[
 
       <SectionHead
         title="Segment Snapshot" hint="Click a segment to see its full detail"
-        tip="One card per Agent A segment — best offer is Agent B's #1-ranked persona-mode recommendation for that segment."
+        tip="One card per Agent A segment — best offer is picked from the segment's top 3 most-recommended products, ranked by how many real customers here had each in their own top picks."
       />
       <div className="grid grid-cols-5 gap-3 mb-8">
         {segments.map((s) => (
@@ -700,7 +725,7 @@ function OverviewAll({ segments, portfolio, onSelect }: { segments: SegmentData[
               </div>
             </div>
             <div className="flex justify-between text-[11.5px] text-gray-500 mb-1">
-              <span>Best offer</span><span className="truncate ml-2 text-gray-700 font-medium">{s.offer_product?.name ?? s.top_products[0]?.name ?? '—'}</span>
+              <span>Best offer</span><span className="truncate ml-2 text-gray-700 font-medium">{bestOfferName(s)}</span>
             </div>
             <div className="flex justify-between items-center text-[11.5px] text-gray-500 mb-2">
               <span>Churn risk</span><StatusBadge tone={churnTone(s.churn_pct)} label={`${s.churn_pct.toFixed(0)}%`} />
@@ -712,7 +737,7 @@ function OverviewAll({ segments, portfolio, onSelect }: { segments: SegmentData[
 
       <SectionHead
         title="Top Offers Across Segments" hint="Click a column to sort"
-        tip="Each segment's #1 Agent B persona-mode recommendation. Click Segment Size, Avg. Balance, or Offer Receptivity to reorder by that metric; click again to flip direction."
+        tip="Each segment's #1 most-recommended product, by how many real customers had it in their own top picks. Click Segment Size, Avg. Balance, or Offer Receptivity to reorder by that metric; click again to flip direction."
       />
       <div className="bg-white border border-gray-200 rounded-xl shadow-sm p-4 overflow-x-auto">
         <div className="grid grid-cols-[2fr_1.2fr_0.85fr_0.85fr_1fr] gap-x-3 min-w-[620px] text-[10px] font-bold uppercase tracking-wide text-gray-400 pb-2">
@@ -723,7 +748,7 @@ function OverviewAll({ segments, portfolio, onSelect }: { segments: SegmentData[
         </div>
         {topOffers.map((s) => (
           <div key={s.id} className="grid grid-cols-[2fr_1.2fr_0.85fr_0.85fr_1fr] gap-x-3 min-w-[620px] items-center py-2.5 border-t border-gray-100 text-[12.5px]">
-            <span className="font-bold text-gray-900 truncate">{s.featured_offer.split(' — ')[0] || s.offer_product?.name || '—'}</span>
+            <span className="font-bold text-gray-900 truncate">{bestOfferName(s)}</span>
             <span className="flex items-center gap-1.5 text-gray-600 truncate"><SegmentDot name={s.name} churnPct={s.churn_pct} size={8} />{s.name}</span>
             <span className="text-right tabular-nums text-gray-700">{fmtInt(s.count)}</span>
             <span className="text-right tabular-nums font-bold text-gray-900">{fmtUSD(s.avg_balance)}</span>
@@ -802,10 +827,32 @@ function ProductDetailModal({ product, onClose }: { product: TopProduct; onClose
           {product.description && <p className="text-[13px] text-gray-600 leading-relaxed">{product.description}</p>}
 
           <div className="grid grid-cols-2 gap-2.5">
-            <ProductFactChip label="Annual Fee" value={product.annual_fee ? `$${product.annual_fee}` : 'None'} />
-            {!!product.interest_rate && <ProductFactChip label="Rate" value={`${(product.interest_rate * 100).toFixed(2)}% APY`} />}
-            {product.min_balance != null && <ProductFactChip label="Min. Balance" value={fmtUSD(product.min_balance)} />}
-            {!!product.monthly_fee && <ProductFactChip label="Monthly Fee" value={`$${product.monthly_fee}`} />}
+            {product.vote_count != null && !!product.sampled_customers && (
+              <ProductFactChip
+                label="Segment Adoption"
+                value={`${Math.round((product.vote_count / product.sampled_customers) * 100)}%`}
+                tip="Share of sampled customers in this segment who had this product among their own individual top picks."
+              />
+            )}
+            <ProductFactChip
+              label="Annual Fee"
+              value={product.annual_fee ? `$${product.annual_fee}` : 'None'}
+              tip="The yearly fee charged for holding this product."
+            />
+            {product.min_balance != null && (
+              <ProductFactChip
+                label="Min. Balance"
+                value={fmtUSD(product.min_balance)}
+                tip="The minimum balance required to open or maintain this product."
+              />
+            )}
+            {!!product.interest_rate && (
+              <ProductFactChip
+                label="Rate (APY/Interest)"
+                value={`${(product.interest_rate * 100).toFixed(2)}%`}
+                tip="The annual percentage yield earned on savings/deposit products, or the interest rate charged on credit/loan products."
+              />
+            )}
           </div>
 
           {product.rank_explanation && (
@@ -905,7 +952,7 @@ function OverviewSegment({ seg }: { seg: SegmentData }) {
           <SectionHead
             title="Recommended Products"
             hint=" "
-            tip="The exact same products and scores Agent B's Recommender tab computes for this persona (rule-based scoring, all product types) — click a product for full details."
+            tip="Ranked by how many real customers in this segment had each product in their own top picks — a segment-wide signal, not one representative customer's individual ranking (that's what the Recommender tab's persona mode shows instead) — click a product for full details."
           />
           <div className="bg-white border border-gray-200 rounded-xl shadow-sm overflow-hidden flex flex-col flex-1 min-h-0">
             <div className="flex-1 overflow-y-auto min-h-0 p-3 space-y-2">
@@ -931,7 +978,7 @@ function OverviewSegment({ seg }: { seg: SegmentData }) {
         <div className="flex flex-col h-[420px]">
           <SectionHead
             title="Best Offer for This Segment" hint=" "
-            tip="Computed by scoring the segment's aggregate profile (the mean/mode of every real customer's credit score, income, deposits, digital engagement, etc.) against all products — one deterministic answer for the whole segment, not any single customer's individual pick."
+            tip="Picks the best of the segment's top 3 Recommended Products above, scored against the segment's aggregate profile (the mean/mode of every real customer's credit score, income, deposits, digital engagement, etc.) — so this can never disagree with what's already shown as recommended, and then finds the specific offer/promo for that product via Agent C."
           />
           <div className="bg-white border border-gray-200 rounded-xl shadow-sm overflow-hidden flex flex-col flex-1 min-h-0">
             <div className="p-4 flex-shrink-0" style={{ background: `linear-gradient(120deg, ${colorForSegment(seg.name, seg.churn_pct)}, #2563EB)` }}>
@@ -943,19 +990,48 @@ function OverviewSegment({ seg }: { seg: SegmentData }) {
                   </span>
                 )}
               </div>
-              <p className="text-[15px] font-extrabold text-white leading-tight">{agg?.product_name || seg.featured_offer.split(' — ')[0]}</p>
-              {agg?.subcategory && <p className="text-[11px] text-white/70 mt-0.5">{agg.subcategory}</p>}
+              <p className="text-[15px] font-extrabold text-white leading-tight">{agg?.offer_name || agg?.product_name || seg.featured_offer.split(' — ')[0]}</p>
+              {agg && (
+                <p className="text-[11px] text-white/70 mt-0.5">
+                  {agg.offer_name ? `on ${agg.product_name}${agg.subcategory ? ' · ' + agg.subcategory : ''}` : (agg.subcategory || '')}
+                </p>
+              )}
             </div>
             <div className="p-4 flex-1 overflow-y-auto min-h-0">
-              {!!agg?.description_points?.length && (
-                <ul className="mb-3 space-y-1.5">
-                  {agg.description_points.map((point, i) => (
-                    <li key={i} className="flex items-start gap-1.5 text-[11.5px] text-gray-600 leading-relaxed">
-                      <span className="text-emerald-600 font-bold flex-shrink-0 mt-[1px]">&#10003;</span>
-                      <span>{stripMdEmphasis(point)}</span>
-                    </li>
-                  ))}
-                </ul>
+              {!!agg?.why_this_offer?.length && (
+                <div className="mb-3">
+                  <p className="text-[9.5px] font-bold uppercase text-gray-400 mb-1">Why this offer</p>
+                  <ul className="space-y-1">
+                    {agg.why_this_offer.map((point, i) => (
+                      <li key={i} className="flex items-start gap-1.5 text-[11.5px] text-gray-600 leading-relaxed">
+                        <span className="text-emerald-600 font-bold flex-shrink-0 mt-[1px]">&#10003;</span>
+                        <span>{stripMdEmphasis(point)}</span>
+                      </li>
+                    ))}
+                  </ul>
+                </div>
+              )}
+              {agg?.how_to_earn && (
+                <div className="mb-3">
+                  <p className="text-[9.5px] font-bold uppercase text-gray-400 mb-1">How to earn it</p>
+                  <p className="text-[11.5px] text-gray-600 leading-relaxed">{stripMdEmphasis(agg.how_to_earn)}</p>
+                </div>
+              )}
+              {agg?.what_you_get && (
+                <div className="mb-3">
+                  <p className="text-[9.5px] font-bold uppercase text-gray-400 mb-1">What you get</p>
+                  <p className="text-[12.5px] font-bold text-gray-900 leading-snug mb-1">{stripMdEmphasis(agg.what_you_get)}</p>
+                  {!!agg.benefits?.length && (
+                    <ul className="space-y-0.5">
+                      {agg.benefits.map((b, i) => (
+                        <li key={i} className="flex items-start gap-1.5 text-[11px] text-gray-500 leading-relaxed">
+                          <span className="text-blue-500 flex-shrink-0">&bull;</span>
+                          <span>{stripMdEmphasis(b)}</span>
+                        </li>
+                      ))}
+                    </ul>
+                  )}
+                </div>
               )}
               <div className="grid grid-cols-2 gap-2.5 mb-3">
                 {(agg?.kpis ?? []).map((k) => (

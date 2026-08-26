@@ -200,6 +200,18 @@ def init_banking_agent_b():
                 if not loaded:
                     logger.warning("Could not load Agent A data from disk; Agent B will use fallback scoring")
 
+            # Restore the 'cluster' column onto banking_agent_a.customers_df from persisted
+            # agent_a_results BEFORE any Agent B variant is constructed below. This matters
+            # because Banking12FactorScorer pre-computes segment popularity/affinity stats
+            # ONCE, at construction time (inside AgentB_Banking.load_data(), triggered lazily
+            # by whichever endpoint calls .execute() first) — if the cluster column is still
+            # missing at that one-time moment (e.g. right after a backend restart, before this
+            # column has been restored), those two factors silently stay empty for the rest of
+            # this process's lifetime, regardless of what happens afterward. Calling this here,
+            # at the single chokepoint every Agent B caller passes through, means the fix can't
+            # depend on which endpoint happens to run first in a fresh process.
+            _sync_banking_cluster_column()
+
             # Use loaded DataFrames (or None if load failed — agents handle None gracefully)
             _customers = banking_agent_a.customers_df
             _products = banking_agent_a.products_df
@@ -278,7 +290,7 @@ system_state = {
         'agent_d_incomplete_rows': [],
         'agent_d_impression_rows': [],
         '_agent_d_csv_loaded': False,
-        'dashboard_persona_recs_cache': {},  # (cluster_id, weights_sig, agent_a_last_refreshed) -> Agent B execute() result
+        'dashboard_persona_freq_recs_cache': {},  # (cluster_id, weights_sig, agent_a_last_refreshed, top_n) -> frequency-ranked recommendations
     }
 }
 
@@ -2973,7 +2985,13 @@ def _run_agent_a_background(config_dict: dict):
         personas = results.get('personas') or {}
         for cluster_id, persona in personas.items():
             try:
-                _get_persona_recommendations_cached(cluster_id, persona, top_n=5)
+                _seg_df = None
+                if banking_agent_a.customers_df is not None and 'cluster' in banking_agent_a.customers_df.columns:
+                    _seg_df = banking_agent_a.customers_df[banking_agent_a.customers_df['cluster'] == cluster_id]
+                if _seg_df is not None and len(_seg_df) > 0:
+                    _freq_result = _get_persona_frequency_recommendations_cached(cluster_id, persona, _seg_df, top_n=5)
+                    _top3 = ((_freq_result or {}).get('top_products_raw') or [])[:3]
+                    _compute_persona_aggregate_best_offer(cluster_id, persona, _seg_df, candidate_products=_top3 or None)
             except Exception as _we:
                 logger.warning(f"Pre-warm: dashboard recommendations failed for cluster {cluster_id}: {_we}")
 
@@ -3835,21 +3853,34 @@ def _build_persona_aggregate_profile(seg_df: "pd.DataFrame", cluster_id) -> dict
     }
 
 
-def _compute_persona_aggregate_best_offer(cluster_id, persona: dict, seg_df: "pd.DataFrame") -> Optional[dict]:
+def _compute_persona_aggregate_best_offer(
+    cluster_id, persona: dict, seg_df: "pd.DataFrame",
+    candidate_products: Optional[List[Dict]] = None,
+) -> Optional[dict]:
     """
     Segment-level best offer computed WITHOUT anchoring on any single real customer.
     Collapses the segment into one aggregate profile (_build_persona_aggregate_profile),
-    then scores every catalog product (~28, vs. potentially thousands of customers)
-    against that single profile using the same Banking12FactorScorer used everywhere
-    else. Deterministic — doesn't shift based on which customer happens to be first
-    in the dataframe — and cheap, since only the winning product needs formatting.
-    Cached per (cluster_id, factor-weight state, Agent A refresh), same pattern as
-    _get_persona_recommendations_cached.
+    then scores candidate products against that single profile using the same
+    Banking12FactorScorer used everywhere else. Deterministic — doesn't shift based on
+    which customer happens to be first in the dataframe.
+
+    candidate_products: when provided (e.g. the segment's frequency-ranked top-3 from
+    _get_persona_frequency_recommendations_cached), only these are scored — this is
+    what keeps Best Offer's pick consistent with what Recommended Products already
+    shows for the same segment, instead of the two panels disagreeing. When omitted,
+    falls back to scoring the entire product catalog (~28 products).
+
+    Cached per (cluster_id, factor-weight state, Agent A refresh, candidate set), same
+    pattern as _get_persona_frequency_recommendations_cached.
     """
     agent_a_last_refreshed = (system_state['banking'].get('agent_a_results') or {}).get('last_refreshed')
     fw = system_state['banking'].get('agent_b_factor_weights_pct')
     weights_sig = json.dumps(fw, sort_keys=True) if fw else "default"
-    cache_key = (str(cluster_id), weights_sig, agent_a_last_refreshed)
+    candidates_sig = (
+        ",".join(sorted(str(p.get('product_id')) for p in candidate_products))
+        if candidate_products else "all_products"
+    )
+    cache_key = (str(cluster_id), weights_sig, agent_a_last_refreshed, candidates_sig)
 
     cache = system_state['banking'].setdefault('dashboard_persona_aggregate_offer_cache', {})
     if cache_key in cache:
@@ -3860,7 +3891,7 @@ def _compute_persona_aggregate_best_offer(cluster_id, persona: dict, seg_df: "pd
     # type, etc.) must degrade to "no aggregate offer for this segment" rather than
     # taking down the whole /api/banking/dashboard/segments response for every segment.
     try:
-        result = _compute_persona_aggregate_best_offer_uncached(cluster_id, persona, seg_df, fw)
+        result = _compute_persona_aggregate_best_offer_uncached(cluster_id, persona, seg_df, fw, candidate_products)
     except Exception:
         logger.exception("Persona aggregate best-offer computation failed for cluster %s", cluster_id)
         result = None
@@ -3878,20 +3909,49 @@ def _safe_float(value, default=0.0) -> float:
         return default
 
 
-def _compute_persona_aggregate_best_offer_uncached(cluster_id, persona: dict, seg_df: "pd.DataFrame", fw) -> Optional[dict]:
+def _ensure_agent_b_chromadb_loaded() -> bool:
+    """
+    AgentB_Banking (the rule-based ChromaDB agent) lazily loads its product/customer
+    data and constructs Banking12FactorScorer inside .load_data() — normally triggered
+    as a side effect of the FIRST .execute() call (e.g. from the live Recommender tab).
+    The dashboard's frequency-based recommendations and aggregate best-offer functions
+    read .enhanced_scorer / .products_df directly and never call .execute(), so they
+    can't rely on that side effect having already happened elsewhere in this process —
+    they need to trigger the load themselves. Returns True once both are populated.
+    """
     init_banking_agent_b()
-    scorer = getattr(banking_agent_b_chromadb, 'enhanced_scorer', None)
-    products_df = getattr(banking_agent_b_chromadb, 'products_df', None)
-    if scorer is None or products_df is None or len(products_df) == 0:
+    if banking_agent_b_chromadb is None:
+        return False
+    if banking_agent_b_chromadb.enhanced_scorer is None or banking_agent_b_chromadb.products_df is None:
+        try:
+            banking_agent_b_chromadb.load_data()
+        except Exception:
+            logger.exception("Failed to lazily load AgentB_Banking data")
+    return banking_agent_b_chromadb.enhanced_scorer is not None and banking_agent_b_chromadb.products_df is not None
+
+
+def _compute_persona_aggregate_best_offer_uncached(
+    cluster_id, persona: dict, seg_df: "pd.DataFrame", fw,
+    candidate_products: Optional[List[Dict]] = None,
+) -> Optional[dict]:
+    if not _ensure_agent_b_chromadb_loaded():
+        return None
+    scorer = banking_agent_b_chromadb.enhanced_scorer
+    products_df = banking_agent_b_chromadb.products_df
+    if len(products_df) == 0:
         return None
 
     agg_customer = _build_persona_aggregate_profile(seg_df, cluster_id)
 
+    # Score only the given candidates (Recommended Products' top-3) when provided,
+    # so the winner is guaranteed to be one of the products already shown on this
+    # segment's card — otherwise fall back to the whole catalog.
+    products_to_score = candidate_products if candidate_products else [row.to_dict() for _, row in products_df.iterrows()]
+
     best_score = -1.0
     best_product = None
     best_breakdown = None
-    for _, prod_row in products_df.iterrows():
-        product = prod_row.to_dict()
+    for product in products_to_score:
         try:
             breakdown = scorer.score_product(customer=agg_customer, product=product, persona=persona, factor_weights=fw)
             total = _safe_float(breakdown.get('total_score', 0))
@@ -3935,12 +3995,123 @@ def _compute_persona_aggregate_best_offer_uncached(cluster_id, persona: dict, se
         description_points = [fallback_expl] if fallback_expl else ["Best aggregate fit for this segment based on 12-factor scoring."]
 
     product_value = best_breakdown.get('product_value') or {}
-    financial_need = best_breakdown.get('financial_need_match') or {}
     projected_revenue_value = (product_value.get('details') or {}).get('projected_bank_revenue_short_value') or '—'
     segment_size = int(len(seg_df))
 
-    # Fixed KPI set for the dashboard card — Est. Reach, Product Value, Projected
-    # Revenue, Financial Fit — each with a tooltip explaining what it measures.
+    # ── Run the winning product through Agent C's real offer-selection layer ──
+    # Scoring above only picks the best PRODUCT (Agent B's 12-factor model). A
+    # "best offer" should reflect an actual selected offer/promo for that product
+    # (Agent C's job everywhere else in this app), not just the product itself.
+    # We already know the winning product, so Agent C is called with it as the
+    # ONLY candidate (via agent_b_reference_recs) — it still runs its own
+    # exclusion/compliance checks, then picks the specific offer for this
+    # product/persona and returns a persona-tailored reason for that pick.
+    persona_name = persona.get('persona_name') or persona.get('name') or f"Segment {cluster_id}"
+    agent_c_offer_name = None
+    agent_c_offer_reason = None
+    best_channel = None
+    best_channel_reason = None
+    offer_intel: Dict = {}
+    try:
+        reference_rec = dict(best_product)
+        reference_rec['score'] = best_score
+        offer_customer_details = {
+            "customer_id": agg_customer["customer_id"],
+            "persona": persona_name,
+            "metrics": {
+                **agg_customer,
+                # Agent C reads this key name for channel selection; the scorer
+                # reads 'digital_engagement_score' — keep both pointing at the
+                # same aggregate value rather than picking one and breaking the other.
+                "digital_engagement": agg_customer.get("digital_engagement_score", 0.5),
+            },
+        }
+        c_result = banking_agent_c.get_one_best_offer(
+            customer_id=agg_customer["customer_id"],
+            customer_details=offer_customer_details,
+            all_recommendations={},
+            churn_risk_score=None,
+            churn_category=None,
+            fallback_products=None,
+            agent_b_reference_recs=[reference_rec],
+        )
+        offer_intel = (c_result or {}).get("offer_intelligence") or {}
+        if offer_intel.get("available"):
+            selected_offer = offer_intel.get("selected_offer") or {}
+            agent_c_offer_name = selected_offer.get("offer_name")
+            agent_c_offer_reason = offer_intel.get("persona_offer_reason")
+        best_channel = (c_result or {}).get("best_channel")
+        best_channel_reason = (c_result or {}).get("best_channel_reason")
+    except Exception:
+        logger.exception("Agent C offer-selection failed for persona aggregate, cluster %s", cluster_id)
+
+    # Lead with Agent C's own tailored reason when it picked a real offer; keep
+    # room for up to 3 more of the strongest product-fit reasons after it.
+    why_this_offer_points = list(description_points)
+    if agent_c_offer_reason:
+        reason_text = str(agent_c_offer_reason).strip()
+        if reason_text:
+            why_this_offer_points = [reason_text] + [d for d in description_points if d != reason_text]
+    why_this_offer_points = why_this_offer_points[:4]
+
+    # ── "How to earn it" / "What you get" ──────────────────────────────────────
+    # Only populated when Agent C actually selected a specific configured offer
+    # (offer_intel['available']); otherwise these stay empty and the card's
+    # description/KPIs below describe the underlying product instead.
+    how_to_earn = None
+    what_you_get = None
+    benefits: List[str] = []
+    selection_method = None
+    if offer_intel.get("available") and offer_intel.get("selected_offer"):
+        selected_offer_data = offer_intel.get("selected_offer") or {}
+        selection_method = offer_intel.get("selection_method")
+
+        how_to_earn = selected_offer_data.get("content_how_to_earn") or None
+        what_you_get = selected_offer_data.get("headline_value") or selected_offer_data.get("content_hero_stat") or None
+        benefits = [
+            str(b).strip() for b in (
+                selected_offer_data.get("content_benefit_1"),
+                selected_offer_data.get("content_benefit_2"),
+                selected_offer_data.get("content_benefit_3"),
+            ) if b and str(b).strip()
+        ]
+
+    # ── Fixed KPI set, always computed the same way regardless of whether Agent C
+    # found a specific configured offer — Est. Reach, Expected Conversions,
+    # Projected Revenue, Best Channel. ────────────────────────────────────────
+    #
+    # Expected Conversions: segment size × the best available conversion-rate
+    # estimate. Honest about its source — a real measured rate from a live A/B
+    # experiment when one picked this offer, otherwise an approximation (the
+    # formula path's offer fit score, or the segment's own cross-sell
+    # receptivity when no specific offer is configured at all) — never treated
+    # as more precise than it is.
+    conversion_rate = None
+    conversion_is_measured = False
+    if selection_method == "experiment_lift":
+        exp_data = offer_intel.get("experiment_data") or {}
+        wr = exp_data.get("winning_conversion_rate")
+        if wr is not None:
+            conversion_rate = _safe_float(wr)
+            conversion_is_measured = True
+    if conversion_rate is None and offer_intel.get("available"):
+        conversion_rate = _safe_float(offer_intel.get("offer_score"))
+    if conversion_rate is None:
+        conversion_rate = _safe_float(agg_customer.get("cross_sell_receptivity"), default=0.5)
+    conversion_rate = max(0.0, min(1.0, conversion_rate))
+    expected_conversions = int(round(segment_size * conversion_rate))
+    conversions_tip = (
+        "Segment size × this offer's measured conversion rate from live A/B experiment data for this persona."
+        if conversion_is_measured else
+        "Segment size × an estimated acceptance likelihood (the offer or product fit score, or this segment's cross-sell receptivity when no specific offer is configured) — an approximation, not a measured rate."
+    )
+
+    channel_raw = str(best_channel or "").strip()
+    channel_label = {
+        "in_app": "In-App", "email": "Email", "direct_mail": "Direct Mail",
+        "branch": "Branch", "sms": "SMS", "outbound_call": "Outbound Call", "web": "Web",
+    }.get(channel_raw, channel_raw.replace("_", " ").title() if channel_raw else "—")
+
     kpis = [
         {
             "label": "Est. Reach",
@@ -3948,9 +4119,9 @@ def _compute_persona_aggregate_best_offer_uncached(cluster_id, persona: dict, se
             "tip": "Number of real customers in this segment — everyone this offer would reach if launched as a segment-level campaign.",
         },
         {
-            "label": "Product Value",
-            "value": f"{_safe_float(product_value.get('raw_score')) * 100:.0f}%",
-            "tip": "How favorable this product is overall for the segment — blending its fee level, interest-rate competitiveness, minimum-balance accessibility, customer ROI, and the revenue it's projected to generate for the bank.",
+            "label": "Expected Conversions",
+            "value": f"~{expected_conversions:,} customers",
+            "tip": conversions_tip,
         },
         {
             "label": "Projected Revenue",
@@ -3958,78 +4129,192 @@ def _compute_persona_aggregate_best_offer_uncached(cluster_id, persona: dict, se
             "tip": "Estimated revenue this product would generate for the bank from this segment — interchange and interest for cards, net interest spread for loans, AUM fees for investments, or deposit float for savings/checking.",
         },
         {
-            "label": "Financial Fit",
-            "value": f"{_safe_float(financial_need.get('raw_score')) * 100:.0f}%",
-            "tip": "How well this product matches the segment's typical age, income, deposit level, and financial goals — the core need-alignment signal in the 12-factor score.",
+            "label": "Best Channel",
+            "value": channel_label,
+            "tip": "The channel this segment is best reached through — the offer's configured preference when one is set, otherwise this persona's recommended outreach channel.",
         },
     ]
 
     result = {
         "product_id": best_product.get('product_id'),
         "product_name": best_product.get('product_name'),
+        "offer_name": agent_c_offer_name,  # None when no specific promo is configured for this product/persona
         "category": best_product.get('category'),
         "subcategory": best_product.get('subcategory'),
         "score_pct": round(best_score * 100, 1),
-        "description_points": description_points,
+        "why_this_offer": why_this_offer_points,
+        "how_to_earn": how_to_earn,
+        "what_you_get": what_you_get,
+        "benefits": benefits,
         "kpis": kpis,
         "annual_fee": best_product.get('annual_fee'),
         "min_balance": best_product.get('min_balance'),
         "interest_rate_apy": best_product.get('interest_rate_apy') or best_product.get('interest_rate'),
-        "computation_method": "persona_aggregate_profile",
+        "best_channel": best_channel,
+        "best_channel_reason": best_channel_reason,
+        "computation_method": "persona_aggregate_profile_via_agent_c",
     }
     return numpy_to_python_types(result)
 
 
-def _get_persona_recommendations_cached(cluster_id, persona: dict, top_n: int = 5) -> Optional[dict]:
+_MATCH_LEVEL_THRESHOLDS = (0.85, "Perfect Match"), (0.70, "Great Match"), (0.50, "Good Match")
+
+
+def _match_level_for_score(score: float) -> str:
+    for threshold, label in _MATCH_LEVEL_THRESHOLDS:
+        if score >= threshold:
+            return label
+    return "Fair Match"
+
+
+# Cap on how many real customers get scored per segment for the frequency tally below.
+# A segment can hold thousands of customers; scoring all of them against every product
+# would make a cold dashboard load far too slow. A few hundred real customers is already
+# a stable estimate of "how often is this product a top pick here" — sampling further
+# has diminishing returns. random_state is fixed so the same segment (and therefore the
+# same underlying data) always produces the same sample, not a different one per call.
+_FREQ_REC_SAMPLE_CAP = 200
+
+
+def _compute_persona_frequency_recommendations_uncached(
+    cluster_id, persona: dict, seg_df: "pd.DataFrame", fw, top_n_per_customer: int = 5, top_n_result: int = 5,
+) -> Optional[dict]:
     """
-    The SAME Agent B rule-based recommendation `/api/banking/agent_b/execute` computes
-    for "Persona Mode" on the Recommender tab, for use by the Dashboard tab — reused
-    in-process (not a second HTTP call) so the two tabs can never diverge. Cached
-    because `AgentB_Banking.execute()` makes a real, several-second LLM call for the
-    top-3 rationale on every invocation (agents/agent_b_banking_chromadb.py, gated only
-    on Claude/Together availability, not on `explain`) — looping this uncached across 5
-    personas on every Dashboard load would add 15-45s to page load. The cache key
-    includes the factor-weight state and Agent A's last-refresh timestamp, so it's
-    invalidated automatically whenever either changes.
+    "Recommended Products" for a segment, ranked by how many real customers in that
+    segment had each product in their OWN individual top-N — a "wisdom of the crowd"
+    signal for the segment, rather than one representative customer's personal ranking.
+    For every (sampled) customer, scores every product with their real profile, takes
+    their own top-N, and tallies votes across the segment; ties broken by average score
+    among the customers who picked it.
+
+    This is a deliberately DIFFERENT computation from the live Recommender tab's persona
+    mode (which anchors on one representative customer, by design, so that tab mirrors
+    what a user gets when they pick that persona there) — this trades that one-to-one
+    mirror for a segment-wide signal that's also what Best Offer now draws its candidate
+    products from, so the two dashboard panels can't disagree about the top picks.
     """
-    rep_customer_id = _resolve_persona_representative_customer_id(cluster_id)
-    if not rep_customer_id:
+    if seg_df is None or len(seg_df) == 0 or not _ensure_agent_b_chromadb_loaded():
+        return None
+    scorer = banking_agent_b_chromadb.enhanced_scorer
+    products_df = banking_agent_b_chromadb.products_df
+    if len(products_df) == 0:
         return None
 
+    products_list = [row.to_dict() for _, row in products_df.iterrows()]
+
+    # Exclude products a customer already owns from their own vote — same ownership
+    # exclusion the live Recommender applies for an individual customer.
+    owned_by_customer: Dict[str, set] = {}
+    txns = getattr(banking_agent_b_chromadb, 'transactions_df', None)
+    if txns is not None and 'product_id' in txns.columns and 'customer_id' in txns.columns:
+        seg_ids = set(seg_df['customer_id'].astype(str))
+        seg_txns = txns[txns['customer_id'].astype(str).isin(seg_ids)]
+        for cid, group in seg_txns.groupby(seg_txns['customer_id'].astype(str)):
+            owned_by_customer[cid] = set(group['product_id'].unique())
+
+    sample = seg_df if len(seg_df) <= _FREQ_REC_SAMPLE_CAP else seg_df.sample(n=_FREQ_REC_SAMPLE_CAP, random_state=42)
+    sampled_n = len(sample)
+
+    votes: Dict[str, Dict] = {}
+    for _, cust_row in sample.iterrows():
+        customer = cust_row.to_dict()
+        owned = owned_by_customer.get(str(customer.get('customer_id')), set())
+        scored = []
+        for product in products_list:
+            if product.get('product_id') in owned:
+                continue
+            try:
+                breakdown = scorer.score_product(customer=customer, product=product, persona=persona, factor_weights=fw)
+            except Exception:
+                continue
+            scored.append((_safe_float(breakdown.get('total_score', 0)), product, breakdown))
+        scored.sort(key=lambda x: -x[0])
+        for score, product, breakdown in scored[:top_n_per_customer]:
+            pid = str(product.get('product_id'))
+            v = votes.setdefault(pid, {"count": 0, "score_sum": 0.0, "product": product, "best_breakdown": breakdown, "best_score": -1.0})
+            v["count"] += 1
+            v["score_sum"] += score
+            if score > v["best_score"]:
+                v["best_score"] = score
+                v["best_breakdown"] = breakdown
+
+    if not votes:
+        return None
+
+    ranked = sorted(votes.values(), key=lambda v: (-v["count"], -(v["score_sum"] / max(v["count"], 1))))
+
+    recommendations = []
+    top_products_raw = []
+    for rank, v in enumerate(ranked[:top_n_result], start=1):
+        product = v["product"]
+        avg_score = v["score_sum"] / max(v["count"], 1)
+        pct_of_sample = (v["count"] / sampled_n * 100) if sampled_n else 0
+        top_products_raw.append(product)
+
+        # interest_rate is stored as a fraction (0.045 = 4.5%) for savings/CDs/loans, but
+        # credit cards keep their real APR in regular_apr_pct instead — stored as a literal
+        # percent (20.99, not 0.2099) — so it needs /100 to match the fraction convention
+        # everything downstream (including the frontend's ×100 display) expects.
+        display_interest_rate = product.get('interest_rate_apy') or product.get('interest_rate')
+        if not display_interest_rate:
+            regular_apr_pct = product.get('regular_apr_pct')
+            if regular_apr_pct:
+                display_interest_rate = _safe_float(regular_apr_pct) / 100.0
+
+        recommendations.append({
+            "rank": rank,
+            "product_id": product.get('product_id'),
+            "product_name": product.get('product_name'),
+            "category": product.get('category'),
+            "subcategory": product.get('subcategory'),
+            "description": product.get('description'),
+            "annual_fee": product.get('annual_fee'),
+            "monthly_fee": product.get('monthly_fee'),
+            "interest_rate": display_interest_rate,
+            "min_balance": product.get('min_balance'),
+            "score": round(avg_score, 4),
+            "match_level": _match_level_for_score(avg_score),
+            "vote_count": v["count"],
+            "sampled_customers": sampled_n,
+            "rank_explanation": (
+                f"A top-{top_n_per_customer} pick for {v['count']} of {sampled_n} sampled customers in this "
+                f"segment ({pct_of_sample:.0f}%), averaging a {avg_score*100:.0f}% match score."
+            ),
+            "llm_rationale": None,
+            "detailed_calculation": v["best_breakdown"],
+        })
+
+    return {
+        "recommendations": recommendations,
+        "top_products_raw": top_products_raw,  # full product dicts for internal use (Best Offer candidates) — not sent to the client as-is
+        "sampled_customers": sampled_n,
+        "segment_size": int(len(seg_df)),
+    }
+
+
+def _get_persona_frequency_recommendations_cached(cluster_id, persona: dict, seg_df: "pd.DataFrame", top_n: int = 5) -> Optional[dict]:
+    """
+    Cached wrapper around _compute_persona_frequency_recommendations_uncached, same
+    invalidation pattern as the rest of the dashboard's per-persona caches (cluster_id,
+    factor-weight state, Agent A refresh) — this computation scores every product
+    against up to _FREQ_REC_SAMPLE_CAP real customers, so it's too expensive to redo
+    on every dashboard load.
+    """
     fw = system_state['banking'].get('agent_b_factor_weights_pct')
     weights_sig = json.dumps(fw, sort_keys=True) if fw else "default"
     agent_a_last_refreshed = (system_state['banking'].get('agent_a_results') or {}).get('last_refreshed')
-    cache_key = (str(cluster_id), weights_sig, agent_a_last_refreshed)
+    cache_key = (str(cluster_id), weights_sig, agent_a_last_refreshed, top_n)
 
-    cache = system_state['banking'].setdefault('dashboard_persona_recs_cache', {})
+    cache = system_state['banking'].setdefault('dashboard_persona_freq_recs_cache', {})
     if cache_key in cache:
         return cache[cache_key]
 
-    init_banking_agent_b()
-    if banking_agent_b_chromadb is None:
-        return None
-
-    exec_params = {
-        'customer_id': rep_customer_id,
-        'persona': cluster_id,
-        'search_query': '',
-        'category': None,
-        'top_n': top_n,
-        'explain': True,
-    }
-    if fw:
-        exec_params['factor_weights'] = fw
-
     try:
-        result = banking_agent_b_chromadb.execute(exec_params)
+        result = _compute_persona_frequency_recommendations_uncached(cluster_id, persona, seg_df, fw, top_n_result=top_n)
     except Exception:
-        logger.exception("Dashboard: Agent B execute() failed for persona %s", cluster_id)
-        return None
-    if not isinstance(result, dict) or 'error' in result:
-        return None
+        logger.exception("Persona frequency recommendations failed for cluster %s", cluster_id)
+        result = None
 
-    result = numpy_to_python_types(result)
-    result['representative_customer_id'] = rep_customer_id
     cache[cache_key] = result
     return result
 
@@ -4097,18 +4382,24 @@ async def get_banking_dashboard_segments():
             chars = persona.get("characteristics") or {}
             count = int(persona.get("size") or len(seg_df))
 
-            # The SAME rule-based recommendations the Recommender tab computes for
-            # "Persona Mode" + this persona + "All product types" — reused in-process
-            # (see _get_persona_recommendations_cached) so the two tabs can never show
-            # different products/scores for the same segment.
-            agent_b_result = _get_persona_recommendations_cached(cluster_id, persona, top_n=5)
-            recommendations = (agent_b_result or {}).get("recommendations") or []
-            representative_customer_id = (agent_b_result or {}).get("representative_customer_id")
+            # Recommended Products: ranked by how many real customers in this segment had
+            # each product in their OWN top-N (a segment-wide "wisdom of the crowd" signal)
+            # — see _get_persona_frequency_recommendations_cached. This intentionally does
+            # NOT mirror the live Recommender tab's persona mode (which anchors on one
+            # representative customer by design); it's a different, segment-wide question.
+            freq_result = _get_persona_frequency_recommendations_cached(cluster_id, persona, seg_df, top_n=5)
+            recommendations = (freq_result or {}).get("recommendations") or []
+            representative_customer_id = _resolve_persona_representative_customer_id(cluster_id)
 
             # Segment-level best offer: scores the segment's aggregate profile (mean/mode
-            # across all real customers in seg_df) against every product, instead of using
-            # one representative customer's individual pick — see _compute_persona_aggregate_best_offer.
-            aggregate_best_offer = _compute_persona_aggregate_best_offer(cluster_id, persona, seg_df)
+            # across all real customers in seg_df) against ONLY the top-3 products above —
+            # so Best Offer can never disagree with what Recommended Products already shows
+            # for this segment; it just picks (and finds a specific promo for) the best of
+            # those three. See _compute_persona_aggregate_best_offer.
+            top3_raw_products = ((freq_result or {}).get("top_products_raw") or [])[:3]
+            aggregate_best_offer = _compute_persona_aggregate_best_offer(
+                cluster_id, persona, seg_df, candidate_products=top3_raw_products or None
+            )
 
             top_products_detail = []
             for rec in recommendations[:5]:
@@ -4128,6 +4419,8 @@ async def get_banking_dashboard_segments():
                     "rank_explanation": rec.get("rank_explanation"),
                     "llm_rationale": rec.get("llm_rationale"),
                     "detailed_calculation": rec.get("detailed_calculation"),
+                    "vote_count": rec.get("vote_count"),
+                    "sampled_customers": rec.get("sampled_customers"),
                 })
 
             top = top_products_detail[0] if top_products_detail else None
@@ -4397,9 +4690,10 @@ async def execute_banking_agent_b(request: dict = Body(...)):
                 detail="Please run customer segmentation (Agent A) before running recommendations."
             )
 
-        # If persona provided, resolve a representative customer from that persona.
-        # Shared with the Dashboard tab's per-segment recommendations
-        # (_get_persona_recommendations_cached) so both tabs always agree.
+        # If persona provided, resolve a representative customer from that persona —
+        # same resolver the Dashboard uses for its (now separate, frequency-based)
+        # Recommended Products panel, kept consistent only for representative-customer
+        # identity, not for the two panels' product rankings.
         if persona and not customer_id:
             rep_id = _resolve_persona_representative_customer_id(persona)
             if not rep_id:
@@ -4420,6 +4714,15 @@ async def execute_banking_agent_b(request: dict = Body(...)):
         print(f"[AGENT-B] calling init_banking_agent_b — banking_agent_b is None: {banking_agent_b is None}", flush=True)
         init_banking_agent_b()
         print(f"[AGENT-B] init done — banking_agent_b_chromadb is None: {banking_agent_b_chromadb is None}", flush=True)
+
+        # Restore banking_agent_a.customers_df's 'cluster' column from agent_a_results
+        # if this process never ran live segmentation (e.g. right after a restart, before
+        # the Dashboard tab happens to have been loaded). Without this, execute()'s
+        # persona re-derivation for a given customer_id (agents/agent_b_banking_chromadb.py,
+        # AgentB_Banking.execute) silently no-ops when the 'cluster' column is missing,
+        # so the SAME persona/customer could score differently here than on the Dashboard
+        # tab purely depending on which endpoint happened to run first in this process.
+        _sync_banking_cluster_column()
 
         if banking_agent_b_chromadb is None:
             raise HTTPException(
