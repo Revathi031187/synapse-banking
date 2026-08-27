@@ -25,6 +25,25 @@ except ImportError:
     DIGITAL_MED  = 0.40
     DIGITAL_LOW  = DIGITAL_REQUIRED_LOW  = 0.20
 
+# Process-wide cache for _precompute_statistics(), keyed by the identity (plus
+# row counts, as a cheap sanity check in case a since-freed object's id() gets
+# reused) of the customers/transactions DataFrames passed in. The API's
+# init_banking_agent_b() constructs 4 separate Agent B variants back-to-back
+# from the exact same two DataFrame objects — each one building its own
+# Banking12FactorScorer and, without this cache, redundantly re-scanning the
+# full transactions table (876K+ rows in the demo dataset) 4 times in a row
+# for identical results, which was a real, avoidable contributor to that
+# first-request latency spike.
+_STATS_CACHE: Dict[tuple, Tuple[dict, dict]] = {}
+
+
+def _stats_cache_key(customers_df, transactions_df):
+    return (
+        id(customers_df), id(transactions_df),
+        len(customers_df) if customers_df is not None else 0,
+        len(transactions_df) if transactions_df is not None else 0,
+    )
+
 
 class Banking12FactorScorer:
     """
@@ -80,6 +99,17 @@ class Banking12FactorScorer:
     
     def _precompute_statistics(self):
         """Pre-compute statistics needed for banking scoring"""
+        cache_key = _stats_cache_key(self.customers_df, self.transactions_df)
+        cached = _STATS_CACHE.get(cache_key)
+        if cached is not None:
+            # Shallow-copy out of the cache so a caller mutating its own
+            # instance's dict (even though nothing in this class does today)
+            # can never corrupt the shared cached result for the next reuse.
+            self.customer_products = dict(cached[0])
+            self.segment_product_popularity = dict(cached[1])
+            logger.info(f"📊 Reused pre-computed statistics for {len(self.customer_products)} customers (cache hit)")
+            return
+
         # Customer product holdings
         self.customer_products = {}
         if self.transactions_df is not None and 'product_id' in self.transactions_df.columns:
@@ -92,6 +122,7 @@ class Banking12FactorScorer:
 
         if self.customers_df is None or self.transactions_df is None:
             logger.info("📊 Pre-computed statistics (no transactions data)")
+            _STATS_CACHE[cache_key] = (self.customer_products, self.segment_product_popularity)
             return
 
         # Check for both column names (Agent A uses 'cluster', old code used 'macro_segment_id')
@@ -112,7 +143,8 @@ class Banking12FactorScorer:
                 self.segment_product_popularity[seg_id] = group['product_id'].value_counts().to_dict()
 
         logger.info(f"📊 Pre-computed statistics for {len(self.customer_products)} customers")
-    
+        _STATS_CACHE[cache_key] = (self.customer_products, self.segment_product_popularity)
+
     def _merge_factor_weights(self, factor_weights: Dict = None) -> Dict[str, float]:
         """Merge API/UI weights (percentages 0–100 or fractions) with defaults; normalize to sum 1.0."""
         if not factor_weights:

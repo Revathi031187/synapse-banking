@@ -1,6 +1,7 @@
 import { BrowserRouter as Router, Routes, Route, Navigate } from 'react-router-dom';
-import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
+import { QueryClient, QueryClientProvider, useQuery } from '@tanstack/react-query';
 import UnifiedLayout from './components/UnifiedLayout';
+import { getBankingApiBase } from './utils/apiBase';
 import BankingDataLoader from './pages/banking/BankingDataLoader';
 import BankingAgentB from './pages/banking/BankingAgentB';
 import BankingMacroDashboard from './pages/banking/BankingMacroDashboard';
@@ -35,6 +36,25 @@ const queryClient = new QueryClient({
 // Basename: VITE_BASE_PATH for deployment (e.g. /banking-platform/v1), else /nba-platform/v3 in prod
 const basename = import.meta.env.VITE_BASE_PATH || (import.meta.env.MODE === 'production' ? '/nba-platform/v3' : '/');
 
+// Entry point for /banking (e.g. landing straight into the app) — routes to
+// the Dashboard only when there's actually a completed segmentation to show;
+// otherwise straight to the Data Loader, so a fresh environment never lands
+// on a Dashboard tab that has nothing to display. /api/banking/status is a
+// cheap in-memory check (no per-persona computation), so this resolves fast.
+function BankingIndexRedirect() {
+  const { data, isLoading } = useQuery({
+    queryKey: ['banking-status'],
+    queryFn: async () => {
+      const res = await fetch(`${getBankingApiBase()}/api/banking/status`);
+      if (!res.ok) throw new Error('Failed to load status');
+      return (await res.json()) as { agent_a_complete: boolean };
+    },
+    staleTime: 60_000,
+  });
+  if (isLoading) return null;
+  return <Navigate to={data?.agent_a_complete ? 'dashboard' : 'data-loader'} replace />;
+}
+
 function App() {
   return (
     <QueryClientProvider client={queryClient}>
@@ -48,7 +68,7 @@ function App() {
           
           {/* Banking Routes (NEW - Primary Demo) */}
           <Route path="/banking" element={<UnifiedLayout industry="banking" />}>
-            <Route index element={<Navigate to="dashboard" replace />} />
+            <Route index element={<BankingIndexRedirect />} />
             <Route path="dashboard" element={<BankingSegmentDashboard />} />
             <Route path="data-loader" element={<BankingDataLoader />} />
             <Route path="activation" element={<BankingActivation />} />

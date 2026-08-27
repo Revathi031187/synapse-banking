@@ -385,8 +385,58 @@ function ChannelTable({ rows, subtitle }: { rows: { name: string; roas: number }
   );
 }
 
+// ─── Empty state ────────────────────────────────────────────────────────────
+function NoSegmentDataCard({ onGoToDataLoader }: { onGoToDataLoader: () => void }) {
+  return (
+    <div className="flex-1 flex items-center justify-center text-center px-6">
+      <div className="max-w-md">
+        <div className="w-12 h-12 rounded-xl bg-blue-50 flex items-center justify-center mx-auto mb-4">
+          <Database className="w-6 h-6 text-blue-600" />
+        </div>
+        <p className="text-gray-900 font-bold text-[15px] mb-2">No segment data yet</p>
+        <p className="text-gray-500 text-[13.5px] leading-relaxed mb-5">
+          This dashboard shows real figures from Agent A's customer clusters. Load the banking dataset and run
+          clustering first, then come back — every number here will reflect the actual customer segments.
+        </p>
+        <button
+          onClick={onGoToDataLoader}
+          className="bg-blue-600 text-white text-[13.5px] font-semibold px-4 py-2.5 rounded-lg hover:bg-blue-700 transition-colors"
+        >
+          Go to Data Loader →
+        </button>
+      </div>
+    </div>
+  );
+}
+
 // ─── Data hooks ─────────────────────────────────────────────────────────────
-function useSegments() {
+// Cheap, fast pre-check (an in-memory boolean on the backend, no per-persona
+// computation) — gates the heavier useSegments() fetch below so that when
+// nothing has been segmented yet, this page never even attempts the full
+// segments call, and never shows a "Loading segment data…" spinner for data
+// that was never going to exist. refetchOnMount: 'always' for the same
+// cross-tab-freshness reason as useSegments().
+function useBankingStatus() {
+  return useQuery({
+    queryKey: ['banking-status'],
+    queryFn: async () => {
+      const res = await fetch(`${API_BASE_URL}/api/banking/status`);
+      if (!res.ok) throw new Error('Failed to load status');
+      return (await res.json()) as { agent_a_complete: boolean };
+    },
+    staleTime: 60_000,
+    refetchOnMount: 'always',
+  });
+}
+
+// refetchOnMount: 'always' on this one specifically — segmentation can complete
+// on a totally different tab (Data Loader), and this page's own mount is the
+// one moment we can be certain to catch up regardless of whether a cross-tab
+// invalidateQueries call landed before this component mounted. The backend
+// pre-warms + persists this response's underlying caches (see
+// _run_agent_a_background / _persist_agent_a_cache), so this mount-time fetch
+// resolves fast rather than recomputing from scratch.
+function useSegments(enabled: boolean) {
   return useQuery({
     queryKey: ['dashboard-segments'],
     queryFn: async () => {
@@ -395,7 +445,9 @@ function useSegments() {
       const json = await res.json();
       return json as { ready: boolean; segments?: SegmentData[]; portfolio?: Portfolio };
     },
+    enabled,
     staleTime: 60_000,
+    refetchOnMount: 'always',
   });
 }
 function useAdSpendMetrics(enabled: boolean) {
@@ -408,6 +460,7 @@ function useAdSpendMetrics(enabled: boolean) {
     },
     enabled,
     staleTime: 60_000,
+    refetchOnMount: 'always',
   });
 }
 function useAdSpendMonthly(enabled: boolean) {
@@ -420,6 +473,7 @@ function useAdSpendMonthly(enabled: boolean) {
     },
     enabled,
     staleTime: 60_000,
+    refetchOnMount: 'always',
   });
 }
 
@@ -465,7 +519,15 @@ export default function BankingSegmentDashboard() {
   const [descExpanded, setDescExpanded] = useState(false);
   const navigate = useNavigate();
 
-  const segmentsQuery = useSegments();
+  // Fast pre-check first — an in-memory boolean on the backend, no per-persona
+  // computation. Gates the heavier segments fetch so that when nothing has
+  // been segmented yet, we never even attempt it, and never show "Loading
+  // segment data…" for data that was never going to exist — we go straight
+  // from this quick check to the "go to Data Loader" card.
+  const statusQuery = useBankingStatus();
+  const dashboardEnabled = statusQuery.data?.agent_a_complete === true;
+
+  const segmentsQuery = useSegments(dashboardEnabled);
   const adSpendQuery = useAdSpendMetrics(tab === 'marketing');
   const monthlyQuery = useAdSpendMonthly(tab === 'marketing');
 
@@ -477,6 +539,15 @@ export default function BankingSegmentDashboard() {
   // Collapse the expanded description again whenever the viewed segment changes.
   useEffect(() => { setDescExpanded(false); }, [segId]);
 
+  if (statusQuery.isLoading) {
+    // Near-instant (a plain in-memory check on the backend) — an empty frame
+    // avoids both a layout jump and a "Loading…" flash for what's normally a
+    // sub-frame wait.
+    return <div className="flex-1" />;
+  }
+  if (!dashboardEnabled) {
+    return <NoSegmentDataCard onGoToDataLoader={() => navigate('/banking/data-loader')} />;
+  }
   if (segmentsQuery.isLoading) {
     return <div className="flex-1 flex items-center justify-center text-gray-400 text-sm">Loading segment data…</div>;
   }
@@ -491,26 +562,10 @@ export default function BankingSegmentDashboard() {
     );
   }
   if (segmentsQuery.data?.ready === false || segments.length === 0) {
-    return (
-      <div className="flex-1 flex items-center justify-center text-center px-6">
-        <div className="max-w-md">
-          <div className="w-12 h-12 rounded-xl bg-blue-50 flex items-center justify-center mx-auto mb-4">
-            <Database className="w-6 h-6 text-blue-600" />
-          </div>
-          <p className="text-gray-900 font-bold text-[15px] mb-2">No segment data yet</p>
-          <p className="text-gray-500 text-[13.5px] leading-relaxed mb-5">
-            This dashboard shows real figures from Agent A's customer clusters. Load the banking dataset and run
-            clustering first, then come back — every number here will reflect the actual customer segments.
-          </p>
-          <button
-            onClick={() => navigate('/banking/data-loader')}
-            className="bg-blue-600 text-white text-[13.5px] font-semibold px-4 py-2.5 rounded-lg hover:bg-blue-700 transition-colors"
-          >
-            Go to Data Loader →
-          </button>
-        </div>
-      </div>
-    );
+    // Safety net for a race between the fast status check and the fuller
+    // segments fetch (e.g. segmentation was reset in the moment between the
+    // two calls) — same card as the fast-path check above.
+    return <NoSegmentDataCard onGoToDataLoader={() => navigate('/banking/data-loader')} />;
   }
 
   return (

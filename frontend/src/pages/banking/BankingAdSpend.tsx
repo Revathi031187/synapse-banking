@@ -1,6 +1,6 @@
-import { useRef, useEffect, useCallback, useState, RefObject } from 'react';
+import { useRef, useEffect, useCallback, useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
-import { TrendingUp, DollarSign, BarChart2, Zap, AlertTriangle, CheckCircle2, ArrowUp, ArrowDown, BarChart, LineChart } from 'lucide-react';
+import { TrendingUp, DollarSign, BarChart2, Zap, AlertTriangle, CheckCircle2, ArrowUp, ArrowDown, BarChart, LineChart, ChevronDown } from 'lucide-react';
 import { getBankingApiBase } from '../../utils/apiBase';
 
 const API_BASE = getBankingApiBase();
@@ -9,10 +9,16 @@ const API_BASE = getBankingApiBase();
 
 interface CurveParams { L: number; k: number }
 
-interface ChannelMetrics {
+interface ChannelMetricsBase {
   sent: number; converted: number; clicked: number; opened: number;
-  spend_usd: number; attributed_revenue_usd: number; roas: number; roi_pct: number;
-  conversion_rate: number; click_rate: number; open_rate: number; cost_per_acquisition: number;
+  spend_usd: number; attributed_revenue_usd: number;
+  conversion_rate: number; click_rate: number; open_rate: number;
+}
+
+// Paid channel: has a fitted S-curve, an optimal spend, and a reallocation status.
+interface PaidChannelMetrics extends ChannelMetricsBase {
+  owned_channel: false;
+  roas: number; roi_pct: number; cost_per_acquisition: number;
   optimal_spend_usd: number; marginal_roas: number; saturation_pct: number;
   status: 'under' | 'over' | 'optimal'; curve_params: CurveParams;
   // True business ROI (adds underwriting + ops cost and risk-adjusts revenue)
@@ -23,12 +29,28 @@ interface ChannelMetrics {
   risk_adjusted_revenue_usd: number | null;
 }
 
+// Owned channel (e.g. email): $0 media spend — funnel + revenue only, nothing
+// to optimize, so no curve/status fields exist on this shape at all.
+interface OwnedChannelMetrics extends ChannelMetricsBase {
+  owned_channel: true;
+}
+
+type ChannelMetrics = PaidChannelMetrics | OwnedChannelMetrics;
+
 interface AdSpendData {
   success: boolean;
   personas: Record<string, Record<string, ChannelMetrics>>;
-  summary: { total_spend_usd: number; total_revenue_usd: number; blended_roas: number; total_roi_pct: number; reallocation_opportunity_usd: number };
-  channels: string[]; persona_list: string[];
-  cost_benchmarks: Record<string, number>; data_source: string;
+  summary: {
+    total_spend_usd: number; total_revenue_usd: number; owned_channel_revenue_usd: number;
+    blended_roas: number; total_roi_pct: number; reallocation_opportunity_usd: number;
+  };
+  channels: string[]; owned_channels: string[]; persona_list: string[];
+  cost_benchmarks: Record<string, number>;
+  product_value_benchmarks: Record<string, number>;
+  biz_cost_benchmarks: Record<string, number>;
+  risk_rate_benchmarks: Record<string, number>;
+  dataset_version: 'v1' | 'v2' | null;
+  data_source: string;
 }
 
 interface MonthlyPoint {
@@ -43,12 +65,36 @@ interface MonthlyData {
 
 // ── Constants ──────────────────────────────────────────────────────────────────
 
-const CHANNELS = [
-  { id: 'in_app',  label: 'In-App',  icon: '📱', color: '#5b5fc7', bg: '#eef2ff', border: '#c7d2fe' },
-  { id: 'email',   label: 'Email',   icon: '📧', color: '#0284c7', bg: '#f0f9ff', border: '#bae6fd' },
-  { id: 'sms',     label: 'SMS',     icon: '💬', color: '#d97706', bg: '#fffbeb', border: '#fde68a' },
-  { id: 'branch',  label: 'Branch',  icon: '🏦', color: '#059669', bg: '#f0fdf4', border: '#bbf7d0' },
+// Full registry of every channel id known across v1 and v2 datasets — the
+// *active* set to render always comes from the backend's `data.channels`
+// (which reflects whichever dataset _resolve_ad_spend_dataset() picked), not
+// a hardcoded list here, so the page adapts to v1 (4) or v2 (8) automatically.
+// Funnel stage labels are channel-appropriate, not one generic set for every
+// channel — a video ad isn't "opened," a podcast spot isn't "clicked," and a
+// branch conversation was never "sent." [stage1, stage2, stage3, stage4].
+type FunnelLabels = readonly [string, string, string, string];
+const DEFAULT_FUNNEL_LABELS: FunnelLabels = ['Sent', 'Opened', 'Clicked', 'Converted'];
+
+const CHANNEL_REGISTRY = [
+  { id: 'in_app',            label: 'In-App',            icon: '📱', color: '#5b5fc7', bg: '#eef2ff', border: '#c7d2fe', funnelLabels: ['Sent', 'Opened', 'Tapped', 'Converted'] as FunnelLabels },
+  { id: 'email',             label: 'Email',              icon: '📧', color: '#0284c7', bg: '#f0f9ff', border: '#bae6fd', funnelLabels: DEFAULT_FUNNEL_LABELS },
+  { id: 'sms',               label: 'SMS',                icon: '💬', color: '#d97706', bg: '#fffbeb', border: '#fde68a', funnelLabels: ['Sent', 'Delivered', 'Clicked', 'Converted'] as FunnelLabels },
+  { id: 'branch',            label: 'Branch',             icon: '🏦', color: '#059669', bg: '#f0fdf4', border: '#bbf7d0', funnelLabels: ['Contacted', 'Engaged', 'Interested', 'Converted'] as FunnelLabels },
+  { id: 'youtube_ads',       label: 'YouTube Ads',        icon: '▶️', color: '#dc2626', bg: '#fef2f2', border: '#fecaca', funnelLabels: ['Sent', 'Viewed', 'Clicked', 'Converted'] as FunnelLabels },
+  { id: 'meta_social_ads',   label: 'Meta Paid Social',   icon: '📸', color: '#7c3aed', bg: '#f5f3ff', border: '#ddd6fe', funnelLabels: ['Sent', 'Viewed', 'Clicked', 'Converted'] as FunnelLabels },
+  { id: 'google_search_ads', label: 'Google Search Ads',  icon: '🔍', color: '#0d9488', bg: '#f0fdfa', border: '#99f6e4', funnelLabels: ['Sent', 'Viewed', 'Clicked', 'Converted'] as FunnelLabels },
+  { id: 'podcast_audio_ads', label: 'Podcast/Audio Ads',  icon: '🎙️', color: '#c2410c', bg: '#fff7ed', border: '#fed7aa', funnelLabels: ['Sent', 'Listened', 'Engaged', 'Converted'] as FunnelLabels },
 ] as const;
+
+interface ChannelMeta {
+  id: string; label: string; icon: string; color: string; bg: string; border: string; funnelLabels: FunnelLabels;
+}
+
+function channelMeta(id: string): ChannelMeta {
+  return CHANNEL_REGISTRY.find(c => c.id === id) ?? {
+    id, label: id, icon: '📊', color: '#6b7280', bg: '#f9fafb', border: '#e5e7eb', funnelLabels: DEFAULT_FUNNEL_LABELS,
+  };
+}
 
 const PERSONAS = [
   { id: 'Digital Native',    color: '#5b5fc7' },
@@ -68,7 +114,7 @@ const fmtK = (v: number, dec = 1) =>
 const fmtRoas = (v: number) => v.toFixed(1) + '×';
 const fmtRoi  = (v: number) => (v >= 0 ? '+' : '') + v.toFixed(0) + '%';
 
-function statusCfg(s: ChannelMetrics['status']) {
+function statusCfg(s: PaidChannelMetrics['status']) {
   if (s === 'under') return { label:'Under-invested', cls:'bg-emerald-50 text-emerald-800 border-emerald-200', icon:ArrowUp,   ic:'text-emerald-600', fill:'rgba(134,239,172,0.35)' };
   if (s === 'over')  return { label:'Over-invested',  cls:'bg-red-50 text-red-800 border-red-200',           icon:ArrowDown, ic:'text-red-600',     fill:'rgba(252,165,165,0.32)' };
   return              { label:'Optimal',          cls:'bg-blue-50 text-blue-800 border-blue-200',          icon:CheckCircle2,ic:'text-blue-600',   fill:'rgba(147,197,253,0.28)' };
@@ -76,7 +122,9 @@ function statusCfg(s: ChannelMetrics['status']) {
 
 // ── Insight generators ─────────────────────────────────────────────────────────
 
-function chInsight(ch: typeof CHANNELS[number], m: ChannelMetrics, persona: string, all: Record<string, ChannelMetrics>) {
+// Owned channels (e.g. email) render through OwnedChannelCard instead, so
+// this only ever receives paid-channel metrics.
+function chInsight(ch: ChannelMeta, m: PaidChannelMetrics, persona: string, all: Record<string, ChannelMetrics>) {
   const delta      = m.optimal_spend_usd - m.spend_usd;
   const uplift     = Math.abs(delta) * m.marginal_roas;
   const cpa        = m.cost_per_acquisition > 0 ? `$${m.cost_per_acquisition.toFixed(0)}` : 'N/A';
@@ -84,7 +132,8 @@ function chInsight(ch: typeof CHANNELS[number], m: ChannelMetrics, persona: stri
   const bizRoi     = m.true_roi_pct != null ? ` Business ROI (after ops + credit risk) is ${m.true_roi_pct.toFixed(0)}%.` : '';
 
   if (m.status === 'under') {
-    const src    = CHANNELS.find(c => c.id !== ch.id && all[c.id]?.status === 'over')?.label;
+    const overId = Object.keys(all).find(id => id !== ch.id && !all[id].owned_channel && (all[id] as PaidChannelMetrics).status === 'over');
+    const src    = overId ? channelMeta(overId).label : undefined;
     const satPct = m.saturation_pct;
     return (
       `${ch.label} is only ${satPct}% saturated for ${persona} — the S-curve is still rising steeply. ` +
@@ -117,17 +166,22 @@ function chInsight(ch: typeof CHANNELS[number], m: ChannelMetrics, persona: stri
 }
 
 function segInsight(persona: string, d: Record<string, ChannelMetrics>) {
-  const active = CHANNELS.filter(c => d[c.id]);
-  const underChs = active.filter(c => d[c.id].status === 'under')
-    .sort((a, b) => (d[b.id]?.marginal_roas ?? 0) - (d[a.id]?.marginal_roas ?? 0));
-  const overChs  = active.filter(c => d[c.id].status === 'over')
-    .sort((a, b) => (d[b.id]?.spend_usd ?? 0) - (d[a.id]?.spend_usd ?? 0));
+  // Owned channels (email) have nothing to reallocate — this insight is
+  // paid-channel budget analysis only.
+  const paid = Object.entries(d).filter((e): e is [string, PaidChannelMetrics] => !e[1].owned_channel);
+  const active = paid.map(([id]) => channelMeta(id));
+  const byId = Object.fromEntries(paid) as Record<string, PaidChannelMetrics>;
+
+  const underChs = active.filter(c => byId[c.id].status === 'under')
+    .sort((a, b) => byId[b.id].marginal_roas - byId[a.id].marginal_roas);
+  const overChs  = active.filter(c => byId[c.id].status === 'over')
+    .sort((a, b) => byId[b.id].spend_usd - byId[a.id].spend_usd);
 
   const totalUplift = underChs.reduce((s, c) => {
-    const m = d[c.id]; return s + (m.optimal_spend_usd - m.spend_usd) * m.marginal_roas;
+    const m = byId[c.id]; return s + (m.optimal_spend_usd - m.spend_usd) * m.marginal_roas;
   }, 0);
   const totalWaste  = overChs.reduce((s, c) => {
-    const m = d[c.id]; return s + Math.abs(m.optimal_spend_usd - m.spend_usd);
+    const m = byId[c.id]; return s + Math.abs(m.optimal_spend_usd - m.spend_usd);
   }, 0);
 
   const bestUnder  = underChs[0];
@@ -136,14 +190,14 @@ function segInsight(persona: string, d: Record<string, ChannelMetrics>) {
   const parts: string[] = [];
 
   if (bestUnder) {
-    const m = d[bestUnder.id];
+    const m = byId[bestUnder.id];
     parts.push(
       `${bestUnder.label} is only ${m.saturation_pct}% saturated — delivering ${fmtRoas(m.roas)} ROAS with ` +
       `$${m.marginal_roas.toFixed(2)} marginal return per $1 added.`
     );
   }
   if (worstOver) {
-    const m = d[worstOver.id];
+    const m = byId[worstOver.id];
     parts.push(
       `${worstOver.label} has plateaued at ${fmtRoas(m.roas)} ROAS — ` +
       `${fmtK(Math.abs(m.optimal_spend_usd - m.spend_usd))} of monthly spend is past the curve's inflection point.`
@@ -155,7 +209,7 @@ function segInsight(persona: string, d: Record<string, ChannelMetrics>) {
       `${underChs.map(c => c.label).join(' & ')} would unlock ~${fmtK(totalUplift)}/mo with no budget increase.`
     );
   } else if (!underChs.length) {
-    const avgRoas = active.reduce((s, c) => s + d[c.id].roas, 0) / (active.length || 1);
+    const avgRoas = active.reduce((s, c) => s + byId[c.id].roas, 0) / (active.length || 1);
     parts.push(`All channels near-optimal for ${persona} — blended ${fmtRoas(avgRoas)} ROAS. Consider expanding total budget to grow.`);
   } else if (totalUplift > 100) {
     parts.push(`Adding spend to ${underChs.map(c => c.label).join(' & ')} could unlock ~${fmtK(totalUplift)}/mo.`);
@@ -169,6 +223,7 @@ function segInsight(persona: string, d: Record<string, ChannelMetrics>) {
 interface DrawCurveOpts {
   hoverSpend?: number | null;
   simSpend?: number | null;
+  maxX?: number; // single source of truth for the chart's x-axis extent — also drives the what-if slider's range
 }
 
 function canvasDims(el: HTMLCanvasElement): [number, number] {
@@ -178,7 +233,7 @@ function canvasDims(el: HTMLCanvasElement): [number, number] {
   return [W, H];
 }
 
-function drawCurve(canvas: HTMLCanvasElement, m: ChannelMetrics, color: string, opts: DrawCurveOpts = {}) {
+function drawCurve(canvas: HTMLCanvasElement, m: PaidChannelMetrics, color: string, opts: DrawCurveOpts = {}) {
   const { hoverSpend, simSpend } = opts;
   const dpr = window.devicePixelRatio || 1;
   const [W, H] = canvasDims(canvas);
@@ -190,7 +245,7 @@ function drawCurve(canvas: HTMLCanvasElement, m: ChannelMetrics, color: string, 
   const cur = m.spend_usd, opt = m.optimal_spend_usd;
   const PAD = { top:18, right:18, bottom:34, left:54 };
   const pw = W - PAD.left - PAD.right, ph = H - PAD.top - PAD.bottom;
-  const maxX = Math.max(cur, opt) * 2.8, maxY = L * 0.96;
+  const maxX = opts.maxX ?? Math.max(cur, opt) * 2.8, maxY = L * 0.96;
   const toX = (x: number) => PAD.left + (x / maxX) * pw;
   const toY = (y: number) => PAD.top  + ph - Math.min((y / maxY) * ph, ph);
   const Ry  = (x: number) => L * (1 - Math.exp(-k * x));
@@ -286,6 +341,7 @@ function drawCurve(canvas: HTMLCanvasElement, m: ChannelMetrics, color: string, 
     if (bx + bw > PAD.left + pw) bx = hx - bw - 8;
     if (by < PAD.top) by = hy + 6;
     ctx.fillStyle = 'rgba(15,23,42,0.88)'; roundRect(ctx, bx, by, bw, bh, 5); ctx.fill();
+    ctx.textAlign = 'left'; // reset — inherited 'center' from the axis labels above would centre this text on its start x, overflowing the box on both sides
     ctx.fillStyle = '#fff';
     ctx.fillText(line1, bx+8, by+14);
     ctx.fillStyle = '#94a3b8';
@@ -488,7 +544,7 @@ function trendInsight(ch: { label: string }, pts: MonthlyPoint[]): string {
 
 // ── Canvas: conversion funnel ──────────────────────────────────────────────────
 
-function drawFunnel(canvas: HTMLCanvasElement, m: ChannelMetrics, color: string) {
+function drawFunnel(canvas: HTMLCanvasElement, m: ChannelMetrics, color: string, labels: FunnelLabels = DEFAULT_FUNNEL_LABELS) {
   const dpr = window.devicePixelRatio || 1;
   const W = canvas.offsetWidth || 340, H = canvas.offsetHeight || 156;
   canvas.width = W * dpr; canvas.height = H * dpr;
@@ -496,10 +552,10 @@ function drawFunnel(canvas: HTMLCanvasElement, m: ChannelMetrics, color: string)
   ctx.scale(dpr, dpr);
 
   const stages = [
-    { label: 'Sent',      val: m.sent,      pct: 100 },
-    { label: 'Opened',    val: m.opened,    pct: m.sent > 0 ? (m.opened    / m.sent) * 100 : 0 },
-    { label: 'Clicked',   val: m.clicked,   pct: m.sent > 0 ? (m.clicked   / m.sent) * 100 : 0 },
-    { label: 'Converted', val: m.converted, pct: m.sent > 0 ? (m.converted / m.sent) * 100 : 0 },
+    { label: labels[0], val: m.sent,      pct: 100 },
+    { label: labels[1], val: m.opened,    pct: m.sent > 0 ? (m.opened    / m.sent) * 100 : 0 },
+    { label: labels[2], val: m.clicked,   pct: m.sent > 0 ? (m.clicked   / m.sent) * 100 : 0 },
+    { label: labels[3], val: m.converted, pct: m.sent > 0 ? (m.converted / m.sent) * 100 : 0 },
   ];
   const n = stages.length;
 
@@ -595,21 +651,22 @@ function drawSparkline(canvas: HTMLCanvasElement, pts: MonthlyPoint[], color: st
   ctx.fillStyle = color; ctx.fill(); ctx.strokeStyle = '#fff'; ctx.lineWidth = 1; ctx.stroke();
 }
 
-function SeasonalityStrip({ allMonthly }: { allMonthly: Record<string, MonthlyPoint[]> }) {
-  const refs = {
-    in_app: useRef<HTMLCanvasElement>(null),
-    email:  useRef<HTMLCanvasElement>(null),
-    sms:    useRef<HTMLCanvasElement>(null),
-    branch: useRef<HTMLCanvasElement>(null),
-  } as Record<string, RefObject<HTMLCanvasElement>>;
+function SeasonalityStrip({ allMonthly, channels, ownedChannels, personaData }: {
+  allMonthly: Record<string, MonthlyPoint[]>;
+  channels: ChannelMeta[];       // paid channels only — a ROAS trend needs spend > 0
+  ownedChannels: ChannelMeta[];  // e.g. email — shown as a callout, not a sparkline
+  personaData: Record<string, ChannelMetrics>;
+}) {
+  // Map-based, not fixed keys — the channel set varies by dataset (v1: 4, v2: 8).
+  const canvasRefs = useRef(new Map<string, HTMLCanvasElement | null>());
 
   useEffect(() => {
-    CHANNELS.forEach(ch => {
-      const el = refs[ch.id]?.current;
+    channels.forEach(ch => {
+      const el = canvasRefs.current.get(ch.id);
       const pts = allMonthly[ch.id] ?? [];
       if (el && pts.length) drawSparkline(el, pts, ch.color);
     });
-  }, [allMonthly]);
+  }, [allMonthly, channels]);
 
   const peakMonth = (pts: MonthlyPoint[]) => {
     if (!pts.length) return '—';
@@ -623,8 +680,8 @@ function SeasonalityStrip({ allMonthly }: { allMonthly: Record<string, MonthlyPo
   return (
     <div className="bg-white rounded-xl border border-gray-200 px-4 py-3">
       <p className="text-[10px] font-bold uppercase tracking-widest text-gray-400 mb-3">Seasonality · ROAS trend Jan–Dec 2025</p>
-      <div className="grid grid-cols-4 gap-3">
-        {CHANNELS.map(ch => {
+      <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+        {channels.map(ch => {
           const pts = allMonthly[ch.id] ?? [];
           const avg = avgRoas(pts);
           const peak = peakMonth(pts);
@@ -637,7 +694,7 @@ function SeasonalityStrip({ allMonthly }: { allMonthly: Record<string, MonthlyPo
                 </span>
                 <span className="text-[10px] text-gray-400">avg {avg > 0 ? avg.toFixed(1) + '×' : '—'}</span>
               </div>
-              <canvas ref={refs[ch.id]} style={{ width: '100%', height: 48, display: 'block' }}/>
+              <canvas ref={el => { canvasRefs.current.set(ch.id, el); }} style={{ width: '100%', height: 48, display: 'block' }}/>
               <div className="flex justify-between text-[9.5px] text-gray-400 mt-0.5">
                 <span>Jan</span>
                 <span className="font-medium" style={{ color: ch.color }}>↑ {peak}</span>
@@ -647,25 +704,36 @@ function SeasonalityStrip({ allMonthly }: { allMonthly: Record<string, MonthlyPo
           );
         })}
       </div>
+      {ownedChannels.length > 0 && (
+        <p className="text-[10px] text-gray-400 mt-3 pt-2.5 border-t border-gray-100">
+          {ownedChannels.map(ch => {
+            const rev = personaData[ch.id]?.attributed_revenue_usd ?? 0;
+            return `${ch.label} excluded — $0 media spend (owned channel); ${fmtK(rev)} attributed revenue this year, tracked separately.`;
+          }).join(' ')}
+        </p>
+      )}
     </div>
   );
 }
 
-// ── Business ROI simulation constants (mirror generate_ad_spend_history.py) ────
-const BIZ_COST_PER_CONV: Record<string,number> = { in_app:75, email:85, sms:70, branch:150 };
-const RISK_RATE:          Record<string,number> = { in_app:.08, email:.06, sms:.10, branch:.04 };
-const PRODUCT_VALUE:      Record<string,number> = { in_app:300, email:350, sms:250, branch:600 };
-
 // ── Channel Card ───────────────────────────────────────────────────────────────
+// Business ROI simulation constants (productValue/bizCost/riskRate) are passed
+// in as props, sourced from the API's product_value_benchmarks/biz_cost_benchmarks/
+// risk_rate_benchmarks — those mirror whichever generator script (v1 or v2) is
+// actually backing the active dataset, so this card never needs its own
+// hardcoded copy that could drift from what the server is using.
 
 function ChannelCard({
-  ch, metrics, personaName, allData, monthly,
+  ch, metrics, personaName, allData, monthly, productValueBenchmarks, bizCostBenchmarks, riskRateBenchmarks,
 }: {
-  ch: typeof CHANNELS[number];
-  metrics: ChannelMetrics;
+  ch: ChannelMeta;
+  metrics: PaidChannelMetrics;
   personaName: string;
   allData: Record<string, ChannelMetrics>;
   monthly: MonthlyPoint[];
+  productValueBenchmarks: Record<string, number>;
+  bizCostBenchmarks: Record<string, number>;
+  riskRateBenchmarks: Record<string, number>;
 }) {
   const chartRef   = useRef<HTMLCanvasElement>(null);
   const [view,      setView]      = useState<'curve'|'trend'|'funnel'>('curve');
@@ -695,9 +763,9 @@ function ChannelCard({
   const simStatus = simMroas > 1.25 ? 'under' : simMroas < 0.80 ? 'over' : 'optimal';
 
   // True business ROI at sim spend (client-side)
-  const pv         = PRODUCT_VALUE[ch.id] ?? 300;
-  const bc         = BIZ_COST_PER_CONV[ch.id] ?? 80;
-  const rr         = RISK_RATE[ch.id] ?? 0.07;
+  const pv         = productValueBenchmarks[ch.id] ?? 300;
+  const bc         = bizCostBenchmarks[ch.id] ?? 80;
+  const rr         = riskRateBenchmarks[ch.id] ?? 0.07;
   const simConv    = pv > 0 ? simRev / pv : 0;
   const simBiz     = simConv * bc;
   const simRiskAdj = simRev * (1 - rr);
@@ -727,17 +795,22 @@ function ChannelCard({
   // ── Trend data: real CSV data or S-curve synthetic fallback ─────────────
   const trendPts = monthly.length > 0 ? monthly : synthMonthly(metrics.spend_usd, L, k);
 
+  // Single source of truth for the curve chart's x-axis extent — drives the
+  // canvas draw, the hover hit-testing, and the what-if slider's range, so
+  // the slider can never disagree with what the chart actually shows.
+  const chartMaxX = Math.max(metrics.spend_usd, metrics.optimal_spend_usd) * 2.8;
+
   // ── Single unified redraw (one canvas, always display:block) ─────────────
   const redraw = useCallback(() => {
     const el = chartRef.current; if (!el) return;
     if (view === 'curve') {
-      drawCurve(el, metrics, ch.color, { hoverSpend, simSpend: isSimChanged ? simSpend : null });
+      drawCurve(el, metrics, ch.color, { hoverSpend, simSpend: isSimChanged ? simSpend : null, maxX: chartMaxX });
     } else if (view === 'trend') {
       drawTrend(el, trendPts, ch.color, hoverMonth);
     } else {
-      drawFunnel(el, metrics, ch.color);
+      drawFunnel(el, metrics, ch.color, ch.funnelLabels);
     }
-  }, [view, metrics, ch.color, hoverSpend, simSpend, isSimChanged, trendPts, hoverMonth]);
+  }, [view, metrics, ch.color, ch.funnelLabels, hoverSpend, simSpend, isSimChanged, trendPts, hoverMonth, chartMaxX]);
 
   useEffect(() => { const r = requestAnimationFrame(redraw); return () => cancelAnimationFrame(r); }, [redraw]);
 
@@ -753,10 +826,9 @@ function ChannelCard({
     if (view === 'curve') {
       const PAD_LEFT = 54, PAD_RIGHT = 18;
       const pw = rect.width - PAD_LEFT - PAD_RIGHT;
-      const maxX = Math.max(metrics.spend_usd, metrics.optimal_spend_usd) * 2.8;
       const rawX = e.clientX - rect.left - PAD_LEFT;
-      const spend = (rawX / pw) * maxX;
-      setHoverSpend(spend >= 0 && spend <= maxX ? spend : null);
+      const spend = (rawX / pw) * chartMaxX;
+      setHoverSpend(spend >= 0 && spend <= chartMaxX ? spend : null);
     } else if (view === 'trend') {
       const PAD_LEFT = 56, PAD_RIGHT = 16;
       const pw = rect.width - PAD_LEFT - PAD_RIGHT;
@@ -769,8 +841,8 @@ function ChannelCard({
 
   const handleMouseLeave = () => { setHoverSpend(null); setHoverMonth(null); };
 
-  const sliderMin = metrics.spend_usd * 0.15;
-  const sliderMax = metrics.optimal_spend_usd * 2.2;
+  const sliderMin = 0;
+  const sliderMax = chartMaxX;
 
   const handleReset = () => { setSimSpend(metrics.spend_usd); setSimInsight(null); };
 
@@ -780,12 +852,13 @@ function ChannelCard({
   const openRate  = metrics.sent > 0 ? (metrics.opened    / metrics.sent * 100).toFixed(1) : '0';
   const clickRate = metrics.sent > 0 ? (metrics.clicked   / metrics.sent * 100).toFixed(1) : '0';
   const convRate  = metrics.sent > 0 ? (metrics.converted / metrics.sent * 100).toFixed(2) : '0';
+  const [stage1Label, stage2Label, stage3Label, stage4Label] = ch.funnelLabels;
   const bigDrop   = metrics.opened > 0 && metrics.clicked / metrics.opened < 0.35
-    ? 'click-through'
+    ? stage3Label.toLowerCase()
     : metrics.clicked > 0 && metrics.converted / metrics.clicked < 0.10
-      ? 'conversion' : null;
+      ? stage4Label.toLowerCase() : null;
   const funnelInsight =
-    `${ch.label} reached ${metrics.sent.toLocaleString()} contacts — ${openRate}% opened, ${clickRate}% clicked, ${convRate}% converted. ` +
+    `${ch.label} reached ${metrics.sent.toLocaleString()} contacts — ${openRate}% ${stage2Label.toLowerCase()}, ${clickRate}% ${stage3Label.toLowerCase()}, ${convRate}% ${stage4Label.toLowerCase()}. ` +
     (bigDrop ? `Biggest drop-off is at the ${bigDrop} stage — creative or offer relevance is the likely lever.` : 'Funnel is healthy with no single dominant drop-off stage.');
   const displayInsight = view === 'trend'
     ? trendInsight(ch, trendPts)
@@ -826,7 +899,7 @@ function ChannelCard({
             className={`px-2.5 py-1.5 text-[10px] font-semibold flex items-center gap-1 transition-colors border-l border-gray-200 ${view==='trend' ? 'bg-gray-900 text-white' : 'text-gray-500 hover:bg-gray-50'}`}>
             <BarChart className="w-3 h-3" /> 12-mo
           </button>
-          <button onClick={() => setView('funnel')} title="Conversion funnel: Sent → Opened → Clicked → Converted"
+          <button onClick={() => setView('funnel')} title={`Conversion funnel: ${ch.funnelLabels.join(' → ')}`}
             className={`px-2.5 py-1.5 text-[10px] font-semibold flex items-center gap-1 transition-colors border-l border-gray-200 ${view==='funnel' ? 'bg-gray-900 text-white' : 'text-gray-500 hover:bg-gray-50'}`}>
             <TrendingUp className="w-3 h-3" /> Funnel
           </button>
@@ -860,7 +933,7 @@ function ChannelCard({
       {view === 'funnel' && (
         <div className="px-4 pt-1 pb-1 flex flex-col gap-1">
           <div className="flex items-center gap-3 text-[10px] text-gray-400 flex-wrap">
-            {['Sent','Opened','Clicked','Converted'].map((s, i) => (
+            {ch.funnelLabels.map((s, i) => (
               <span key={s} className="flex items-center gap-1.5">
                 <span className="inline-block w-3 h-3 rounded-sm" style={{background: ch.color + Math.round((1 - i * 0.12) * 255).toString(16).padStart(2,'0')}}/>
                 {s}
@@ -869,7 +942,7 @@ function ChannelCard({
             <span className="ml-auto text-[9px]">Annual totals · % of sent</span>
           </div>
           <p className="text-[9.5px] text-gray-400 leading-snug">
-            <span className="font-semibold text-gray-500">Funnel view:</span> Annual contacts sent → opened → clicked → converted. Bars show count; right-side % is relative to sent. Drop-off numbers between stages reveal where to focus creative or targeting improvements.
+            <span className="font-semibold text-gray-500">Funnel view:</span> Annual contacts {ch.funnelLabels.map(l => l.toLowerCase()).join(' → ')}. Bars show count; right-side % is relative to {stage1Label.toLowerCase()}. Drop-off numbers between stages reveal where to focus creative or targeting improvements.
           </p>
         </div>
       )}
@@ -950,21 +1023,92 @@ function ChannelCard({
   );
 }
 
+// ── Owned Channel Card (e.g. Email) ─────────────────────────────────────────────
+// No spend to optimize against — funnel + attributed revenue only, with an
+// explicit banner explaining why there's no S-curve/what-if slider here, so
+// the $0 spend reads as a deliberate accounting choice rather than missing data.
+
+function OwnedChannelCard({ ch, metrics }: { ch: ChannelMeta; metrics: OwnedChannelMetrics }) {
+  const chartRef = useRef<HTMLCanvasElement>(null);
+
+  const redraw = useCallback(() => {
+    const el = chartRef.current; if (!el) return;
+    drawFunnel(el, metrics, ch.color, ch.funnelLabels);
+  }, [metrics, ch.color, ch.funnelLabels]);
+
+  useEffect(() => { const r = requestAnimationFrame(redraw); return () => cancelAnimationFrame(r); }, [redraw]);
+  useEffect(() => {
+    const onResize = () => requestAnimationFrame(redraw);
+    window.addEventListener('resize', onResize);
+    return () => window.removeEventListener('resize', onResize);
+  }, [redraw]);
+
+  const convRate = metrics.sent > 0 ? (metrics.converted / metrics.sent * 100).toFixed(2) : '0';
+
+  return (
+    <div className="bg-white rounded-xl border border-gray-200 overflow-hidden flex flex-col">
+      <div className="px-4 py-3 border-b border-gray-100 flex items-center gap-3">
+        <div className="w-9 h-9 rounded-lg flex items-center justify-center text-lg flex-shrink-0"
+          style={{ background: ch.bg, border: `1px solid ${ch.border}` }}>
+          {ch.icon}
+        </div>
+        <div className="flex-1 min-w-0">
+          <p className="text-[14px] font-bold text-gray-900">{ch.label}</p>
+          <p className="text-[11px] text-gray-500">{fmtK(metrics.attributed_revenue_usd)} attributed revenue · {convRate}% conversion</p>
+        </div>
+        <span className="text-[10px] font-bold px-2.5 py-1 rounded-full flex items-center gap-1 border bg-gray-50 text-gray-600 border-gray-200">
+          Owned Channel
+        </span>
+      </div>
+
+      <div className="px-3 pt-2 pb-0" style={{ height: 160 }}>
+        <canvas ref={chartRef} style={{ width: '100%', height: '100%', display: 'block' }} />
+      </div>
+
+      <div className="px-4 py-3 flex flex-col gap-1">
+        <div className="flex items-center gap-4 text-[10px] text-gray-400 flex-wrap">
+          {ch.funnelLabels.map((s, i) => (
+            <span key={s} className="flex items-center gap-1.5">
+              <span className="inline-block w-3 h-3 rounded-sm" style={{ background: ch.color + Math.round((1 - i * 0.12) * 255).toString(16).padStart(2, '0') }} />
+              {s}
+            </span>
+          ))}
+          <span className="ml-auto text-[9px]">Annual totals · % of sent</span>
+        </div>
+      </div>
+
+      <div className="px-4 py-3 border-t border-gray-100 bg-gray-50 flex gap-2 items-start">
+        <span className="text-[13px] flex-shrink-0 mt-0.5">✦</span>
+        <p className="text-[11.5px] text-gray-700 leading-relaxed">
+          <span className="font-semibold">Owned Channel — No Ad Spend.</span> Cost here is a flat ESP platform subscription,
+          not a per-message media buy, so it's excluded from ROAS/reallocation optimization. The {fmtK(metrics.attributed_revenue_usd)} in
+          revenue shown above is real attribution — it's tracked separately from paid-channel blended ROAS rather than blended into it.
+        </p>
+      </div>
+    </div>
+  );
+}
+
 // ── Channel Comparison Overlay ─────────────────────────────────────────────────
 
 function ChannelCompare({ personaData, persona }: {
   personaData: Record<string, ChannelMetrics>;
   persona: string;
 }) {
-  const activeChannels = CHANNELS.filter(ch => personaData[ch.id]);
-  const [chA, setChA] = useState(activeChannels[0]?.id ?? 'in_app');
-  const [chB, setChB] = useState(activeChannels[1]?.id ?? 'email');
-  const [open, setOpen] = useState(false);
+  // S-curve comparison only makes sense for paid channels — email (owned, $0
+  // spend) has no curve_params to plot and is naturally excluded here.
+  const activeChannels = Object.keys(personaData)
+    .filter(id => !personaData[id].owned_channel)
+    .map(channelMeta);
+  const [chA, setChA] = useState(activeChannels[0]?.id ?? '');
+  const [chB, setChB] = useState(activeChannels[1]?.id ?? '');
+  const [open, setOpen] = useState(true);
   const canvasRef = useRef<HTMLCanvasElement>(null);
 
   const drawCompare = useCallback(() => {
     const el = canvasRef.current; if (!el) return;
-    const mA = personaData[chA], mB = personaData[chB];
+    const mA = personaData[chA] as PaidChannelMetrics | undefined;
+    const mB = personaData[chB] as PaidChannelMetrics | undefined;
     if (!mA || !mB) return;
     const dpr = window.devicePixelRatio || 1;
     const W = el.offsetWidth || 640, H = 220;
@@ -1000,7 +1144,7 @@ function ChannelCompare({ personaData, persona }: {
 
     // Draw curve for each channel
     [{ ch: chA, m: mA }, { ch: chB, m: mB }].forEach(({ ch, m }) => {
-      const color = CHANNELS.find(c => c.id === ch)?.color ?? '#888';
+      const color = channelMeta(ch).color;
       const { L, k } = m.curve_params;
 
       // Curve
@@ -1023,7 +1167,7 @@ function ChannelCompare({ personaData, persona }: {
 
       // Labels
       ctx.font = 'bold 9px system-ui,sans-serif'; ctx.textAlign = 'center'; ctx.fillStyle = color;
-      ctx.fillText(CHANNELS.find(c => c.id === ch)?.label ?? ch, cx, cy - 10);
+      ctx.fillText(channelMeta(ch).label, cx, cy - 10);
     });
 
     // mROAS = 1 break-even line
@@ -1055,7 +1199,7 @@ function ChannelCompare({ personaData, persona }: {
             <p className="text-[11px] text-gray-400">Overlay two channels on one chart to compare efficiency and find the better next-dollar bet</p>
           </div>
         </div>
-        <span className="text-[11px] font-medium text-blue-600 group-hover:underline">Open →</span>
+        <ChevronDown className="w-4 h-4 text-gray-400 flex-shrink-0" />
       </button>
     );
   }
@@ -1080,7 +1224,9 @@ function ChannelCompare({ personaData, persona }: {
               <option key={ch.id} value={ch.id}>{ch.label}</option>
             ))}
           </select>
-          <button onClick={() => setOpen(false)} className="text-gray-400 hover:text-white text-[11px] ml-2">✕ Close</button>
+          <button onClick={() => setOpen(false)} className="text-gray-400 hover:text-white ml-2" title="Collapse">
+            <ChevronDown className="w-4 h-4 rotate-180" />
+          </button>
         </div>
       </div>
 
@@ -1092,8 +1238,8 @@ function ChannelCompare({ personaData, persona }: {
       {/* Stats comparison */}
       <div className="px-4 pb-4 grid grid-cols-2 gap-3">
         {[chA, chB].map(chId => {
-          const m = personaData[chId];
-          const ch = CHANNELS.find(c => c.id === chId)!;
+          const m = personaData[chId] as PaidChannelMetrics;
+          const ch = channelMeta(chId);
           const cfg = statusCfg(m.status);
           return (
             <div key={chId} className="rounded-lg border border-gray-200 p-3" style={{ borderLeftColor: ch.color, borderLeftWidth: 3 }}>
@@ -1124,11 +1270,15 @@ function ChannelCompare({ personaData, persona }: {
 // ── Export helpers ─────────────────────────────────────────────────────────────
 
 function exportPersonaCSV(persona: string, personaData: Record<string, ChannelMetrics>, monthlyData: Record<string, MonthlyPoint[]>) {
+  const paidIds  = Object.keys(personaData).filter(id => !personaData[id].owned_channel);
+  const ownedIds = Object.keys(personaData).filter(id => personaData[id].owned_channel);
+
   const rows: string[] = [
     'Section,Channel,Metric,Value',
-    // Summary per channel
-    ...CHANNELS.filter(ch => personaData[ch.id]).flatMap(ch => {
-      const m = personaData[ch.id];
+    // Summary per paid channel
+    ...paidIds.flatMap(id => {
+      const ch = channelMeta(id);
+      const m = personaData[id] as PaidChannelMetrics;
       return [
         `Optimization,${ch.label},Status,${m.status}`,
         `Optimization,${ch.label},Current Spend ($/mo),${m.spend_usd.toFixed(2)}`,
@@ -1142,14 +1292,28 @@ function exportPersonaCSV(persona: string, personaData: Record<string, ChannelMe
         m.true_roi_pct != null ? `Optimization,${ch.label},Business ROI %,${m.true_roi_pct.toFixed(1)}` : null,
       ].filter(Boolean) as string[];
     }),
-    // Monthly detail
+    // Owned channels — no ad spend, kept in their own section so a $0 row
+    // never reads as "missing" data mixed into the optimization table above.
+    '',
+    'Section,Channel,Metric,Value',
+    ...ownedIds.flatMap(id => {
+      const ch = channelMeta(id);
+      const m = personaData[id];
+      return [
+        `Owned Channels (Not Ad Spend),${ch.label},Spend ($/mo),0.00`,
+        `Owned Channels (Not Ad Spend),${ch.label},Attributed Revenue ($),${m.attributed_revenue_usd.toFixed(2)}`,
+        `Owned Channels (Not Ad Spend),${ch.label},Conversion Rate %,${(m.conversion_rate * 100).toFixed(2)}`,
+      ];
+    }),
+    // Monthly detail (paid channels — owned channels have no spend/ROAS trend)
     '',
     'Month,Channel,Spend ($),Revenue ($),ROAS,Converted',
-    ...CHANNELS.flatMap(ch =>
-      (monthlyData[ch.id] ?? []).map(p =>
+    ...paidIds.flatMap(id => {
+      const ch = channelMeta(id);
+      return (monthlyData[id] ?? []).map(p =>
         `${p.month_name},${ch.label},${p.spend_usd.toFixed(2)},${p.revenue_usd.toFixed(2)},${p.roas.toFixed(2)},${p.converted}`
-      )
-    ),
+      );
+    }),
   ];
 
   const blob = new Blob([rows.join('\n')], { type: 'text/csv' });
@@ -1163,6 +1327,7 @@ function exportPersonaCSV(persona: string, personaData: Record<string, ChannelMe
 
 export default function BankingAdSpend() {
   const [selectedPersona, setSelectedPersona] = useState('Digital Native');
+  const [howOpen, setHowOpen] = useState(true);
 
   const { data, isLoading, isError, refetch } = useQuery<AdSpendData>({
     queryKey: ['banking-ad-spend-metrics'],
@@ -1207,8 +1372,12 @@ export default function BankingAdSpend() {
   const personaData = personas[selectedPersona] ?? {};
   const monthly     = monthlyData?.data?.[selectedPersona] ?? {};
 
-  const segUplift = CHANNELS.reduce((s, ch) => {
-    const m = personaData[ch.id];
+  const allChannels   = data.channels.map(channelMeta);
+  const paidChannels   = data.channels.filter(id => !data.owned_channels.includes(id)).map(channelMeta);
+  const ownedChannels  = data.owned_channels.map(channelMeta);
+
+  const segUplift = paidChannels.reduce((s, ch) => {
+    const m = personaData[ch.id] as PaidChannelMetrics | undefined;
     return (!m || m.status !== 'under') ? s : s + (m.optimal_spend_usd - m.spend_usd) * m.marginal_roas;
   }, 0);
 
@@ -1231,8 +1400,8 @@ export default function BankingAdSpend() {
       {/* Metrics bar */}
       <div className="grid grid-cols-3 divide-x divide-gray-200 border border-gray-200 rounded-xl overflow-hidden bg-white">
         {[
-          { label:'Total Ad Spend',      value:fmtK(summary.total_spend_usd),                    sub:'across 4 channels · 5 segments', Icon:DollarSign, color:'text-gray-800' },
-          { label:'Attributed Revenue',  value:fmtK(summary.total_revenue_usd),                  sub:'annual marketing attributed',    Icon:BarChart2,  color:'text-gray-800' },
+          { label:'Total Ad Spend',      value:fmtK(summary.total_spend_usd),                    sub:`across ${paidChannels.length} paid channels${ownedChannels.length ? ` (+${ownedChannels.length} owned)` : ''} · ${PERSONAS.length} segments`, Icon:DollarSign, color:'text-gray-800' },
+          { label:'Attributed Revenue',  value:fmtK(summary.total_revenue_usd),                  sub:'annual marketing attributed (paid channels)', Icon:BarChart2,  color:'text-gray-800' },
           { label:'Blended ROAS',        value:fmtRoas(summary.blended_roas),                    sub:'revenue per $ spent',            Icon:TrendingUp,  color:'text-blue-700' },
         ].map(m => (
           <div key={m.label} className="px-4 py-4 flex flex-col items-center text-center">
@@ -1266,22 +1435,28 @@ export default function BankingAdSpend() {
 
       {/* Seasonality sparkline strip */}
       {monthlyData?.data?.[selectedPersona] && (
-        <SeasonalityStrip allMonthly={monthly} />
+        <SeasonalityStrip allMonthly={monthly} channels={paidChannels} ownedChannels={ownedChannels} personaData={personaData} />
       )}
 
       {/* Channel grid */}
       <div className="grid grid-cols-2 gap-4">
-        {CHANNELS.map(ch => {
+        {allChannels.map(ch => {
           const m = personaData[ch.id];
           if (!m) return (
             <div key={ch.id} className="bg-white rounded-xl border border-gray-200 p-8 flex items-center justify-center">
               <p className="text-sm text-gray-400">No data for {ch.label}</p>
             </div>
           );
+          if (m.owned_channel) return (
+            <OwnedChannelCard key={`${selectedPersona}-${ch.id}`} ch={ch} metrics={m} />
+          );
           return (
             <ChannelCard key={`${selectedPersona}-${ch.id}`}
-              ch={ch} metrics={m} personaName={selectedPersona}
-              allData={personaData} monthly={monthly[ch.id] ?? []} />
+              ch={ch} metrics={m as PaidChannelMetrics} personaName={selectedPersona}
+              allData={personaData} monthly={monthly[ch.id] ?? []}
+              productValueBenchmarks={data.product_value_benchmarks}
+              bizCostBenchmarks={data.biz_cost_benchmarks}
+              riskRateBenchmarks={data.risk_rate_benchmarks} />
           );
         })}
       </div>
@@ -1312,10 +1487,15 @@ export default function BankingAdSpend() {
           </div>
         </div>
 
-        {/* How it works — 3-step explanation */}
-        <div className="px-5 py-4 bg-slate-50 border-b border-slate-200">
-          <p className="text-[11px] font-bold text-slate-700 mb-3 uppercase tracking-wide">How this recommendation is calculated</p>
-          <div className="grid grid-cols-3 gap-4">
+        {/* How it works — 3-step explanation (collapsible) */}
+        <div className="bg-slate-50 border-b border-slate-200">
+          <button onClick={() => setHowOpen(o => !o)}
+            className="w-full px-5 py-4 flex items-center justify-between hover:bg-slate-100/60 transition-colors">
+            <p className="text-[11px] font-bold text-slate-700 uppercase tracking-wide">How this recommendation is calculated</p>
+            <ChevronDown className={`w-4 h-4 text-slate-500 flex-shrink-0 transition-transform ${howOpen ? 'rotate-180' : ''}`} />
+          </button>
+          {howOpen && (
+          <div className="px-5 pb-4 grid grid-cols-3 gap-4">
             {[
               {
                 step: '01',
@@ -1345,14 +1525,15 @@ export default function BankingAdSpend() {
               </div>
             ))}
           </div>
+          )}
         </div>
 
         {/* Channel rows */}
         <div className="divide-y divide-gray-100">
 
           {/* Over-invested — reduce these */}
-          {CHANNELS.filter(ch => personaData[ch.id]?.status === 'over').map(ch => {
-            const m   = personaData[ch.id]!;
+          {paidChannels.filter(ch => (personaData[ch.id] as PaidChannelMetrics | undefined)?.status === 'over').map(ch => {
+            const m   = personaData[ch.id] as PaidChannelMetrics;
             const cut = m.spend_usd - m.optimal_spend_usd;
             const lostRev = cut * m.marginal_roas;
             return (
@@ -1382,8 +1563,8 @@ export default function BankingAdSpend() {
           })}
 
           {/* Under-invested — increase these */}
-          {CHANNELS.filter(ch => personaData[ch.id]?.status === 'under').map(ch => {
-            const m      = personaData[ch.id]!;
+          {paidChannels.filter(ch => (personaData[ch.id] as PaidChannelMetrics | undefined)?.status === 'under').map(ch => {
+            const m      = personaData[ch.id] as PaidChannelMetrics;
             const add    = m.optimal_spend_usd - m.spend_usd;
             const revGain= add * m.marginal_roas;
             return (
@@ -1413,8 +1594,8 @@ export default function BankingAdSpend() {
           })}
 
           {/* Optimal — hold */}
-          {CHANNELS.filter(ch => personaData[ch.id]?.status === 'optimal').map(ch => {
-            const m = personaData[ch.id]!;
+          {paidChannels.filter(ch => (personaData[ch.id] as PaidChannelMetrics | undefined)?.status === 'optimal').map(ch => {
+            const m = personaData[ch.id] as PaidChannelMetrics;
             return (
               <div key={ch.id} className="px-5 py-3.5 flex items-start gap-3 flex-wrap opacity-70">
                 <span className="text-[13px] font-bold w-24 mt-0.5" style={{color:ch.color}}>{ch.icon} {ch.label}</span>
@@ -1431,6 +1612,20 @@ export default function BankingAdSpend() {
               </div>
             );
           })}
+
+          {/* Owned channels — not part of reallocation, shown for transparency */}
+          {ownedChannels.filter(ch => personaData[ch.id]).length > 0 && (
+            <div className="px-5 py-3.5 flex items-start gap-3 flex-wrap bg-gray-50/60">
+              <span className="text-[13px] font-bold w-24 mt-0.5 text-gray-500">Owned</span>
+              <div className="flex-1">
+                <p className="text-[10.5px] text-gray-500">
+                  {ownedChannels.filter(ch => personaData[ch.id]).map(ch =>
+                    `${ch.label}: ${fmtK(personaData[ch.id].attributed_revenue_usd)} attributed revenue, $0 spend`
+                  ).join(' · ')} — not included in reallocation (no spend to optimize).
+                </p>
+              </div>
+            </div>
+          )}
 
           {Object.keys(personaData).length === 0 && (
             <div className="px-5 py-8 text-center text-sm text-gray-400">No data for this segment.</div>

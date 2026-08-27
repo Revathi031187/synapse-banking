@@ -5,7 +5,7 @@ import { motion, AnimatePresence } from 'framer-motion';
 import { useState } from 'react';
 import {
   Database, CheckCircle2, AlertCircle, Eye, X, Upload,
-  Play, Users, TrendingUp, BarChart3, Download, DollarSign, Sparkles, ArrowRight
+  Play, Users, TrendingUp, BarChart3, Download, Sparkles, ArrowRight
 } from 'lucide-react';
 import {
   BarChart,
@@ -35,6 +35,33 @@ const DEFAULT_AGENT_A_UI = {
   pollingStatus: 'idle' as 'idle' | 'running' | 'complete' | 'failed',
 };
 
+interface DatasetTableVersion {
+  name: string; display_name: string; loaded: boolean; row_count: number; versionLabel: string; versionNum: number;
+}
+interface DatasetTableGroup { base: string; displayName: string; versions: DatasetTableVersion[] }
+
+// Group a dataset's flat table list by base name (stripping a trailing `_v2`,
+// `_v3`, ... suffix) so a table with multiple versions renders as one cell
+// with a version dropdown instead of one row per version. Generic — a future
+// `_v3` groups automatically alongside `_v2` and the base table.
+function groupDatasetTables(tables: any[]): DatasetTableGroup[] {
+  const groups = new Map<string, DatasetTableGroup>();
+  const order: string[] = [];
+  for (const t of tables) {
+    const m = /^(.*)_v(\d+)$/.exec(t.name);
+    const base = m ? m[1] : t.name;
+    const versionNum = m ? parseInt(m[2], 10) : 1;
+    if (!groups.has(base)) { groups.set(base, { base, displayName: t.display_name, versions: [] }); order.push(base); }
+    groups.get(base)!.versions.push({ ...t, versionLabel: `v${versionNum}`, versionNum });
+  }
+  for (const g of groups.values()) {
+    g.versions.sort((a, b) => a.versionNum - b.versionNum);
+    const canonical = g.versions.find(v => v.versionNum === 1) ?? g.versions[0];
+    g.displayName = canonical.display_name.replace(/\s*\(v\d+[^)]*\)\s*$/i, '').trim();
+  }
+  return order.map(base => groups.get(base)!);
+}
+
 export default function BankingDataLoader() {
   const API_BASE_URL = getBankingApiBase();
   const queryClient = useQueryClient();
@@ -45,6 +72,28 @@ export default function BankingDataLoader() {
   const setSelectedDataset = (name: string) => setUi((prev) => ({ ...prev, selectedDataset: name }));
   const [viewingTable, setViewingTable] = useState<string | null>(null);
   const [tableData, setTableData] = useState<any | null>(null);
+
+  // Per-table checkbox state, keyed by table `name`. A table not yet present
+  // in this map defaults to checked (`checkedTables[name] ?? true`) — this is
+  // what makes "select all by default" true both on a genuine first run and
+  // whenever a new table (e.g. a freshly-added v2 dataset) appears later for
+  // a returning user who has never seen it before.
+  const [checkedTables, setCheckedTables] = useSessionStorageState(
+    'banking-data-loader-checked-tables-v1', {} as Record<string, boolean>
+  );
+  const isChecked = (name: string) => checkedTables[name] ?? true;
+  const toggleTable = (name: string) => setCheckedTables(prev => ({ ...prev, [name]: !isChecked(name) }));
+
+  // Which concrete version is selected per table group (keyed by base name).
+  // Defaults to the newest version present — computed on read, not persisted
+  // until the user actually picks one, so a newly-added even-newer version
+  // (e.g. a future v3) still defaults correctly for a returning user.
+  const [selectedVersion, setSelectedVersion] = useSessionStorageState(
+    'banking-data-loader-selected-version-v1', {} as Record<string, string>
+  );
+  const getSelectedVersion = (g: DatasetTableGroup) =>
+    g.versions.find(v => v.name === selectedVersion[g.base])?.name ?? g.versions[g.versions.length - 1].name;
+  const setGroupVersion = (base: string, name: string) => setSelectedVersion(prev => ({ ...prev, [base]: name }));
 
   // ── Agent A state ──────────────────────────────────────────────────────────
   const [agentAUi, setAgentAUi] = useSessionStorageState(AGENT_A_UI_KEY, DEFAULT_AGENT_A_UI);
@@ -109,22 +158,33 @@ export default function BankingDataLoader() {
   }, []);
 
   // ── Data Loader queries / mutations ────────────────────────────────────────
+  // staleTime: 0 overrides the app-wide `Infinity` default (App.tsx) — this is
+  // a live browse/preview of on-disk state (row counts, which version's data
+  // is actually present), not a computed result to persist. With the app-wide
+  // default it never refetches after the first mount, so e.g. switching a
+  // table's version dropdown could keep showing whatever loaded/row_count the
+  // very first page load happened to see, indefinitely.
   const { data: datasetsData, isLoading: datasetsLoading } = useQuery({
     queryKey: ['banking-datasets'],
     queryFn: async () => {
       const res = await fetch(`${API_BASE_URL}/api/banking/datasets`);
       return res.json();
-    }
+    },
+    staleTime: 0,
   });
 
   const loadMutation = useMutation({
-    mutationFn: async (datasetName: string) => {
+    mutationFn: async ({ datasetName, selectedTables }: { datasetName: string; selectedTables: string[] }) => {
       const res = await fetch(`${API_BASE_URL}/api/banking/datasets/load`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ dataset_name: datasetName })
+        body: JSON.stringify({ dataset_name: datasetName, selected_tables: selectedTables })
       });
-      if (!res.ok) throw new Error('Failed to load dataset');
+      if (!res.ok) {
+        let detail = 'Failed to load dataset';
+        try { const err = await res.json(); if (typeof err?.detail === 'string' && err.detail.trim()) detail = err.detail; } catch { /* non-json body */ }
+        throw new Error(detail);
+      }
       return res.json();
     },
     onSuccess: () => {
@@ -222,6 +282,11 @@ export default function BankingDataLoader() {
   const segmentationLoading = executeMutation.isPending || pollingStatus === 'running' || resultsQuery.isLoading;
   const personas = results?.personas || {};
   const vizData = results?.visualization_data || {};
+  // A `results` object can exist without representing a real completed
+  // segmentation — e.g. a stale/corrupt persisted cache — so only treat it as
+  // valid (and show the "complete" summary) when it actually has customers
+  // assigned to at least one real persona, not just a truthy but empty shell.
+  const hasValidResults = !!results && (results.total_customers ?? 0) > 0 && Object.keys(personas).length > 0;
 
   if (datasetsLoading) {
     return (
@@ -240,6 +305,21 @@ export default function BankingDataLoader() {
       {/* ── SECTION 1: Dataset Loader ────────────────────────────────────── */}
       <section className="space-y-6">
         <h2 className="text-2xl font-bold text-gray-900">Available Datasets</h2>
+
+        {/* Surfaced proactively (on page load, from GET /datasets) whenever the ad
+            spend dataset is code-forced to v1 and v1 itself failed to load — a
+            plain-language explanation, not a raw HTTP error. */}
+        {datasetsData?.ad_spend_dataset_status?.error && (
+          <div className="bg-red-50 border-2 border-red-300 rounded-xl p-6">
+            <div className="flex items-start space-x-3">
+              <AlertCircle className="w-6 h-6 text-red-600 flex-shrink-0 mt-1" />
+              <div>
+                <div className="text-red-900 font-bold text-lg mb-1">Ad Spend Dataset Failed to Load</div>
+                <p className="text-red-800 text-sm">{datasetsData.ad_spend_dataset_status.error}</p>
+              </div>
+            </div>
+          </div>
+        )}
 
         {datasets.length === 0 && (
           <div className="bg-amber-50 border-2 border-amber-300 rounded-xl p-6">
@@ -262,7 +342,9 @@ export default function BankingDataLoader() {
         )}
 
         <div className="grid gap-6">
-          {datasets.map((dataset: any) => (
+          {datasets.map((dataset: any) => {
+            const groups = groupDatasetTables(dataset.tables || []);
+            return (
             <motion.div
               key={dataset.name}
               initial={{ opacity: 0, y: 20 }}
@@ -296,42 +378,103 @@ export default function BankingDataLoader() {
                     </div>
                     <p className="text-gray-600 text-sm mb-3">{dataset.description}</p>
 
-                    {dataset.tables && (
-                      <div className="grid md:grid-cols-3 gap-3 mt-4">
-                        {dataset.tables.map((table: any) => (
-                          <div key={table.name} className="bg-white rounded-lg border border-blue-100 p-3">
-                            <div className="flex items-center justify-between mb-1">
-                              <div className="text-sm font-semibold text-gray-900">{table.display_name}</div>
-                              {table.loaded && (
-                                <button
-                                  onClick={(e) => { e.stopPropagation(); handleViewTable(table.name); }}
-                                  className="text-blue-700 hover:text-blue-800 p-1"
-                                  title="View data"
-                                >
-                                  <Eye className="w-4 h-4" />
-                                </button>
-                              )}
-                            </div>
-                            <div className="text-xs text-gray-600">
-                              {table.loaded ? (
-                                <span className="flex items-center gap-1">
-                                  <CheckCircle2 className="w-3 h-3 text-green-600" />
-                                  {table.row_count?.toLocaleString() || 0} rows
-                                </span>
-                              ) : (
-                                <span className="text-amber-600">Not loaded</span>
-                              )}
-                            </div>
-                          </div>
-                        ))}
-                      </div>
+                    {groups.length > 0 && (
+                      <>
+                        <div className="flex items-center justify-between mt-4 mb-2">
+                          <p className="text-xs font-semibold text-gray-500 uppercase tracking-wide">
+                            {groups.filter(g => isChecked(g.base)).length} of {groups.length} selected
+                          </p>
+                          <button
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              const allChecked = groups.every(g => isChecked(g.base));
+                              setCheckedTables(prev => {
+                                const next = { ...prev };
+                                groups.forEach(g => { next[g.base] = !allChecked; });
+                                return next;
+                              });
+                            }}
+                            className="inline-flex items-center gap-1.5 text-xs font-semibold text-blue-700 bg-blue-50 hover:bg-blue-100 border border-blue-200 rounded-full pl-2.5 pr-3 py-1.5 transition-colors shadow-sm"
+                          >
+                            {groups.every(g => isChecked(g.base))
+                              ? <><X className="w-3.5 h-3.5" /> Deselect All</>
+                              : <><CheckCircle2 className="w-3.5 h-3.5" /> Select All</>}
+                          </button>
+                        </div>
+                        <div className="grid md:grid-cols-3 gap-3">
+                          {groups.map(g => {
+                            const activeName = getSelectedVersion(g);
+                            const active = g.versions.find(v => v.name === activeName)!;
+                            const checked = isChecked(g.base);
+                            return (
+                              <div key={g.base}
+                                onClick={(e) => { e.stopPropagation(); toggleTable(g.base); }}
+                                className={`relative bg-white rounded-lg border p-3 cursor-pointer transition-all duration-150 ${
+                                  checked
+                                    ? 'border-blue-300 bg-gradient-to-br from-blue-50 to-indigo-50/50 shadow-[0_2px_12px_-2px_rgba(59,130,246,0.35)] ring-1 ring-blue-400/25'
+                                    : 'border-gray-200 hover:border-gray-300 hover:shadow-sm'
+                                }`}>
+                                {checked && (
+                                  <span className="absolute -top-1.5 -right-1.5 w-5 h-5 rounded-full bg-blue-600 ring-2 ring-white flex items-center justify-center">
+                                    <CheckCircle2 className="w-3.5 h-3.5 text-white" strokeWidth={2.5} />
+                                  </span>
+                                )}
+                                <div className="flex items-start justify-between mb-1 gap-2">
+                                  <span className="text-sm font-semibold text-gray-900 min-w-0">{g.displayName}</span>
+                                  {active.loaded && (
+                                    <button
+                                      onClick={(e) => { e.stopPropagation(); handleViewTable(active.name); }}
+                                      className="text-blue-700 hover:text-blue-800 p-1 flex-shrink-0"
+                                      title="View data"
+                                    >
+                                      <Eye className="w-4 h-4" />
+                                    </button>
+                                  )}
+                                </div>
+                                {g.versions.length > 1 && (
+                                  <div className="mb-1.5" onClick={(e) => e.stopPropagation()}>
+                                    <select
+                                      value={activeName}
+                                      onChange={(e) => setGroupVersion(g.base, e.target.value)}
+                                      className="text-[11px] font-semibold text-blue-700 bg-blue-50 border border-blue-200 rounded px-1.5 py-0.5"
+                                    >
+                                      {g.versions.map(v => (
+                                        <option key={v.name} value={v.name}>
+                                          {v.versionLabel}{v.versionNum === g.versions[g.versions.length - 1].versionNum ? ' (latest)' : ''}
+                                        </option>
+                                      ))}
+                                    </select>
+                                  </div>
+                                )}
+                                <div className="text-xs text-gray-600">
+                                  {active.loaded ? (
+                                    <span className="flex items-center gap-1">
+                                      <CheckCircle2 className="w-3 h-3 text-green-600" />
+                                      {active.row_count?.toLocaleString() || 0} rows
+                                      {!checked && <span className="text-amber-600 ml-1">(unchecked — will be skipped)</span>}
+                                    </span>
+                                  ) : (
+                                    <span className="text-amber-600">File not found</span>
+                                  )}
+                                </div>
+                              </div>
+                            );
+                          })}
+                        </div>
+                      </>
                     )}
                   </div>
                 </div>
 
                 <div className="mt-4 pt-4 border-t border-blue-100">
                   <button
-                    onClick={(e) => { e.stopPropagation(); loadMutation.mutate(dataset.name); }}
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      const selectedTables = groups
+                        .filter(g => isChecked(g.base))
+                        .map(g => getSelectedVersion(g));
+                      loadMutation.mutate({ datasetName: dataset.name, selectedTables });
+                    }}
                     disabled={loadMutation.isPending || dataset.status !== 'ready'}
                     className="btn-primary w-full flex items-center justify-center gap-2 disabled:opacity-50 disabled:cursor-not-allowed"
                   >
@@ -350,7 +493,8 @@ export default function BankingDataLoader() {
                 </div>
               </div>
             </motion.div>
-          ))}
+            );
+          })}
         </div>
 
         {loadMutation.isSuccess && (
@@ -477,23 +621,12 @@ export default function BankingDataLoader() {
         </div>
 
         {/* Results Section */}
-        {results && (
+        {hasValidResults && (
           <>
-            {/* Results header with Re-run option */}
-            <div className="flex items-center justify-between">
-              <div className="flex items-center gap-2">
-                <CheckCircle2 className="w-5 h-5 text-green-600" />
-                <span className="text-sm font-semibold text-green-700">Segmentation complete</span>
-              </div>
-              <button
-                onClick={() => {
-                  setAgentAUi(prev => ({ ...prev, resultsEnabled: false, pollingStatus: 'idle' }));
-                  queryClient.removeQueries({ queryKey: ['banking-agent-a-results'] });
-                }}
-                className="text-xs text-gray-500 hover:text-gray-700 border border-gray-200 hover:border-gray-400 px-3 py-1 rounded-full transition-colors"
-              >
-                Re-run segmentation
-              </button>
+            {/* Results header */}
+            <div className="flex items-center gap-2">
+              <CheckCircle2 className="w-5 h-5 text-green-600" />
+              <span className="text-sm font-semibold text-green-700">Segmentation complete</span>
             </div>
 
             {/* Summary Stats */}
@@ -604,8 +737,7 @@ export default function BankingDataLoader() {
                     <div className="space-y-3">
                       <div className="flex justify-between items-center">
                         <span className="text-sm text-gray-600">Avg Annual Balance</span>
-                        <span className="font-semibold text-blue-700 flex items-center gap-1">
-                          <DollarSign className="w-4 h-4" />
+                        <span className="font-semibold text-blue-700">
                           {formatCompactUsd(persona.avg_annual_balance)}
                         </span>
                       </div>
@@ -692,7 +824,7 @@ export default function BankingDataLoader() {
         )}
 
         {/* No Results State */}
-        {!results && !segmentationLoading && (
+        {!hasValidResults && !segmentationLoading && (
           <div className="bg-blue-50 border border-blue-200 rounded-xl p-8 text-center">
             <div className="w-16 h-16 bg-blue-100 rounded-xl flex items-center justify-center mx-auto mb-4">
               <Users className="w-8 h-8 text-blue-700" />

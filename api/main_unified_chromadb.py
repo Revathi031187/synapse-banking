@@ -10,20 +10,34 @@ Endpoints:
 import sys
 import os
 import json
+import asyncio
 import threading
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
-# Force unbuffered, line-flushed stdout/stderr as early as possible — this
-# must happen before any other import, since several modules print/log at
-# import time (e.g. utils/together_ai.py's "API key loaded" line). Without
-# this, Python fully buffers stdout/stderr whenever they aren't a direct
-# interactive terminal (e.g. redirected to a file, piped, or captured by a
-# process launcher) — every print()/logger call still fires, but nothing
-# appears in the console until the internal buffer fills or the process
-# exits, defeating live diagnostic visibility. reconfigure(line_buffering=True)
-# forces a flush on every newline regardless of how this process was launched.
-sys.stdout.reconfigure(line_buffering=True)
-sys.stderr.reconfigure(line_buffering=True)
+# Force unbuffered, line-flushed, UTF-8 stdout/stderr as early as possible —
+# this must happen before any other import, since several modules print/log
+# at import time (e.g. utils/together_ai.py's "API key loaded" line). Without
+# line_buffering=True, Python fully buffers stdout/stderr whenever they
+# aren't a direct interactive terminal (e.g. redirected to a file, piped, or
+# captured by a process launcher) — every print()/logger call still fires,
+# but nothing appears in the console until the internal buffer fills or the
+# process exits, defeating live diagnostic visibility.
+#
+# encoding='utf-8' fixes a much more serious issue: on Windows, sys.stdout's
+# encoding defaults to the legacy console codepage (cp1252) unless explicitly
+# overridden, and this codebase's print()/logger calls use emoji throughout
+# (✅ ⚠️ 📊 🏦 ...) — any of them raises UnicodeEncodeError under cp1252. That
+# exception, raised from deep inside an already-running except-block (e.g.
+# agent_b_banking_logit_enhanced.py's own error handler trying to print the
+# error it's handling), cascades into a second unhandled exception that can
+# take several seconds to unwind — this was silently turning ordinary lazy
+# agent initialization (e.g. inside GET /api/banking/dashboard/segments) into
+# a 10+ second request, which is what "the dashboard hangs on Loading segment
+# data..." and similar slow-page reports traced back to. sys.stdout/stderr are
+# process-wide singletons, so this one fix applies to every print() call in
+# every module for the rest of the process, not just this file's own logging.
+sys.stdout.reconfigure(line_buffering=True, encoding='utf-8')
+sys.stderr.reconfigure(line_buffering=True, encoding='utf-8')
 
 # Load environment variables from .env file
 from dotenv import load_dotenv
@@ -265,6 +279,25 @@ def init_banking_agent_b():
             logger.error(f"Error initializing Banking Agent B: {e}")
             raise
 
+
+async def init_banking_agent_b_async():
+    """Async-context wrapper for init_banking_agent_b().
+
+    On the FIRST call in a process, init_banking_agent_b() does real,
+    synchronous work — a full customers.csv reload if not already in memory,
+    plus constructing 4 Agent B variants (each precomputing statistics over
+    the full transactions table) — that can take several seconds. Called
+    directly from an `async def` endpoint, that blocks FastAPI's single event
+    loop for the whole process, freezing every other in-flight request (this
+    is what turned a plain GET /api/banking/datasets into a multi-second hang
+    in practice — the request itself was fast, but it was queued behind this).
+    Running it via asyncio.to_thread() keeps the event loop free. Every call
+    after the first is already cheap (guarded by `banking_agent_b is None`
+    inside init_banking_agent_b itself), so this adds negligible overhead
+    once initialized."""
+    await asyncio.to_thread(init_banking_agent_b)
+
+
 chroma_client = get_chroma_client()
 
 # System state - Academy Sports and Banking
@@ -291,6 +324,7 @@ system_state = {
         'agent_d_impression_rows': [],
         '_agent_d_csv_loaded': False,
         'dashboard_persona_freq_recs_cache': {},  # (cluster_id, weights_sig, agent_a_last_refreshed, top_n) -> frequency-ranked recommendations
+        'active_extra_tables': None,  # None until an explicit POST /datasets/load — set(table_name) of extra tables the user chose to load
     }
 }
 
@@ -309,6 +343,131 @@ def _banking_fmb_path() -> Path:
     if meridian.exists(): return meridian
     if jpm.exists():      return jpm
     return project_root / 'data' / 'preloaded' / 'fmb_bank'
+
+
+# ============================================================
+# Ad Spend dataset resolution — v1 (original 4-channel data) vs v2 (realistic
+# 8-channel data, email at true $0 spend — see scripts/generate_ad_spend_history_v2.py)
+# ============================================================
+# Code-only manual override — deliberately NOT exposed via API/UI toggle.
+#   "auto" / "v2" -> prefer v2, generate it on demand if missing, silently
+#                    fall back to v1 if generation fails or is invalid.
+#   "v1"          -> force the original dataset; if it fails to load, this is
+#                    a real failure, surfaced as a red error box on the Data
+#                    Loader tab (never a raw HTTP error) — no silent v2 substitution.
+AD_SPEND_DATASET_PREFERENCE = "auto"
+
+# Extra (non-core) banking tables that have a newer version alongside the
+# original — when both are selected in the Data Loader, the newer one wins.
+_VERSIONED_TABLE_GROUPS = {
+    "ad_spend_monthly": ("ad_spend_monthly", "ad_spend_monthly_v2"),
+}
+
+_AD_SPEND_V1_CHANNELS = ["in_app", "email", "sms", "branch"]
+_AD_SPEND_V2_CHANNELS = [
+    "in_app", "sms", "branch", "email",
+    "youtube_ads", "meta_social_ads", "google_search_ads", "podcast_audio_ads",
+]
+_AD_SPEND_V2_OWNED_CHANNELS = {"email"}  # spend-free — excluded from ROAS/optimization math
+
+_ad_spend_dataset_cache: Optional[dict] = None  # resolved once per process
+
+
+def _valid_ad_spend_csv(path: Path, expected_channels: list) -> bool:
+    """File exists, is non-empty, has the right shape, and actually contains
+    (most of) the expected channel set — catches a partial/corrupt generation,
+    not just a missing file."""
+    try:
+        if not path.exists() or path.stat().st_size == 0:
+            return False
+        df = pd.read_csv(path)
+        if "channel" not in df.columns or "persona" not in df.columns or len(df) == 0:
+            return False
+        return len(set(df["channel"].unique()) & set(expected_channels)) >= len(expected_channels) - 1
+    except Exception:
+        return False
+
+
+def _resolve_ad_spend_dataset() -> dict:
+    """
+    Decide which ad-spend CSV backs /api/banking/ad_spend/* this session, and
+    cache the result so the file-exists check (and any generation attempt)
+    only happens once per process — same caching shape as
+    preload_academy_data()'s academy_cached_data.
+
+    Returns {"path": Path|None, "version": "v1"|"v2"|None, "channels": [...],
+             "owned_channels": {...}, "error": None|str}. `error` is only set
+    when AD_SPEND_DATASET_PREFERENCE == "v1" and v1 itself is unusable (the
+    one case that must NOT be silently substituted).
+    """
+    global _ad_spend_dataset_cache
+    if _ad_spend_dataset_cache is not None:
+        return _ad_spend_dataset_cache
+
+    data_dir = _banking_fmb_path()
+    v1_path = data_dir / "ad_spend_monthly.csv"
+    v2_path = data_dir / "ad_spend_monthly_v2.csv"
+
+    if AD_SPEND_DATASET_PREFERENCE == "v1":
+        if _valid_ad_spend_csv(v1_path, _AD_SPEND_V1_CHANNELS):
+            result = {"path": v1_path, "version": "v1", "channels": _AD_SPEND_V1_CHANNELS,
+                      "owned_channels": set(), "error": None}
+        else:
+            result = {
+                "path": None, "version": None, "channels": [], "owned_channels": set(),
+                "error": (
+                    f"Ad spend dataset is forced to v1 in code (AD_SPEND_DATASET_PREFERENCE), "
+                    f"but {v1_path.name} failed to load or is missing from {data_dir}."
+                ),
+            }
+        _ad_spend_dataset_cache = result
+        return result
+
+    # "auto" / "v2": if the user has explicitly loaded a table selection this
+    # session via the Data Loader and unchecked ad_spend_monthly_v2 while
+    # keeping ad_spend_monthly checked, honor that — a file existing on disk
+    # shouldn't override an explicit choice made in the UI.
+    active_extra = system_state['banking'].get('active_extra_tables')
+    loader_prefers_v1 = (
+        active_extra is not None
+        and "ad_spend_monthly_v2" not in active_extra
+        and "ad_spend_monthly" in active_extra
+    )
+
+    if not loader_prefers_v1:
+        if not _valid_ad_spend_csv(v2_path, _AD_SPEND_V2_CHANNELS):
+            # Missing or invalid — attempt generation, the exact same code
+            # path as a manual `python scripts/generate_ad_spend_history_v2.py` run.
+            try:
+                import subprocess
+                script_path = project_root / "scripts" / "generate_ad_spend_history_v2.py"
+                proc = subprocess.run(
+                    [sys.executable, str(script_path)],
+                    capture_output=True, text=True, timeout=120,
+                )
+                if proc.returncode != 0:
+                    logger.warning(
+                        "[AD_SPEND] v2 generation failed (exit %s): %s",
+                        proc.returncode, (proc.stderr or "")[-2000:],
+                    )
+            except Exception as exc:
+                logger.warning("[AD_SPEND] v2 generation raised: %s", exc)
+
+        if _valid_ad_spend_csv(v2_path, _AD_SPEND_V2_CHANNELS):
+            result = {"path": v2_path, "version": "v2", "channels": _AD_SPEND_V2_CHANNELS,
+                      "owned_channels": set(_AD_SPEND_V2_OWNED_CHANNELS), "error": None}
+            _ad_spend_dataset_cache = result
+            return result
+        logger.warning("[AD_SPEND] v2 unavailable after generation attempt — falling back to v1.")
+
+    if _valid_ad_spend_csv(v1_path, _AD_SPEND_V1_CHANNELS):
+        result = {"path": v1_path, "version": "v1", "channels": _AD_SPEND_V1_CHANNELS,
+                  "owned_channels": set(), "error": None}
+    else:
+        result = {"path": None, "version": None, "channels": [], "owned_channels": set(),
+                  "error": None}  # "auto" never surfaces a hard error — matches today's lookup_ok=False fallback shape
+    _ad_spend_dataset_cache = result
+    return result
 
 
 def _load_banking_agent_d_csv_tables():
@@ -2490,30 +2649,96 @@ async def get_new_visitor_recommendations():
 # every table explicitly (loaded: False if missing) instead of silently
 # omitting whichever ones aren't found.
 _BANKING_EXTRA_TABLES = [
-    ("customer_profile", "Customer Profile", "customer_profile.csv"),
+    # customer_profile / segment_profiles are intentionally not listed here —
+    # not needed for loading into the system; other features that need them
+    # (e.g. the Segment AI chatbot) read those CSVs directly off disk.
     ("customer_engagement", "Customer Engagement", "customer_engagement.csv"),
     ("mta_touchpoint_history", "MTA Touchpoint History", "mta_touchpoint_history.csv"),
     ("ad_spend_monthly", "Ad Spend Monthly", "ad_spend_monthly.csv"),
+    ("ad_spend_monthly_v2", "Ad Spend Monthly (v2 — New Channels)", "ad_spend_monthly_v2.csv"),
     ("recommendation_impressions", "Recommendation Impressions", "recommendation_impressions.csv"),
     ("wishlist", "Wishlist", "wishlist.csv"),
     ("incomplete_applications", "Incomplete Applications", "incomplete_applications.csv"),
 ]
 
 
-def _check_banking_extra_tables(data_path: Path) -> list:
+def _resolve_active_extra_tables(active: set) -> set:
+    """Apply 'newest version wins when both are checked' within each
+    _VERSIONED_TABLE_GROUPS pair (tuples are ordered oldest -> newest)."""
+    resolved = set(active)
+    for group in _VERSIONED_TABLE_GROUPS.values():
+        checked_in_group = [t for t in group if t in resolved]
+        if len(checked_in_group) > 1:
+            newest = group[-1]
+            for t in checked_in_group:
+                if t != newest:
+                    resolved.discard(t)
+    return resolved
+
+
+_row_count_cache: Dict[str, Tuple[float, int]] = {}  # str(path) -> (mtime, row_count)
+
+
+def _fast_row_count(file_path: Path) -> int:
+    """Row count via raw line counting, cached by the file's mtime.
+
+    `list_banking_datasets` (the Data Loader page's initial fetch) previously
+    counted every table's rows with `len(pd.read_csv(file_path))` — a full
+    parse (type inference, column construction) just to learn a row count,
+    redone from scratch on every single request. For a 42K-row table that's
+    real, avoidable latency; for transactions.csv (876K+ rows) even the raw
+    line-count this function does was being redone on every call. Caching by
+    mtime means an unchanged file is never re-read twice."""
+    try:
+        key = str(file_path)
+        mtime = file_path.stat().st_mtime
+        cached = _row_count_cache.get(key)
+        if cached is not None and cached[0] == mtime:
+            return cached[1]
+        with open(file_path, 'rb') as f:
+            count = sum(1 for _ in f) - 1  # minus header row
+        _row_count_cache[key] = (mtime, count)
+        return count
+    except Exception:
+        return -1
+
+
+def _drop_unselected_sibling_versions(tables: list, active_extra: Optional[set]) -> list:
+    """When a versioned group was satisfied by one version, drop its sibling
+    version(s) from the list entirely — the group WAS selected, just a
+    different version of it, so the sibling isn't a real gap and shouldn't
+    show up as "not loaded" in a load-result summary."""
+    if active_extra is None:
+        return tables
+    drop = set()
+    for group in _VERSIONED_TABLE_GROUPS.values():
+        chosen = [n for n in group if n in active_extra]
+        if chosen:
+            drop.update(n for n in group if n not in chosen)
+    return [t for t in tables if t["name"] not in drop]
+
+
+def _check_banking_extra_tables(data_path: Path, active_extra: Optional[set] = None) -> list:
     """Existence + row-count for every optional banking table — always one
     entry per table (loaded: False if the file is missing), never silently
-    omitted just because it wasn't found."""
+    omitted just because it wasn't found.
+
+    `active_extra`: the set of table names the user explicitly checked via
+    POST /datasets/load this session. Pass this (from `load_banking_dataset`)
+    to report what actually happened in that specific load action. Leave it
+    None for browsing/preview purposes (e.g. the GET /datasets listing, or
+    previewing a version in a version-switch dropdown) — there, `loaded`
+    should always reflect real disk presence regardless of what was selected
+    in a previous, unrelated load action; masking it by a stale session
+    selection would make a genuinely-present file's row count disappear the
+    moment a *different* version of the same table was loaded once."""
+    resolved_active = _resolve_active_extra_tables(active_extra) if active_extra is not None else None
     out = []
     for name, display_name, fname in _BANKING_EXTRA_TABLES:
         file_path = data_path / fname
-        loaded = file_path.exists()
-        row_count = 0
-        if loaded:
-            try:
-                row_count = len(pd.read_csv(file_path))
-            except Exception:
-                row_count = -1  # exists but couldn't be read/counted
+        exists = file_path.exists()
+        row_count = _fast_row_count(file_path) if exists else 0
+        loaded = exists if resolved_active is None else (exists and name in resolved_active)
         out.append({"name": name, "display_name": display_name, "row_count": row_count, "loaded": loaded})
     return out
 
@@ -2541,13 +2766,14 @@ async def list_banking_datasets():
         
         if customers_file.exists():
             try:
-                customers_df = _apply_banking_column_compat(pd.read_csv(customers_file))
-                customer_count = len(customers_df)
+                # Row counts only — nothing below needs the actual DataFrame
+                # content, so a full pd.read_csv() parse (type inference,
+                # column construction) would be pure waste here; the cached
+                # raw line-count is the same information for a fraction of
+                # the cost, especially for transactions.csv (876K+ rows).
+                customer_count = _fast_row_count(customers_file)
 
-                product_count = 0
-                if products_file.exists():
-                    products_df = pd.read_csv(products_file)
-                    product_count = len(products_df)
+                product_count = _fast_row_count(products_file) if products_file.exists() else 0
 
                 # transactions.csv may be in /tmp/ (Databricks App) — check without downloading
                 from utils.large_file_loader import _TMP_BASE as _txn_tmp_base
@@ -2556,13 +2782,7 @@ async def list_banking_datasets():
                     _tmp_txn = _txn_tmp_base / 'transactions.csv'
                     if _tmp_txn.exists():
                         _txn_resolved = _tmp_txn
-                transaction_count = 0
-                if _txn_resolved.exists():
-                    try:
-                        with open(_txn_resolved, 'rb') as _f:
-                            transaction_count = sum(1 for _ in _f) - 1
-                    except Exception:
-                        transaction_count = -1  # file exists but couldn't count rows
+                transaction_count = _fast_row_count(_txn_resolved) if _txn_resolved.exists() else 0
 
                 tables = [
                     {
@@ -2583,7 +2803,7 @@ async def list_banking_datasets():
                         "row_count": transaction_count,
                         "loaded": _txn_resolved.exists()
                     }
-                ] + _check_banking_extra_tables(data_path)
+                ] + _check_banking_extra_tables(data_path)  # browsing/preview — always real disk state, not masked by a prior load's selection
 
                 datasets.append({
                     "name": "banking_v1",
@@ -2624,12 +2844,6 @@ async def list_banking_datasets():
                         "name": "transactions",
                         "display_name": "Transactions",
                         "row_count": 25000,
-                        "loaded": False
-                    },
-                    {
-                        "name": "customer_profile",
-                        "display_name": "Customer Profile",
-                        "row_count": 5000,
                         "loaded": False
                     },
                     {
@@ -2678,8 +2892,17 @@ async def list_banking_datasets():
             logger.warning(f"⚠️ Banking dataset not found at {customers_file}")
         
         logger.info(f"📊 Returning {len(datasets)} banking datasets")
-        return {"datasets": datasets}
-        
+
+        ad_spend_status = _resolve_ad_spend_dataset()
+        return {
+            "datasets": datasets,
+            "ad_spend_dataset_status": {
+                "active": ad_spend_status["version"],
+                "preference": AD_SPEND_DATASET_PREFERENCE,
+                "error": ad_spend_status["error"],
+            },
+        }
+
     except Exception as e:
         logger.error(f"❌ Error listing banking datasets: {e}")
         import traceback
@@ -2705,8 +2928,10 @@ async def view_banking_dataset_table(dataset_name: str, table_name: str):
             "transactions": "transactions.csv",
             "customer_profile": "customer_profile.csv",
             "customer_engagement": "customer_engagement.csv",
+            "segment_profiles": "segment_profiles.csv",
             "mta_touchpoint_history": "mta_touchpoint_history.csv",
             "ad_spend_monthly": "ad_spend_monthly.csv",
+            "ad_spend_monthly_v2": "ad_spend_monthly_v2.csv",
             "recommendation_impressions": "recommendation_impressions.csv",
             "wishlist": "wishlist.csv",
             "incomplete_applications": "incomplete_applications.csv",
@@ -2756,18 +2981,43 @@ async def view_banking_dataset_table(dataset_name: str, table_name: str):
 
 @app.post("/api/banking/datasets/load")
 async def load_banking_dataset(request: dict):
-    """Load Banking dataset"""
+    """
+    Load Banking dataset.
+
+    Optional `selected_tables`: list of table `name`s (from GET
+    /api/banking/datasets, core + extra tables together) to load — omit for
+    legacy behavior (load everything). Customers and Products must be in the
+    selection or there's nothing for the segmentation pipeline to run on.
+    Extra-table selections are recorded as the session's `active_extra_tables`
+    — this is what lets an explicit "only load the old ad_spend_monthly"
+    choice in the Data Loader override a v2 file that happens to exist on disk.
+    """
     dataset_name = request.get("dataset_name", "banking_v1")
-    
-    logger.info(f"📊 Loading Banking dataset: {dataset_name}")
-    
+    selected_tables = request.get("selected_tables")  # None = load everything (back-compat)
+
+    logger.info(
+        f"📊 Loading Banking dataset: {dataset_name}"
+        + (f" ({len(selected_tables)} tables selected)" if selected_tables is not None else " (all tables)")
+    )
+
     try:
-        from pathlib import Path
         data_path = _banking_fmb_path()
 
         customers_file = data_path / "customers.csv"
         products_file = data_path / "products.csv"
         transactions_file = data_path / "transactions.csv"
+
+        selected = set(selected_tables) if selected_tables is not None else None
+        if selected is not None:
+            missing_required = [n for n in ("customers", "products") if n not in selected]
+            if missing_required:
+                raise HTTPException(
+                    status_code=400,
+                    detail=(
+                        f"{' and '.join(n.capitalize() for n in missing_required)} must stay checked to load "
+                        "this dataset — the segmentation pipeline has nothing to run on without them."
+                    ),
+                )
 
         missing = [f.name for f in (customers_file, products_file) if not f.exists()]
         if missing:
@@ -2776,19 +3026,22 @@ async def load_banking_dataset(request: dict):
                 detail=f"Banking dataset files not found: {', '.join(missing)}. Run scripts/generate_meridian_dataset.py first."
             )
 
-        import pandas as pd
         from utils.large_file_loader import ensure_csv
         customers_df = _apply_banking_column_compat(pd.read_csv(customers_file))
         products_df = pd.read_csv(products_file)
 
-        # Resolve transactions: local path → /tmp/ cache → download from UC Volume.
-        # ensure_csv() handles all three cases transparently.
-        resolved_txn = ensure_csv(transactions_file)
-        if resolved_txn.exists():
-            transactions_df = pd.read_csv(resolved_txn)
+        load_transactions = selected is None or "transactions" in selected
+        if load_transactions:
+            # Resolve transactions: local path → /tmp/ cache → download from UC Volume.
+            # ensure_csv() handles all three cases transparently.
+            resolved_txn = ensure_csv(transactions_file)
+            transactions_df = pd.read_csv(resolved_txn) if resolved_txn.exists() else pd.DataFrame()
+            if not resolved_txn.exists():
+                logger.info("transactions.csv not available (no local file and UC Volume unreachable)")
+            txn_loaded = resolved_txn.exists()
         else:
             transactions_df = pd.DataFrame()
-            logger.info("transactions.csv not available (no local file and UC Volume unreachable)")
+            txn_loaded = False
 
         # Store in system_state for Agent B
         system_state['banking']['products'] = products_df
@@ -2796,21 +3049,31 @@ async def load_banking_dataset(request: dict):
         system_state['banking']['customers'] = customers_df
         system_state['banking']['banking_data_loaded'] = True
 
+        extra_table_names = {name for name, _, _ in _BANKING_EXTRA_TABLES}
+        active_extra = (selected & extra_table_names) if selected is not None else set(extra_table_names)
+        system_state['banking']['active_extra_tables'] = active_extra
+        # An explicit load can change which ad-spend dataset should be active
+        # (e.g. the user just unchecked ad_spend_monthly_v2) — drop the cached
+        # resolution so the next ad-spend request re-resolves against it.
+        global _ad_spend_dataset_cache
+        _ad_spend_dataset_cache = None
+
         # Full per-table breakdown for this load — every table gets an entry
-        # (loaded: False if missing) so the UI can report exactly how many
-        # tables loaded and name any that didn't, instead of a generic
-        # "success" that hides a partially-loaded dataset.
+        # (loaded: False if missing or unchecked) so the UI can report exactly
+        # how many tables loaded and name any that didn't, instead of a
+        # generic "success" that hides a partially-loaded dataset.
         tables = [
             {"name": "customers", "display_name": "Customers", "row_count": len(customers_df), "loaded": True},
             {"name": "products", "display_name": "Products", "row_count": len(products_df), "loaded": True},
-            {"name": "transactions", "display_name": "Transactions", "row_count": len(transactions_df), "loaded": resolved_txn.exists()},
-        ] + _check_banking_extra_tables(data_path)
+            {"name": "transactions", "display_name": "Transactions", "row_count": len(transactions_df), "loaded": txn_loaded},
+        ] + _check_banking_extra_tables(data_path, active_extra)
+        tables = _drop_unselected_sibling_versions(tables, active_extra)
         tables_loaded = [t for t in tables if t["loaded"]]
         tables_missing = [t["display_name"] for t in tables if not t["loaded"]]
 
         logger.info(
             f"✅ Banking dataset loaded: {len(tables_loaded)}/{len(tables)} tables"
-            + (f" — missing: {', '.join(tables_missing)}" if tables_missing else "")
+            + (f" — not loaded: {', '.join(tables_missing)}" if tables_missing else "")
         )
 
         return {
@@ -2825,10 +3088,28 @@ async def load_banking_dataset(request: dict):
             "tables_total_count": len(tables),
             "tables_missing": tables_missing,
         }
-        
+
+    except HTTPException:
+        raise
     except Exception as e:
         logger.error(f"❌ Error loading banking dataset: {e}")
         raise HTTPException(status_code=500, detail=str(e))
+
+
+def _agent_a_results_valid(results: Optional[dict]) -> bool:
+    """A results dict can be present-but-empty — e.g. a corrupted or
+    interrupted cache write — without representing a real completed
+    segmentation. Every "is segmentation done" check across the app should
+    go through this, not a bare truthiness check, so a broken cache reads as
+    "not ready" everywhere (status badges, the Dashboard tab, the landing-page
+    redirect) rather than showing a "complete" state with 0 customers."""
+    if not results:
+        return False
+    try:
+        total = results.get('total_customers') or len(results.get('customers_with_clusters') or [])
+    except Exception:
+        total = 0
+    return bool(total) and len(results.get('personas') or {}) > 0
 
 
 @app.get("/api/banking/status")
@@ -2840,17 +3121,16 @@ async def get_banking_status():
 
         customers_path = data_path / "customers.csv"
         data_loaded = customers_path.exists()
-        
-        customer_count = 0
-        if data_loaded:
-            import pandas as pd
-            df = pd.read_csv(customers_path)
-            customer_count = len(df)
-        
+
+        # Row count only — a full pd.read_csv() parse just to call len() on it
+        # is pure waste; this endpoint is polled frequently (status checks,
+        # the landing-page routing decision) so it should stay cheap.
+        customer_count = _fast_row_count(customers_path) if data_loaded else 0
+
         return {
             "data_loaded": data_loaded,
             "current_dataset": "banking_v1",
-            "agent_a_complete": system_state['banking']['agent_a_results'] is not None,
+            "agent_a_complete": _agent_a_results_valid(system_state['banking']['agent_a_results']),
             "agent_b_complete": system_state['banking']['agent_b_results'] is not None,
             "customers_count": customer_count,
             "backend": "CSV Files (On-Demand Processing)"
@@ -2876,8 +3156,35 @@ def _agent_a_cache_path() -> Path:
     return data_path / '.agent_a_cache.json'
 
 
+def _tuple_keyed_cache_to_json(cache: dict) -> list:
+    """[(key_tuple, value), ...] -> JSON-safe [{"key": [...], "value": ...}, ...],
+    running each value through numpy_to_python_types since these caches are
+    populated by internal compute functions that don't always convert numpy
+    scalars before storing (only their HTTP-response callers do)."""
+    out = []
+    for k, v in cache.items():
+        try:
+            out.append({"key": list(k), "value": numpy_to_python_types(v)})
+        except Exception:
+            continue  # one bad entry shouldn't block persisting the rest
+    return out
+
+
+def _tuple_keyed_cache_from_json(entries: list) -> dict:
+    return {tuple(e["key"]): e["value"] for e in entries or [] if isinstance(e, dict) and "key" in e}
+
+
 def _persist_agent_a_cache(results: dict):
-    """Save Agent A personas to JSON file so they survive server restarts."""
+    """Save Agent A personas — and the Dashboard/Segments tabs' pre-warmed
+    per-persona caches — to JSON so they all survive server restarts. Without
+    persisting the pre-warm caches too, a restart (e.g. --reload picking up a
+    code change) would keep the segmentation results but lose the expensive
+    per-persona dashboard computations, forcing the Dashboard tab's next visit
+    to recompute everything from scratch — the same "instant after restart"
+    gap that `_cluster_map`/`personas` persistence already closed for the
+    segmentation results themselves. Cache keys embed `agent_a_last_refreshed`
+    (or similar), so an entry from a prior run is simply never looked up again
+    once a new run's key differs — safe to keep around, no invalidation needed."""
     try:
         cache_path = _agent_a_cache_path()
         serializable = {k: v for k, v in results.items() if k not in ('customers_df', 'customers_with_clusters_df')}
@@ -2887,6 +3194,17 @@ def _persist_agent_a_cache(results: dict):
             {'customer_id': c.get('customer_id'), 'cluster': c.get('cluster')}
             for c in customers if isinstance(c, dict)
         ]
+
+        b = system_state['banking']
+        serializable['_dashboard_persona_freq_recs_cache'] = _tuple_keyed_cache_to_json(
+            b.get('dashboard_persona_freq_recs_cache', {}))
+        serializable['_dashboard_persona_aggregate_offer_cache'] = _tuple_keyed_cache_to_json(
+            b.get('dashboard_persona_aggregate_offer_cache', {}))
+        serializable['_banking_micro_segments'] = {
+            str(k): numpy_to_python_types(v) for k, v in b.get('banking_micro_segments', {}).items()
+        }
+        serializable['_used_micro_names'] = sorted(b.get('used_micro_names', set()))
+
         with open(cache_path, 'w', encoding='utf-8') as f:
             import json as _json
             _json.dump(serializable, f)
@@ -2896,7 +3214,8 @@ def _persist_agent_a_cache(results: dict):
 
 
 def _load_agent_a_cache():
-    """Load Agent A cache from JSON file on startup."""
+    """Load Agent A cache — and the pre-warmed dashboard/micro-segment caches
+    saved alongside it — from JSON on startup."""
     try:
         cache_path = _agent_a_cache_path()
         print(f"[CACHE] looking for Agent A cache at: {cache_path}", flush=True)
@@ -2918,6 +3237,21 @@ def _load_agent_a_cache():
             # "not ready" — the exact split that made the Dashboard tab show "No
             # segment data yet" after a restart even though the cache said otherwise.
             banking_agent_a.personas = data.get('personas') or {}
+
+            # Restore the Dashboard/Segments tabs' pre-warmed per-persona caches too,
+            # so a restart doesn't force their first post-restart visit to recompute
+            # everything (see _persist_agent_a_cache for why this is safe to restore
+            # verbatim — stale entries just won't be hit once a new run's key differs).
+            system_state['banking']['dashboard_persona_freq_recs_cache'] = _tuple_keyed_cache_from_json(
+                data.get('_dashboard_persona_freq_recs_cache'))
+            system_state['banking']['dashboard_persona_aggregate_offer_cache'] = _tuple_keyed_cache_from_json(
+                data.get('_dashboard_persona_aggregate_offer_cache'))
+            _micro = data.get('_banking_micro_segments') or {}
+            system_state['banking']['banking_micro_segments'] = {
+                (int(k) if k.lstrip('-').isdigit() else k): v for k, v in _micro.items()
+            }
+            system_state['banking']['used_micro_names'] = set(data.get('_used_micro_names') or [])
+
             print(f"[CACHE] loaded {len(data.get('personas', {}))} personas — banking_data_loaded=True", flush=True)
             logger.info(f"Agent A results loaded from cache ({len(data.get('personas', {}))} personas) — banking_data_loaded set to True")
             # Pre-populate chatbot DuckDB with persona assignments from cache
@@ -4319,10 +4653,18 @@ def _get_persona_frequency_recommendations_cached(cluster_id, persona: dict, seg
     return result
 
 
-@app.get("/api/banking/dashboard/segments")
-async def get_banking_dashboard_segments():
+def _build_dashboard_segments_snapshot() -> dict:
     """
-    Live segment snapshot for the marketing-facing Dashboard tab.
+    Synchronous body of GET /api/banking/dashboard/segments — see that
+    endpoint for the full contract. Split out so it can run via
+    asyncio.to_thread() instead of directly on the event loop: this does a
+    lazy Agent B init (a full customers.csv reload + 4-variant construction
+    on the first call in a process) and, per persona, real recommendation/
+    best-offer computation that's a live LLM call on any cache miss — left
+    inline on an `async def`, either of those blocks the event loop and
+    freezes every other in-flight request for as long as they take (this is
+    what turned an unrelated GET /api/banking/datasets into a multi-second
+    hang in practice).
 
     Every figure here is real, tied to Agent A's actual cluster assignments —
     NOT an independent heuristic. If Agent A hasn't been run yet, there is no
@@ -4343,7 +4685,7 @@ async def get_banking_dashboard_segments():
       trigger live LLM calls per segment.
     """
     try:
-        if not system_state['banking'].get('agent_a_results'):
+        if not _agent_a_results_valid(system_state['banking'].get('agent_a_results')):
             return {"success": True, "ready": False}
 
         # Lazily restore banking_agent_a.customers_df from disk after a process
@@ -4466,6 +4808,17 @@ async def get_banking_dashboard_segments():
         logger.error(f"Error building dashboard segment snapshot: {e}")
         logger.error(traceback.format_exc())
         raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/api/banking/dashboard/segments")
+async def get_banking_dashboard_segments():
+    """Live segment snapshot for the marketing-facing Dashboard tab — see
+    _build_dashboard_segments_snapshot() for the full contract. Run on a
+    worker thread (asyncio.to_thread) rather than directly on the event loop,
+    since that helper can do real, slow, synchronous work (agent init, live
+    LLM calls on a recommendation-cache miss) that would otherwise freeze
+    every other in-flight request for as long as it takes."""
+    return await asyncio.to_thread(_build_dashboard_segments_snapshot)
 
 
 @app.get("/api/banking/customers")
@@ -4712,7 +5065,7 @@ async def execute_banking_agent_b(request: dict = Body(...)):
 
         # Initialize Agent B if needed
         print(f"[AGENT-B] calling init_banking_agent_b — banking_agent_b is None: {banking_agent_b is None}", flush=True)
-        init_banking_agent_b()
+        await init_banking_agent_b_async()
         print(f"[AGENT-B] init done — banking_agent_b_chromadb is None: {banking_agent_b_chromadb is None}", flush=True)
 
         # Restore banking_agent_a.customers_df's 'cluster' column from agent_a_results
@@ -4833,7 +5186,7 @@ async def execute_banking_agent_b_logit(config: AgentBLogitConfig):
         personas = system_state['banking']['agent_a_results'].get('personas', {})
         
         # Initialize Banking Agent B if needed
-        init_banking_agent_b()
+        await init_banking_agent_b_async()
         
         if banking_agent_b_logit is None:
             raise HTTPException(
@@ -4995,7 +5348,7 @@ async def explain_banking_recommendation(request: dict = Body(...)):
             raise HTTPException(status_code=400, detail="Please run customer segmentation (Agent A) first.")
 
         # Initialize Agent B if needed
-        init_banking_agent_b()
+        await init_banking_agent_b_async()
         
         if banking_agent_b is None:
             raise HTTPException(
@@ -5289,7 +5642,7 @@ async def banking_agent_d_orchestrate(body: AgentDOrchestrateBody):
             raise HTTPException(status_code=400, detail="customer_id required")
         if not system_state['banking']['agent_a_results']:
             raise HTTPException(status_code=400, detail="Run Agent A first.")
-        init_banking_agent_b()
+        await init_banking_agent_b_async()
         if banking_agent_b is None:
             raise HTTPException(status_code=500, detail="Agent B not initialized")
 
@@ -5539,7 +5892,7 @@ async def banking_agent_d_directives(customer_id: str):
     d = ledger.get('last_directives') or {}
     priority_pin_reason_ui = ""
     if str(d.get('priority_pin_product_id') or '').strip():
-        init_banking_agent_b()
+        await init_banking_agent_b_async()
         pdf = getattr(banking_agent_b_chromadb, 'products_df', None) if banking_agent_b_chromadb else None
         priority_pin_reason_ui = AgentDForPinReason.priority_pin_reason_text(d, pdf)
     return {
@@ -5659,64 +6012,101 @@ async def banking_mta_customer_journey(customer_id: str, days: int = 60):
         return {"success": False, "data": [], "error": str(e)}
 
 
-_AD_SPEND_MONTHLY_PATH = os.path.join(
-    os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
-    "data", "preloaded", "meridian_bank", "ad_spend_monthly.csv",
+# Cost/value/risk benchmarks mirroring the generator scripts. v1's script has no
+# `if __name__` guard (it's a fire-and-forget one-shot generator), so it is NOT
+# imported here — importing it would re-run generation and overwrite the CSV as
+# a side effect of loading this API module. Its constants are therefore kept as
+# a small duplicated snapshot (matches what was already here before this change).
+# v2's script DOES guard its generation behind `if __name__ == "__main__"`, so
+# its constants are imported directly — single source of truth, no duplication.
+_AD_SPEND_V1_COST_PER_CONTACT = {"in_app": 0.80, "email": 0.50, "sms": 0.35, "branch": 8.00}
+_AD_SPEND_V1_PRODUCT_VALUE    = {"in_app": 300,  "email": 350,  "sms": 250,  "branch": 600}
+_AD_SPEND_V1_BIZ_COST         = {"in_app": 75,   "email": 85,   "sms": 70,   "branch": 150}
+_AD_SPEND_V1_RISK_RATE        = {"in_app": 0.08, "email": 0.06, "sms": 0.10, "branch": 0.04}
+
+from scripts.generate_ad_spend_history_v2 import (
+    COST_PER_CONTACT as _AD_SPEND_V2_COST_PER_CONTACT,
+    PRODUCT_VALUE as _AD_SPEND_V2_PRODUCT_VALUE,
+    BUSINESS_COST_PER_CONV as _AD_SPEND_V2_BIZ_COST,
+    RISK_RATE as _AD_SPEND_V2_RISK_RATE,
 )
+
+_AD_SPEND_PERSONA_LIST = [
+    "Digital Native", "Wealth Builder", "Everyday Essential",
+    "Retiree Anchor", "At-Risk Saver",
+]
+
+
+def _ad_spend_benchmarks(version: str):
+    if version == "v2":
+        return (_AD_SPEND_V2_COST_PER_CONTACT, _AD_SPEND_V2_PRODUCT_VALUE,
+                _AD_SPEND_V2_BIZ_COST, _AD_SPEND_V2_RISK_RATE)
+    return (_AD_SPEND_V1_COST_PER_CONTACT, _AD_SPEND_V1_PRODUCT_VALUE,
+            _AD_SPEND_V1_BIZ_COST, _AD_SPEND_V1_RISK_RATE)
+
+
+def _fit_ad_spend_curve(spend: float, revenue: float):
+    """Heuristic S-curve fit R(x) = L*(1-e^-kx) from a single annual (spend,
+    revenue) point — same closed-form approach used across all 3 endpoints.
+    Returns None for spend<=0 or revenue<=0 (owned/zero-spend channels are
+    handled by a separate path, not this curve)."""
+    import math
+    if spend <= 0 or revenue <= 0:
+        return None
+    roas = revenue / spend
+    if roas > 8:   k_f = 0.22
+    elif roas > 5: k_f = 0.30
+    elif roas > 3: k_f = 0.45
+    elif roas > 2: k_f = 0.65
+    elif roas > 1.3: k_f = 1.00
+    else:           k_f = 1.80
+    k = k_f / spend
+    denom = 1.0 - math.exp(-k * spend)
+    L = revenue / denom if denom > 1e-9 else revenue * 8
+    Lk = L * k
+    opt = math.log(Lk) / k if Lk > 1.0 else spend * 1.2
+    opt = max(opt, spend * 0.12)
+    mroas = L * k * math.exp(-k * spend)
+    status = "under" if mroas > 1.25 else ("over" if mroas < 0.80 else "optimal")
+    return {
+        "spend_usd": round(spend, 2),
+        "attributed_revenue_usd": round(revenue, 2),
+        "roas": round(roas, 2),
+        "roi_pct": round((revenue - spend) / spend * 100, 1),
+        "optimal_spend_usd": round(opt, 2),
+        "marginal_roas": round(mroas, 2),
+        "saturation_pct": int(min(98, (revenue / L) * 100)),
+        "status": status,
+        "curve_params": {"L": round(L, 2), "k": round(k, 8)},
+    }
 
 
 @app.get("/api/banking/ad_spend/metrics")
 async def banking_ad_spend_metrics():
     """
-    Per-persona x per-channel spend optimization metrics.
-    Source: ad_spend_monthly.csv (12-month Jan-Dec 2025 dataset).
-    Returns saturation curve params (L, k), ROAS, ROI, optimal spend,
-    status (under / over / optimal) per channel per persona.
+    Per-persona x per-channel spend optimization metrics. Dataset (v1's
+    original 4 channels, or v2's realistic 8-channel mix with email at true
+    $0 spend) is resolved by _resolve_ad_spend_dataset() — see that function
+    for the auto/v1/v2 preference logic.
+    Returns saturation curve params (L, k), ROAS, ROI, optimal spend, and
+    status (under / over / optimal) for paid channels; a lighter funnel-only
+    shape (no curve/status — nothing to optimize against $0 spend) for owned
+    channels like email.
     """
-    import math
+    dataset = _resolve_ad_spend_dataset()
+    if dataset["error"]:
+        # AD_SPEND_DATASET_PREFERENCE == "v1" and v1 itself is unusable — a
+        # real failure, but still returned as a soft JSON shape (not a raised
+        # HTTP error); the Data Loader tab surfaces this via ad_spend_dataset_status.
+        return {"success": False, "error": dataset["error"], "data_source": "error"}
 
-    CHANNELS_4 = ["in_app", "email", "sms", "branch"]
-    COST_PER_CONTACT = {"in_app": 0.80, "email": 0.50, "sms": 0.35, "branch": 8.00}
-    PERSONA_LIST = [
-        "Digital Native", "Wealth Builder", "Everyday Essential",
-        "Retiree Anchor", "At-Risk Saver",
-    ]
-
-    def _fit_curve(spend: float, revenue: float):
-        if spend <= 0 or revenue <= 0:
-            return None
-        roas = revenue / spend
-        if roas > 8:   k_f = 0.22
-        elif roas > 5: k_f = 0.30
-        elif roas > 3: k_f = 0.45
-        elif roas > 2: k_f = 0.65
-        elif roas > 1.3: k_f = 1.00
-        else:           k_f = 1.80
-        k = k_f / spend
-        denom = 1.0 - math.exp(-k * spend)
-        L = revenue / denom if denom > 1e-9 else revenue * 8
-        Lk = L * k
-        opt = math.log(Lk) / k if Lk > 1.0 else spend * 1.2
-        opt = max(opt, spend * 0.12)
-        mroas = L * k * math.exp(-k * spend)
-        status = "under" if mroas > 1.25 else ("over" if mroas < 0.80 else "optimal")
-        return {
-            "spend_usd": round(spend, 2),
-            "attributed_revenue_usd": round(revenue, 2),
-            "roas": round(roas, 2),
-            "roi_pct": round((revenue - spend) / spend * 100, 1),
-            "optimal_spend_usd": round(opt, 2),
-            "marginal_roas": round(mroas, 2),
-            "saturation_pct": int(min(98, (revenue / L) * 100)),
-            "status": status,
-            "curve_params": {"L": round(L, 2), "k": round(k, 8)},
-        }
+    channels = dataset["channels"]
+    owned_channels = dataset["owned_channels"]
+    COST_PER_CONTACT, PRODUCT_VALUE, BIZ_COST_PER_CONV, RISK_RATE = _ad_spend_benchmarks(dataset["version"])
 
     try:
-        import pandas as pd
-        df = pd.read_csv(_AD_SPEND_MONTHLY_PATH)
-        df4 = df[df["channel"].isin(CHANNELS_4)]
-        # Annual aggregation
+        df = pd.read_csv(dataset["path"])
+        dfc = df[df["channel"].isin(channels)]
         agg_cols = {
             "sent": ("sent", "sum"),
             "converted": ("converted", "sum"),
@@ -5725,15 +6115,10 @@ async def banking_ad_spend_metrics():
             "spend_usd": ("spend_usd", "sum"),
             "revenue_usd": ("revenue_usd", "sum"),
         }
-        # Include true business ROI columns if present in the CSV
         for col in ("business_cost_usd", "risk_adjusted_revenue_usd", "total_cost_usd"):
-            if col in df4.columns:
+            if col in dfc.columns:
                 agg_cols[col] = (col, "sum")
-        grp = (
-            df4.groupby(["persona", "channel"])
-            .agg(**agg_cols)
-            .reset_index()
-        )
+        grp = dfc.groupby(["persona", "channel"]).agg(**agg_cols).reset_index()
         lookup_ok = True
     except Exception as exc:
         logger.warning("[AD_SPEND] Could not load monthly data: %s", exc)
@@ -5742,32 +6127,27 @@ async def banking_ad_spend_metrics():
 
     personas_data: dict = {}
     total_spend = 0.0
-    total_revenue = 0.0
+    total_revenue = 0.0          # paid channels only — feeds blended_roas (standard marketing accounting)
+    owned_channel_revenue = 0.0  # owned channels (email) — reported separately, never blended into paid ROAS
 
-    for persona in PERSONA_LIST:
+    for persona in _AD_SPEND_PERSONA_LIST:
         personas_data[persona] = {}
-        for channel in CHANNELS_4:
+        for channel in channels:
             metrics = None
             if lookup_ok and grp is not None:
                 mask = (grp["persona"] == persona) & (grp["channel"] == channel)
                 rows = grp[mask]
                 if len(rows) > 0:
                     r = rows.iloc[0]
-                    base = _fit_curve(float(r["spend_usd"]), float(r["revenue_usd"]))
-                    if base:
-                        # True business ROI — from pre-computed CSV columns
-                        has_biz = "total_cost_usd" in r.index
-                        if has_biz:
-                            tc  = float(r["total_cost_usd"])
-                            rar = float(r["risk_adjusted_revenue_usd"])
-                            true_roi  = round((rar - tc) / tc * 100, 1) if tc > 0 else -100.0
-                            true_roas = round(rar / tc, 2) if tc > 0 else 0.0
-                            biz_cost  = round(float(r["business_cost_usd"]), 2)
-                        else:
-                            tc = true_roi = true_roas = biz_cost = None
+                    spend = float(r["spend_usd"])
+                    revenue = float(r["revenue_usd"])
 
+                    if channel in owned_channels:
+                        # No spend to optimize against — funnel/revenue only, no S-curve/status.
                         metrics = {
-                            **base,
+                            "owned_channel": True,
+                            "spend_usd": round(spend, 2),
+                            "attributed_revenue_usd": round(revenue, 2),
                             "sent": int(r["sent"]),
                             "converted": int(r["converted"]),
                             "clicked": int(r["clicked"]),
@@ -5775,23 +6155,50 @@ async def banking_ad_spend_metrics():
                             "conversion_rate": round(r["converted"] / r["sent"], 4) if r["sent"] > 0 else 0.0,
                             "click_rate": round(r["clicked"] / r["sent"], 4) if r["sent"] > 0 else 0.0,
                             "open_rate": round(r["opened"] / r["sent"], 4) if r["sent"] > 0 else 0.0,
-                            "cost_per_acquisition": round(r["spend_usd"] / r["converted"], 2) if r["converted"] > 0 else 0.0,
-                            "business_cost_usd": biz_cost,
-                            "total_cost_usd": round(tc, 2) if tc else None,
-                            "risk_adjusted_revenue_usd": round(rar, 2) if has_biz else None,
-                            "true_roi_pct": true_roi,
-                            "true_roas": true_roas,
                         }
+                    else:
+                        base = _fit_ad_spend_curve(spend, revenue)
+                        if base:
+                            has_biz = "total_cost_usd" in r.index
+                            if has_biz:
+                                tc  = float(r["total_cost_usd"])
+                                rar = float(r["risk_adjusted_revenue_usd"])
+                                true_roi  = round((rar - tc) / tc * 100, 1) if tc > 0 else -100.0
+                                true_roas = round(rar / tc, 2) if tc > 0 else 0.0
+                                biz_cost  = round(float(r["business_cost_usd"]), 2)
+                            else:
+                                tc = true_roi = true_roas = biz_cost = None
+
+                            metrics = {
+                                **base,
+                                "owned_channel": False,
+                                "sent": int(r["sent"]),
+                                "converted": int(r["converted"]),
+                                "clicked": int(r["clicked"]),
+                                "opened": int(r["opened"]),
+                                "conversion_rate": round(r["converted"] / r["sent"], 4) if r["sent"] > 0 else 0.0,
+                                "click_rate": round(r["clicked"] / r["sent"], 4) if r["sent"] > 0 else 0.0,
+                                "open_rate": round(r["opened"] / r["sent"], 4) if r["sent"] > 0 else 0.0,
+                                "cost_per_acquisition": round(spend / r["converted"], 2) if r["converted"] > 0 else 0.0,
+                                "business_cost_usd": biz_cost,
+                                "total_cost_usd": round(tc, 2) if tc else None,
+                                "risk_adjusted_revenue_usd": round(rar, 2) if has_biz else None,
+                                "true_roi_pct": true_roi,
+                                "true_roas": true_roas,
+                            }
             if metrics:
                 personas_data[persona][channel] = metrics
-                total_spend += metrics["spend_usd"]
-                total_revenue += metrics["attributed_revenue_usd"]
+                if metrics["owned_channel"]:
+                    owned_channel_revenue += metrics["attributed_revenue_usd"]
+                else:
+                    total_spend += metrics["spend_usd"]
+                    total_revenue += metrics["attributed_revenue_usd"]
 
     realloc_opp = sum(
         (m["optimal_spend_usd"] - m["spend_usd"]) * m["marginal_roas"]
         for p in personas_data.values()
         for m in p.values()
-        if m.get("status") == "under"
+        if not m["owned_channel"] and m.get("status") == "under"
     )
 
     return {
@@ -5800,13 +6207,19 @@ async def banking_ad_spend_metrics():
         "summary": {
             "total_spend_usd": round(total_spend, 2),
             "total_revenue_usd": round(total_revenue, 2),
+            "owned_channel_revenue_usd": round(owned_channel_revenue, 2),
             "blended_roas": round(total_revenue / total_spend, 2) if total_spend > 0 else 0.0,
             "total_roi_pct": round((total_revenue - total_spend) / total_spend * 100, 1) if total_spend > 0 else 0.0,
             "reallocation_opportunity_usd": round(realloc_opp, 2),
         },
-        "channels": CHANNELS_4,
-        "persona_list": PERSONA_LIST,
+        "channels": channels,
+        "owned_channels": sorted(owned_channels),
+        "persona_list": _AD_SPEND_PERSONA_LIST,
         "cost_benchmarks": COST_PER_CONTACT,
+        "product_value_benchmarks": PRODUCT_VALUE,
+        "biz_cost_benchmarks": BIZ_COST_PER_CONV,
+        "risk_rate_benchmarks": RISK_RATE,
+        "dataset_version": dataset["version"],
         "data_source": "ad_spend_monthly" if lookup_ok else "fallback",
     }
 
@@ -5818,21 +6231,20 @@ async def banking_ad_spend_monthly():
     Used by the trend chart toggle on the Ad Spend Optimization page.
     Returns: { persona: { channel: [{month, month_name, spend_usd, revenue_usd, roas, roi_pct, converted}] } }
     """
-    CHANNELS_4 = ["in_app", "email", "sms", "branch"]
-    PERSONA_LIST = [
-        "Digital Native", "Wealth Builder", "Everyday Essential",
-        "Retiree Anchor", "At-Risk Saver",
-    ]
+    dataset = _resolve_ad_spend_dataset()
+    if dataset["error"] or not dataset["path"]:
+        return {"success": False, "data": {}, "error": dataset["error"] or "No usable ad spend dataset"}
+    channels = dataset["channels"]
+
     try:
-        import pandas as pd
-        df = pd.read_csv(_AD_SPEND_MONTHLY_PATH)
-        df = df[df["channel"].isin(CHANNELS_4)].copy()
+        df = pd.read_csv(dataset["path"])
+        df = df[df["channel"].isin(channels)].copy()
         df = df.sort_values("month")
         result: dict = {}
-        for persona in PERSONA_LIST:
+        for persona in _AD_SPEND_PERSONA_LIST:
             result[persona] = {}
             p_df = df[df["persona"] == persona]
-            for channel in CHANNELS_4:
+            for channel in channels:
                 c_df = p_df[p_df["channel"] == channel]
                 result[persona][channel] = [
                     {
@@ -5848,7 +6260,7 @@ async def banking_ad_spend_monthly():
                     }
                     for _, row in c_df.iterrows()
                 ]
-        return {"success": True, "data": result, "months": 12, "year": 2025}
+        return {"success": True, "data": result, "months": 12, "year": 2025, "dataset_version": dataset["version"]}
     except Exception as exc:
         logger.warning("[AD_SPEND_MONTHLY] Failed: %s", exc)
         return {"success": False, "data": {}, "error": str(exc)}
@@ -5862,20 +6274,30 @@ async def banking_ad_spend_simulate(request: Request):
     the fitted S-curve params (R(x) = L*(1-e^(-k*x))). Returns a contextual
     AI insight string explaining the simulated state.
     """
-    import math, pandas as pd
+    import math
 
     body       = await request.json()
     persona    = body.get("persona", "")
     channel    = body.get("channel", "")
     sim_spend  = float(body.get("sim_spend", 0))
 
-    # Per-channel business cost and risk constants (mirrors generate_ad_spend_history.py)
-    PRODUCT_VALUE    = {"in_app": 300, "email": 350, "sms": 250, "branch": 600}
-    BIZ_COST_PER_CONV= {"in_app": 75,  "email": 85,  "sms": 70,  "branch": 150}
-    RISK_RATE        = {"in_app": 0.08,"email": 0.06,"sms": 0.10,"branch": 0.04}
+    dataset = _resolve_ad_spend_dataset()
+    if dataset["error"] or not dataset["path"]:
+        return {"success": False, "error": dataset["error"] or "No usable ad spend dataset"}
 
-    CHANNEL_LABELS   = {"in_app": "In-App", "email": "Email",
-                        "sms": "SMS", "branch": "Branch"}
+    if channel in dataset["owned_channels"]:
+        return {
+            "success": False,
+            "error": f"{channel} is an owned channel with $0 media spend — there's no spend curve to simulate against.",
+        }
+
+    _, PRODUCT_VALUE, BIZ_COST_PER_CONV, RISK_RATE = _ad_spend_benchmarks(dataset["version"])
+
+    CHANNEL_LABELS = {
+        "in_app": "In-App", "email": "Email", "sms": "SMS", "branch": "Branch",
+        "youtube_ads": "YouTube Ads", "meta_social_ads": "Meta Paid Social",
+        "google_search_ads": "Google Search Ads", "podcast_audio_ads": "Podcast/Audio Ads",
+    }
     PERSONA_SHORT    = {
         "Digital Native": "Digital Native", "Wealth Builder": "Wealth Builder",
         "Everyday Essential": "Everyday Essential",
@@ -5886,7 +6308,7 @@ async def banking_ad_spend_simulate(request: Request):
         return f"${v/1000:.1f}K" if abs(v) >= 1000 else f"${v:.0f}"
 
     try:
-        df   = pd.read_csv(_AD_SPEND_MONTHLY_PATH)
+        df   = pd.read_csv(dataset["path"])
         mask = (df["persona"] == persona) & (df["channel"] == channel)
         sub  = df[mask]
         if sub.empty:
@@ -6000,7 +6422,7 @@ async def run_banking_pipeline(customer_id: str):
     trace = {}
 
     try:
-        init_banking_agent_b()
+        await init_banking_agent_b_async()
         _sync_banking_cluster_column()
 
         # ── Agent A: get persona for this customer ────────────────────────────
@@ -6191,7 +6613,7 @@ async def get_banking_one_best_offer(customer_id: str):
     try:
         if not system_state['banking']['agent_a_results']:
             raise HTTPException(status_code=404, detail="Run Agent A first to load segments.")
-        init_banking_agent_b()
+        await init_banking_agent_b_async()
         _sync_banking_cluster_column()
         customer_details = banking_agent_a.get_customer_details(customer_id)
         all_recs, exec_raw = _banking_all_recs_for_agent_c(customer_id)
@@ -6281,7 +6703,7 @@ async def get_banking_persona_best_offer(persona_id: int = 0):
     try:
         if not system_state['banking']['agent_a_results']:
             raise HTTPException(status_code=404, detail="Run Agent A first to load segments.")
-        init_banking_agent_b()
+        await init_banking_agent_b_async()
         personas = banking_agent_a.personas
         # Personas keys may be int or numpy.int64; ensure we look up with a key that exists
         persona_key = None
