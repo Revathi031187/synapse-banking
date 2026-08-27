@@ -54,10 +54,10 @@ function App() {
             <Route path="activation" element={<BankingActivation />} />
             <Route path="macro-dashboard" element={<BankingMacroDashboard />} />
             <Route path="agent-a" element={<Navigate to="/banking/data-loader" replace />} />
-            <Route path="agent-b" element={<BankingAgentB />} />
-            <Route path="agent-c" element={<BankingAgentC />} />
-            <Route path="agent-d" element={<BankingAgentD />} />
-            <Route path="ask-genie" element={<BankingAskGenie />} />
+            <Route path="recommender" element={<BankingAgentB />} />
+            <Route path="offer-ad-spend" element={<BankingAgentC />} />
+            <Route path="director" element={<BankingAgentD />} />
+            <Route path="segment-ai" element={<BankingAskGenie />} />
             <Route path="customer/:customerId/recommendations" element={<AcademyRecommendations />} />
           </Route>
           

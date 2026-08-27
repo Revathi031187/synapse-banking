@@ -3,7 +3,7 @@ import { createPortal } from 'react-dom';
 import { useQuery } from '@tanstack/react-query';
 import { useNavigate } from 'react-router-dom';
 import {
-  LayoutDashboard, TrendingUp, ChevronLeft, ChevronRight, Info,
+  LayoutDashboard, TrendingUp, ChevronLeft, ChevronRight, ChevronUp, ChevronDown, Info,
   AlertTriangle, Star, PenSquare, Database, X,
 } from 'lucide-react';
 
@@ -36,8 +36,41 @@ interface TopProduct {
   rank_explanation: string | null;
   llm_rationale: string | null;
   detailed_calculation: Record<string, FactorDetail> | null;
+  vote_count: number | null;        // how many sampled customers had this product in their own top picks
+  sampled_customers: number | null; // size of the customer sample this product was ranked from
 }
 type OfferProduct = TopProduct;
+// One KPI chip in the segment-level Best Offer card — Est. Reach, Expected
+// Conversions, Projected Revenue, or Best Channel, each with a tooltip explaining
+// what it measures.
+interface AggregateOfferKpi {
+  label: string;
+  value: string;
+  tip?: string | null;
+}
+// Best offer: picks from the segment's top-3 Recommended Products (see bestOfferName /
+// the frequency-based recommendations below), scored against the segment's AGGREGATE
+// profile (mean/mode across every real customer) rather than any one customer's
+// individual pick. See _compute_persona_aggregate_best_offer on the backend.
+interface AggregateBestOffer {
+  product_id: string;
+  product_name: string;
+  offer_name: string | null;   // the actual Agent-C-selected offer/promo, when one is configured for this product
+  category: string | null;
+  subcategory: string | null;
+  score_pct: number;
+  why_this_offer: string[];       // bulleted reasons — leads with Agent C's own tailored reason when available
+  how_to_earn: string | null;     // mechanics of qualifying, when a specific offer is configured
+  what_you_get: string | null;    // the offer's headline value proposition
+  benefits: string[];             // supporting benefit bullets under "what you get"
+  kpis: AggregateOfferKpi[];
+  annual_fee: number | null;
+  min_balance: number | null;
+  interest_rate_apy: number | null;
+  best_channel: string | null;
+  best_channel_reason: string | null;
+  computation_method: string;
+}
 interface SegmentData {
   id: string;
   name: string;
@@ -55,6 +88,7 @@ interface SegmentData {
   top_products: TopProduct[];
   featured_offer: string;
   offer_product: OfferProduct | null;
+  aggregate_best_offer: AggregateBestOffer | null;
   ad_spend_persona: string;
   representative_customer_id: string | null;
 }
@@ -86,17 +120,43 @@ interface AdSpendMonthly { data: Record<string, Record<string, MonthlyRow[]>> }
 const CHANNELS = ['in_app', 'email', 'sms', 'branch'];
 const CHANNEL_LABELS: Record<string, string> = { in_app: 'In-App', email: 'Email', sms: 'SMS', branch: 'Branch' };
 
-// Segment identity colors. Agent A's cluster names are freshly LLM-generated on
-// every run, so they can't be looked up in a fixed name → color map (that map
-// would silently miss any name it wasn't written for, leaving `background`
-// undefined and white text invisible on the page's white background — the bug
-// that prompted this fix). Hashing the name into a fixed palette instead
-// guarantees every segment always resolves to a real, visible color.
-const SEGMENT_PALETTE = ['#5A7A2E', '#1B3C8C', '#0C7A6A', '#7127B0', '#0E9B6A', '#B45309', '#BE185D'];
-function colorForSegment(name: string): string {
-  let hash = 0;
-  for (let i = 0; i < name.length; i++) hash = (hash * 31 + name.charCodeAt(i)) >>> 0;
-  return SEGMENT_PALETTE[hash % SEGMENT_PALETTE.length];
+// Segment identity color is driven by churn risk — the single most actionable
+// "at a glance" signal for a marketer scanning segments: healthy/growing segments
+// read green, segments that need retention attention read red, with amber in
+// between. It's a continuous gradient (not 3 fixed buckets) so e.g. 8% and 22%
+// churn read as visibly different shades rather than identical "stable" colors.
+// The 14%/25% breakpoints match churnTone()'s good/warning/critical thresholds,
+// so this coloring is consistent with every other churn-tone indicator on the
+// page. Driving color off a real metric (rather than hashing the LLM-generated
+// name into an arbitrary fixed palette) also sidesteps the old failure mode of
+// a name the palette map didn't recognize — any churnPct always resolves to a
+// real, visible color.
+function colorForSegment(name: string, churnPct: number): string {
+  const pct = Number.isFinite(churnPct) ? Math.max(0, churnPct) : 14;
+  let hue: number;
+  if (pct <= 14) {
+    hue = 152 - (152 - 45) * (pct / 14);       // 0% emerald → 14% amber
+  } else if (pct <= 25) {
+    hue = 45 - (45 - 4) * ((pct - 14) / 11);   // 14% amber → 25% red
+  } else {
+    hue = 4;                                   // 25%+ stays red
+  }
+  return `hsl(${hue.toFixed(0)}, 70%, 38%)`;
+}
+
+// Display name for a segment's best offer — prefers the Agent-C-selected offer/promo
+// name from the aggregate-profile computation, falls back to that computation's
+// underlying product name, then to the older representative-customer pick, so a
+// segment still shows something sensible if the aggregate computation degraded
+// gracefully to null for any reason.
+function bestOfferName(s: SegmentData): string {
+  return (
+    s.aggregate_best_offer?.offer_name ||
+    s.aggregate_best_offer?.product_name ||
+    s.offer_product?.name ||
+    s.top_products[0]?.name ||
+    '—'
+  );
 }
 
 // Segment descriptions are LLM-generated multi-sentence paragraphs — trim to
@@ -227,8 +287,8 @@ function StatusBadge({ tone, label }: { tone: 'good' | 'warning' | 'critical'; l
   );
 }
 
-function SegmentDot({ name, size = 10 }: { name: string; size?: number }) {
-  return <span className="rounded-full flex-shrink-0" style={{ width: size, height: size, background: colorForSegment(name) }} />;
+function SegmentDot({ name, churnPct, size = 10 }: { name: string; churnPct: number; size?: number }) {
+  return <span className="rounded-full flex-shrink-0" style={{ width: size, height: size, background: colorForSegment(name, churnPct) }} />;
 }
 
 // ─── Monthly trend chart (spend bars + revenue line, hover tooltip) ────────
@@ -496,7 +556,7 @@ export default function BankingSegmentDashboard() {
                   segId === s.id ? 'bg-blue-50 border-blue-300 text-gray-900' : 'bg-gray-50 border-gray-200 text-gray-600 hover:border-gray-300'
                 }`}
               >
-                <SegmentDot name={s.name} size={9} />
+                <SegmentDot name={s.name} churnPct={s.churn_pct} size={9} />
                 {s.name} <span className="text-gray-400 tabular-nums">{fmtInt(s.count)}</span>
               </button>
             ))}
@@ -509,11 +569,11 @@ export default function BankingSegmentDashboard() {
 
             {activeSeg && (
               <div className="bg-white border border-gray-200 rounded-xl shadow-sm mb-6 overflow-hidden">
-                <div className="h-1.5" style={{ background: colorForSegment(activeSeg.name) }} />
+                <div className="h-1.5" style={{ background: colorForSegment(activeSeg.name, activeSeg.churn_pct) }} />
                 <div className="px-5 py-4 flex gap-4 items-start">
                   <div
                     className="w-11 h-11 rounded-xl flex-shrink-0 flex items-center justify-center font-black text-white text-sm shadow-sm"
-                    style={{ background: colorForSegment(activeSeg.name) }}
+                    style={{ background: colorForSegment(activeSeg.name, activeSeg.churn_pct) }}
                   >
                     {activeSeg.short_code}
                   </div>
@@ -575,8 +635,50 @@ export default function BankingSegmentDashboard() {
 }
 
 // ─── Overview: all segments ─────────────────────────────────────────────────
+type TopOffersSortKey = 'count' | 'avg_balance' | 'cross_sell_pct';
+
+// Small sortable column header — click to sort by this column, click again to
+// flip direction. Only the active column shows a solid arrow; inactive columns
+// show a faint one as an affordance without competing visually with the active sort.
+function SortableHeader({
+  label, active, dir, onClick,
+}: { label: string; active: boolean; dir: 'asc' | 'desc'; onClick: () => void }) {
+  return (
+    <button
+      onClick={onClick}
+      className={`w-full flex items-center justify-end gap-1 text-right uppercase tracking-wide font-bold text-[10px] transition-colors ${
+        active ? 'text-gray-700' : 'text-gray-400 hover:text-gray-600'
+      }`}
+    >
+      {label}
+      {active
+        ? (dir === 'desc' ? <ChevronDown className="w-3 h-3" /> : <ChevronUp className="w-3 h-3" />)
+        : <ChevronDown className="w-3 h-3 opacity-40" />}
+    </button>
+  );
+}
+
 function OverviewAll({ segments, portfolio, onSelect }: { segments: SegmentData[]; portfolio: Portfolio; onSelect: (id: string) => void }) {
-  const topOffers = [...segments].sort((a, b) => b.count - a.count).slice(0, 5);
+  const [sortKey, setSortKey] = useState<TopOffersSortKey>('cross_sell_pct');
+  const [sortDir, setSortDir] = useState<'asc' | 'desc'>('desc');
+
+  function toggleSort(key: TopOffersSortKey) {
+    if (key === sortKey) {
+      setSortDir((d) => (d === 'desc' ? 'asc' : 'desc'));
+    } else {
+      setSortKey(key);
+      setSortDir('desc');
+    }
+  }
+
+  const topOffers = useMemo(() => {
+    const sorted = [...segments].sort((a, b) => {
+      const diff = a[sortKey] - b[sortKey];
+      return sortDir === 'desc' ? -diff : diff;
+    });
+    return sorted.slice(0, 5);
+  }, [segments, sortKey, sortDir]);
+
   return (
     <>
       <SectionHead
@@ -605,7 +707,7 @@ function OverviewAll({ segments, portfolio, onSelect }: { segments: SegmentData[
 
       <SectionHead
         title="Segment Snapshot" hint="Click a segment to see its full detail"
-        tip="One card per Agent A segment — best offer is Agent B's #1-ranked persona-mode recommendation for that segment."
+        tip="One card per Agent A segment — best offer is picked from the segment's top 3 most-recommended products, ranked by how many real customers here had each in their own top picks."
       />
       <div className="grid grid-cols-5 gap-3 mb-8">
         {segments.map((s) => (
@@ -613,17 +715,17 @@ function OverviewAll({ segments, portfolio, onSelect }: { segments: SegmentData[
             key={s.id}
             onClick={() => onSelect(s.id)}
             className="text-left bg-white border border-gray-200 border-l-[3px] rounded-xl shadow-sm p-4 hover:border-gray-300 hover:shadow-md transition-all"
-            style={{ borderLeftColor: colorForSegment(s.name) }}
+            style={{ borderLeftColor: colorForSegment(s.name, s.churn_pct) }}
           >
             <div className="flex items-center gap-2 mb-3">
-              <SegmentDot name={s.name} />
+              <SegmentDot name={s.name} churnPct={s.churn_pct} />
               <div>
                 <div className="text-[13px] font-bold text-gray-900 leading-tight">{s.name}</div>
                 <div className="text-[11px] text-gray-400 tabular-nums">{fmtInt(s.count)} customers</div>
               </div>
             </div>
             <div className="flex justify-between text-[11.5px] text-gray-500 mb-1">
-              <span>Best offer</span><span className="truncate ml-2 text-gray-700 font-medium">{s.offer_product?.name ?? s.top_products[0]?.name ?? '—'}</span>
+              <span>Best offer</span><span className="truncate ml-2 text-gray-700 font-medium">{bestOfferName(s)}</span>
             </div>
             <div className="flex justify-between items-center text-[11.5px] text-gray-500 mb-2">
               <span>Churn risk</span><StatusBadge tone={churnTone(s.churn_pct)} label={`${s.churn_pct.toFixed(0)}%`} />
@@ -634,19 +736,23 @@ function OverviewAll({ segments, portfolio, onSelect }: { segments: SegmentData[
       </div>
 
       <SectionHead
-        title="Top Offers Across Segments" hint="Ranked by segment size"
-        tip="Each segment's #1 Agent B persona-mode recommendation, sorted by how many customers are in that segment."
+        title="Top Offers Across Segments" hint="Click a column to sort"
+        tip="Each segment's #1 most-recommended product, by how many real customers had it in their own top picks. Click Segment Size, Avg. Balance, or Offer Receptivity to reorder by that metric; click again to flip direction."
       />
       <div className="bg-white border border-gray-200 rounded-xl shadow-sm p-4 overflow-x-auto">
-        <div className="grid grid-cols-[2fr_1.3fr_0.9fr_0.9fr] gap-x-3 min-w-[520px] text-[10px] font-bold uppercase tracking-wide text-gray-400 pb-2">
-          <span>Offer</span><span>Persona</span><span className="text-right">Segment Size</span><span className="text-right">Avg. Balance</span>
+        <div className="grid grid-cols-[2fr_1.2fr_0.85fr_0.85fr_1fr] gap-x-3 min-w-[620px] text-[10px] font-bold uppercase tracking-wide text-gray-400 pb-2">
+          <span>Offer</span><span>Persona</span>
+          <SortableHeader label="Segment Size" active={sortKey === 'count'} dir={sortDir} onClick={() => toggleSort('count')} />
+          <SortableHeader label="Avg. Balance" active={sortKey === 'avg_balance'} dir={sortDir} onClick={() => toggleSort('avg_balance')} />
+          <SortableHeader label="Offer Receptivity" active={sortKey === 'cross_sell_pct'} dir={sortDir} onClick={() => toggleSort('cross_sell_pct')} />
         </div>
         {topOffers.map((s) => (
-          <div key={s.id} className="grid grid-cols-[2fr_1.3fr_0.9fr_0.9fr] gap-x-3 min-w-[520px] items-center py-2.5 border-t border-gray-100 text-[12.5px]">
-            <span className="font-bold text-gray-900 truncate">{s.featured_offer.split(' — ')[0] || s.offer_product?.name || '—'}</span>
-            <span className="flex items-center gap-1.5 text-gray-600 truncate"><SegmentDot name={s.name} size={8} />{s.name}</span>
+          <div key={s.id} className="grid grid-cols-[2fr_1.2fr_0.85fr_0.85fr_1fr] gap-x-3 min-w-[620px] items-center py-2.5 border-t border-gray-100 text-[12.5px]">
+            <span className="font-bold text-gray-900 truncate">{bestOfferName(s)}</span>
+            <span className="flex items-center gap-1.5 text-gray-600 truncate"><SegmentDot name={s.name} churnPct={s.churn_pct} size={8} />{s.name}</span>
             <span className="text-right tabular-nums text-gray-700">{fmtInt(s.count)}</span>
             <span className="text-right tabular-nums font-bold text-gray-900">{fmtUSD(s.avg_balance)}</span>
+            <span className="text-right tabular-nums font-bold text-blue-600">{s.cross_sell_pct.toFixed(0)}%</span>
           </div>
         ))}
       </div>
@@ -674,10 +780,13 @@ function stripMdEmphasis(s: string): string {
   return s.replace(/\*\*(.*?)\*\*/g, '$1').replace(/\*(.*?)\*/g, '$1');
 }
 
-function ProductFactChip({ label, value }: { label: string; value: string }) {
+function ProductFactChip({ label, value, tip }: { label: string; value: string; tip?: string | null }) {
   return (
     <div className="bg-gray-50 border border-gray-200 rounded-lg px-3 py-2.5">
-      <p className="text-[9.5px] font-bold uppercase text-gray-400 mb-0.5">{label}</p>
+      <div className="flex items-center gap-1 mb-0.5">
+        <p className="text-[9.5px] font-bold uppercase text-gray-400">{label}</p>
+        {tip && <InfoTip text={tip} />}
+      </div>
       <p className="text-[14px] font-extrabold tabular-nums">{value}</p>
     </div>
   );
@@ -718,10 +827,32 @@ function ProductDetailModal({ product, onClose }: { product: TopProduct; onClose
           {product.description && <p className="text-[13px] text-gray-600 leading-relaxed">{product.description}</p>}
 
           <div className="grid grid-cols-2 gap-2.5">
-            <ProductFactChip label="Annual Fee" value={product.annual_fee ? `$${product.annual_fee}` : 'None'} />
-            {!!product.interest_rate && <ProductFactChip label="Rate" value={`${(product.interest_rate * 100).toFixed(2)}% APY`} />}
-            {product.min_balance != null && <ProductFactChip label="Min. Balance" value={fmtUSD(product.min_balance)} />}
-            {!!product.monthly_fee && <ProductFactChip label="Monthly Fee" value={`$${product.monthly_fee}`} />}
+            {product.vote_count != null && !!product.sampled_customers && (
+              <ProductFactChip
+                label="Segment Adoption"
+                value={`${Math.round((product.vote_count / product.sampled_customers) * 100)}%`}
+                tip="Share of sampled customers in this segment who had this product among their own individual top picks."
+              />
+            )}
+            <ProductFactChip
+              label="Annual Fee"
+              value={product.annual_fee ? `$${product.annual_fee}` : 'None'}
+              tip="The yearly fee charged for holding this product."
+            />
+            {product.min_balance != null && (
+              <ProductFactChip
+                label="Min. Balance"
+                value={fmtUSD(product.min_balance)}
+                tip="The minimum balance required to open or maintain this product."
+              />
+            )}
+            {!!product.interest_rate && (
+              <ProductFactChip
+                label="Rate (APY/Interest)"
+                value={`${(product.interest_rate * 100).toFixed(2)}%`}
+                tip="The annual percentage yield earned on savings/deposit products, or the interest rate charged on credit/loan products."
+              />
+            )}
           </div>
 
           {product.rank_explanation && (
@@ -791,7 +922,7 @@ function ProductCompactCard({ product, onClick }: { product: TopProduct; onClick
 
 function OverviewSegment({ seg }: { seg: SegmentData }) {
   const navigate = useNavigate();
-  const offer = seg.offer_product;
+  const agg = seg.aggregate_best_offer;
   const [detailProduct, setDetailProduct] = useState<TopProduct | null>(null);
 
   return (
@@ -820,8 +951,8 @@ function OverviewSegment({ seg }: { seg: SegmentData }) {
         <div className="flex flex-col h-[420px]">
           <SectionHead
             title="Recommended Products"
-            hint="Agent B · rule-based · persona mode"
-            tip="The exact same products and scores Agent B's Recommender tab computes for this persona (rule-based scoring, all product types) — click a product for full details."
+            hint=" "
+            tip="Ranked by how many real customers in this segment had each product in their own top picks — a segment-wide signal, not one representative customer's individual ranking (that's what the Recommender tab's persona mode shows instead) — click a product for full details."
           />
           <div className="bg-white border border-gray-200 rounded-xl shadow-sm overflow-hidden flex flex-col flex-1 min-h-0">
             <div className="flex-1 overflow-y-auto min-h-0 p-3 space-y-2">
@@ -834,7 +965,7 @@ function OverviewSegment({ seg }: { seg: SegmentData }) {
             </div>
             <div className="p-3 border-t border-gray-100 flex-shrink-0">
               <button
-                onClick={() => navigate(`/banking/agent-b?persona=${encodeURIComponent(seg.id)}&category=`)}
+                onClick={() => navigate(`/banking/recommender?persona=${encodeURIComponent(seg.id)}&category=`)}
                 className="w-full flex items-center justify-center gap-1.5 text-[12px] font-bold text-white bg-blue-600 hover:bg-blue-700 rounded-lg py-2.5 transition-colors"
               >
                 View in Recommender
@@ -846,37 +977,71 @@ function OverviewSegment({ seg }: { seg: SegmentData }) {
 
         <div className="flex flex-col h-[420px]">
           <SectionHead
-            title="Best Offer" hint=" "
-            tip="Rank #1 from Agent B's persona-mode recommendation list for this segment — the same computation as Recommended Products, just the top result."
+            title="Best Offer for This Segment" hint=" "
+            tip="Picks the best of the segment's top 3 Recommended Products above, scored against the segment's aggregate profile (the mean/mode of every real customer's credit score, income, deposits, digital engagement, etc.) — so this can never disagree with what's already shown as recommended, and then finds the specific offer/promo for that product via Agent C."
           />
           <div className="bg-white border border-gray-200 rounded-xl shadow-sm overflow-hidden flex flex-col flex-1 min-h-0">
-            <div className="p-4 flex-shrink-0" style={{ background: `linear-gradient(120deg, ${colorForSegment(seg.name)}, #2563EB)` }}>
+            <div className="p-4 flex-shrink-0" style={{ background: `linear-gradient(120deg, ${colorForSegment(seg.name, seg.churn_pct)}, #2563EB)` }}>
               <div className="flex items-start justify-between gap-2 mb-1.5">
-                <p className="text-[10.5px] font-bold uppercase tracking-wide text-white/75">{offer?.category || 'Featured Offer'}</p>
-                {offer && (
+                <p className="text-[10.5px] font-bold uppercase tracking-wide text-white/75">{agg?.category || 'Featured Offer'}</p>
+                {agg && (
                   <span className="text-[10.5px] font-bold text-white bg-white/20 rounded-full px-2 py-0.5 flex-shrink-0 whitespace-nowrap">
-                    {offer.score_pct.toFixed(0)}% match
+                    {agg.score_pct.toFixed(0)}% match
                   </span>
                 )}
               </div>
-              <p className="text-[15px] font-extrabold text-white leading-tight">{offer?.name || seg.featured_offer.split(' — ')[0]}</p>
-              {offer?.subcategory && <p className="text-[11px] text-white/70 mt-0.5">{offer.subcategory}</p>}
+              <p className="text-[15px] font-extrabold text-white leading-tight">{agg?.offer_name || agg?.product_name || seg.featured_offer.split(' — ')[0]}</p>
+              {agg && (
+                <p className="text-[11px] text-white/70 mt-0.5">
+                  {agg.offer_name ? `on ${agg.product_name}${agg.subcategory ? ' · ' + agg.subcategory : ''}` : (agg.subcategory || '')}
+                </p>
+              )}
             </div>
             <div className="p-4 flex-1 overflow-y-auto min-h-0">
-              {offer?.description && <p className="text-[12px] text-gray-500 leading-relaxed mb-3">{offer.description}</p>}
-              {offer?.rank_explanation && (
-                <p className="text-[11.5px] text-gray-500 leading-relaxed mb-3 bg-gray-50 border border-gray-100 rounded-lg p-2.5">{stripMdEmphasis(offer.rank_explanation)}</p>
+              {!!agg?.why_this_offer?.length && (
+                <div className="mb-3">
+                  <p className="text-[9.5px] font-bold uppercase text-gray-400 mb-1">Why this offer</p>
+                  <ul className="space-y-1">
+                    {agg.why_this_offer.map((point, i) => (
+                      <li key={i} className="flex items-start gap-1.5 text-[11.5px] text-gray-600 leading-relaxed">
+                        <span className="text-emerald-600 font-bold flex-shrink-0 mt-[1px]">&#10003;</span>
+                        <span>{stripMdEmphasis(point)}</span>
+                      </li>
+                    ))}
+                  </ul>
+                </div>
               )}
-              <div className="grid grid-cols-2 gap-2.5">
-                <ProductFactChip label="Est. Reach" value={`${fmtInt(seg.count)} customers`} />
-                {!!offer?.interest_rate && <ProductFactChip label="Rate" value={`${(offer.interest_rate * 100).toFixed(2)}% APY`} />}
-                <ProductFactChip label="Annual Fee" value={offer?.annual_fee ? `$${offer.annual_fee}` : 'None'} />
-                {offer?.min_balance != null && <ProductFactChip label="Min. Balance" value={fmtUSD(offer.min_balance)} />}
+              {agg?.how_to_earn && (
+                <div className="mb-3">
+                  <p className="text-[9.5px] font-bold uppercase text-gray-400 mb-1">How to earn it</p>
+                  <p className="text-[11.5px] text-gray-600 leading-relaxed">{stripMdEmphasis(agg.how_to_earn)}</p>
+                </div>
+              )}
+              {agg?.what_you_get && (
+                <div className="mb-3">
+                  <p className="text-[9.5px] font-bold uppercase text-gray-400 mb-1">What you get</p>
+                  <p className="text-[12.5px] font-bold text-gray-900 leading-snug mb-1">{stripMdEmphasis(agg.what_you_get)}</p>
+                  {!!agg.benefits?.length && (
+                    <ul className="space-y-0.5">
+                      {agg.benefits.map((b, i) => (
+                        <li key={i} className="flex items-start gap-1.5 text-[11px] text-gray-500 leading-relaxed">
+                          <span className="text-blue-500 flex-shrink-0">&bull;</span>
+                          <span>{stripMdEmphasis(b)}</span>
+                        </li>
+                      ))}
+                    </ul>
+                  )}
+                </div>
+              )}
+              <div className="grid grid-cols-2 gap-2.5 mb-3">
+                {(agg?.kpis ?? []).map((k) => (
+                  <ProductFactChip key={k.label} label={k.label} value={k.value} tip={k.tip} />
+                ))}
               </div>
             </div>
             <div className="p-3 border-t border-gray-100 flex-shrink-0">
               <button
-                onClick={() => navigate(`/banking/agent-c?persona=${encodeURIComponent(seg.id)}`)}
+                onClick={() => navigate(`/banking/offer-ad-spend?persona=${encodeURIComponent(seg.id)}`)}
                 className="w-full flex items-center justify-center gap-1.5 text-[12px] font-bold text-white bg-blue-600 hover:bg-blue-700 rounded-lg py-2.5 transition-colors"
               >
                 View in Offer & Ad Spend
@@ -992,10 +1157,10 @@ function MarketingAll({
             key={s.id}
             onClick={() => onSelect(s.id)}
             className="text-left bg-white border border-gray-200 border-l-[3px] rounded-xl shadow-sm p-4 hover:border-gray-300 hover:shadow-md transition-all"
-            style={{ borderLeftColor: colorForSegment(s.name) }}
+            style={{ borderLeftColor: colorForSegment(s.name, s.churn_pct) }}
           >
               <div className="flex items-center gap-2 mb-3">
-                <SegmentDot name={s.name} />
+                <SegmentDot name={s.name} churnPct={s.churn_pct} />
                 <div>
                   <div className="text-[13px] font-bold text-gray-900 leading-tight">{s.name}</div>
                   <div className="text-[11px] text-gray-400 tabular-nums">{fmtInt(s.count)} customers</div>

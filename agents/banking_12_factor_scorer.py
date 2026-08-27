@@ -645,7 +645,7 @@ class Banking12FactorScorer:
         
         score = min(product_score + tenure_bonus, 1.0)
         
-        explanation = f"{num_products} products owned, {tenure_months//12} years tenure"
+        explanation = f"{round(num_products)} products owned, {int(tenure_months // 12)} years tenure"
         
         return {
             'score': score,
@@ -902,6 +902,7 @@ class Banking12FactorScorer:
 
         bank_rev_score = 0.0
         rev_explanation = ''
+        rev_short_value = ''  # compact figure for KPI display (e.g. "$54/mo", "4.5%")
 
         if category_lower == 'credit card':
             # Bank earns interchange (~1.8 %) on every dollar spent PLUS
@@ -916,6 +917,7 @@ class Banking12FactorScorer:
             # $0 → 0.25 | $25 → 0.55 | $60 → 0.80 | $100+ → 1.0
             bank_rev_score = min(1.0, 0.25 + min(projected_monthly / 100, 0.75))
             rev_explanation = f"Est. ${projected_monthly:.0f}/mo bank revenue (interchange + interest)"
+            rev_short_value = f"${projected_monthly:.0f}/mo"
 
         elif category_lower in ('loan', 'mortgage') or subcategory in (
                 'auto', 'personal', 'home equity', 'student refinance',
@@ -932,6 +934,7 @@ class Banking12FactorScorer:
                 goal_fit = 0.45
             bank_rev_score = min(1.0, 0.30 + goal_fit * 0.40 + (net_spread / 22) * 0.30)
             rev_explanation = f"Est. {net_spread:.1f}% net spread, goal alignment {goal_fit:.0%}"
+            rev_short_value = f"{net_spread:.1f}% spread"
 
         elif category_lower == 'investment' or subcategory in ('managed portfolio', 'health savings'):
             # Bank earns AUM fees on investable assets above a living-expense buffer
@@ -940,12 +943,14 @@ class Banking12FactorScorer:
             # $0 → 0.25 | $500 → 0.55 | $2000 → 0.85 | $5000+ → 1.0
             bank_rev_score = min(1.0, 0.25 + min(projected_annual_aum / 5_000, 0.75))
             rev_explanation = f"Est. ${projected_annual_aum:.0f}/yr AUM revenue"
+            rev_short_value = f"${projected_annual_aum:.0f}/yr"
 
         elif category_lower == 'certificate of deposit' or subcategory in ('savings', 'money market', '12-month', '24-month'):
             # Bank borrows from customer; profit = NIM (~2.5 %) on deposit float
             deposit_float_rev = avg_daily_bal * 0.025
             bank_rev_score = min(0.85, 0.25 + min(deposit_float_rev / 5_000, 0.60))
             rev_explanation = f"Est. ${deposit_float_rev:.0f}/yr NIM on deposits"
+            rev_short_value = f"${deposit_float_rev:.0f}/yr"
 
         else:
             # Checking — free accounts: revenue = NIM on deposit float + direct-deposit stability value
@@ -954,9 +959,11 @@ class Banking12FactorScorer:
             total_monthly_rev  = (deposit_float_rev + dd_stability) / 12 + monthly_fee
             bank_rev_score = min(0.80, 0.20 + min(total_monthly_rev / 100, 0.60))
             rev_explanation = f"Est. ${total_monthly_rev:.0f}/mo (float + fees)"
+            rev_short_value = f"${total_monthly_rev:.0f}/mo"
 
         details['bank_revenue_score'] = bank_rev_score
         details['projected_bank_revenue_explanation'] = rev_explanation
+        details['projected_bank_revenue_short_value'] = rev_short_value
         score += bank_rev_score * 0.20
         if rev_explanation:
             explanations.append(rev_explanation)
