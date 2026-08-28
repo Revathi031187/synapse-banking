@@ -75,6 +75,25 @@ _CON: Optional[duckdb.DuckDBPyConnection] = None
 _REGISTERED: bool = False
 _PERSONAS_REGISTERED: bool = False
 
+# Which concrete ad-spend CSV the "ad_spend" view should read — None means the
+# TABLE_FILES default (ad_spend_monthly.csv, v1). Set via set_active_ad_spend_path()
+# so this always matches whatever version the Data Loader actually has active,
+# instead of silently keeping whatever file happened to be registered first.
+_ACTIVE_AD_SPEND_PATH: Optional[Path] = None
+
+
+def set_active_ad_spend_path(path) -> None:
+    """Called before every chat question so the ad_spend DuckDB view reflects
+    the CURRENT session's Data Loader selection (v1 vs v2), not whichever file
+    got registered the first time this process touched the chatbot. Re-registers
+    the view immediately if the active path actually changed."""
+    global _ACTIVE_AD_SPEND_PATH, _REGISTERED
+    new_path = Path(path) if path else None
+    if new_path != _ACTIVE_AD_SPEND_PATH:
+        logger.info("Segment AI: switching ad_spend dataset -> %s", new_path)
+        _ACTIVE_AD_SPEND_PATH = new_path
+        _REGISTERED = False  # forces the next _get_con() to re-run _register_views()
+
 
 def _get_con() -> duckdb.DuckDBPyConnection:
     global _CON, _REGISTERED
@@ -90,7 +109,9 @@ def _register_views(con: duckdb.DuckDBPyConnection) -> None:
     d = _meridian_dir()
     for table, fname in TABLE_FILES:
         p = d / fname
-        if fname == 'transactions.csv':
+        if table == "ad_spend" and _ACTIVE_AD_SPEND_PATH is not None:
+            p = _ACTIVE_AD_SPEND_PATH
+        elif fname == 'transactions.csv':
             p = _ensure_transactions_csv(p)
         if p.is_file():
             safe = p.as_posix()
@@ -292,7 +313,7 @@ def build_schema_context() -> str:
     }
 
     for table, fname in TABLE_FILES:
-        p = _resolve_csv_path(d, fname)
+        p = _ACTIVE_AD_SPEND_PATH if (table == "ad_spend" and _ACTIVE_AD_SPEND_PATH is not None) else _resolve_csv_path(d, fname)
         if not p.is_file():
             continue
         cols = _columns_for(table)
@@ -342,6 +363,27 @@ def build_schema_context() -> str:
             "  - EXAMPLE: SELECT segment_name, avg_balance_usd, customer_count FROM segment_profiles ORDER BY avg_balance_usd DESC\n"
         )
 
+    # Live channel list for the CURRENTLY REGISTERED ad_spend CSV — this varies
+    # by dataset version (v1: 4 channels, v2: 8 including paid channels like
+    # google_search_ads). Querying it fresh here (instead of a hardcoded list)
+    # is what keeps the chatbot in sync with whichever version the Data Loader
+    # actually has active, instead of describing a channel set that may no
+    # longer match the file the "ad_spend" view was last registered against.
+    try:
+        _ad_spend_channels = [
+            r[0] for r in _get_con().execute(
+                "SELECT DISTINCT channel FROM ad_spend ORDER BY channel"
+            ).fetchall()
+        ]
+    except Exception:
+        _ad_spend_channels = []
+    _ad_spend_channels_line = (
+        f"  - ad_spend channels: {', '.join(_ad_spend_channels)} ({len(_ad_spend_channels)} values in the CURRENTLY LOADED "
+        "ad-spend dataset — different from transaction channels; do not assume any other set or count)\n"
+        if _ad_spend_channels else
+        "  - ad_spend channels: see DISTINCT channel FROM ad_spend if unsure — do not assume a fixed set\n"
+    )
+
     lines.append(
         "JOIN HINTS:\n"
         "  - All tables join via customer_id\n"
@@ -352,7 +394,7 @@ def build_schema_context() -> str:
         "  - wishlist.product_id -> products.product_id\n"
         "  - transactions has 876K rows — always filter by date or customer_id for performance\n"
         "  - transaction channels: Mobile, Online, Phone, ATM, Branch (5 values — ATM is valid)\n"
-        "  - ad_spend channels: email, sms, in_app, branch (4 values — different from transaction channels)\n"
+        + _ad_spend_channels_line +
         "  - customers.channel_preference: customer's PREFERRED contact channel (values: Digital, Branch, Hybrid — 3 values). Use for 'preferred communication channel' questions.\n"
         "  - customers.preferred_communication_style: communication style preference (e.g. Formal, Casual, etc.)\n"
         "  - products has NO revenue column — use SUM(transactions.amount) JOIN products ON product_id\n"
@@ -878,9 +920,9 @@ RIGHT: SELECT t.channel, ROUND(AVG(c.churn_probability)*100, 1) AS avg_churn_sco
        GROUP BY t.channel ORDER BY avg_churn_score DESC
 
 TWO KINDS OF CHANNELS — never confuse them:
-- MARKETING channels (ad_spend table): email, sms, in_app, branch   ← 4 values, lowercase
+- MARKETING channels (ad_spend table): lowercase values — see the exact, CURRENT list in the schema context above (the count and names vary by which ad-spend dataset version is loaded; never assume a fixed set)
 - TRANSACTION channels (transactions table): Mobile, Online, Phone, ATM, Branch  ← 5 values, Title Case
-- "which channel has highest ROI/ROAS/CPA/spend?" → use ad_spend, GROUP BY channel (4 groups)
+- "which channel has highest ROI/ROAS/CPA/spend?" → use ad_spend, GROUP BY channel
 - "transaction channel", "how customers transact", "ATM usage" → use transactions, GROUP BY channel (5 groups)
 - ATM IS a valid transaction channel — always include it when querying transaction channels
 - Do NOT apply ad_spend channel filter to transactions queries or vice versa
@@ -1066,12 +1108,12 @@ DENORMALIZED COLUMNS (exist in BOTH customers AND customer_engagement — always
 - Prefer customers table as primary source; avoid joining both tables on the same denormalized column
 
 DIMENSION RULES:
-- "by marketing channel" → ad_spend GROUP BY channel (4 values: email, sms, in_app, branch)
+- "by marketing channel" → ad_spend GROUP BY channel (see the CURRENT channel list in the schema context above — do not assume a fixed count)
 - "by transaction channel" → transactions GROUP BY channel (5 values: Mobile, Online, Phone, ATM, Branch)
 - "by preferred communication channel" → customers GROUP BY channel_preference (3 values: Digital, Branch, Hybrid)
 - "by segment" / "by customer segment" / "by persona" → if persona_assignments is in schema: JOIN persona_assignments GROUP BY persona_name (5 AI segments); else JOIN segment_assignments sa ON customer_id GROUP BY sa.segment_name (5 Meridian Bank segments: Retiree Depositor, Wealth Accumulator, Everyday Essential, Digital Trendsetter, At-Risk Saver). NEVER GROUP BY life_stage for segment questions.
 - "by CLV tier" / "by tier" → GROUP BY clv_tier (Bronze/Silver/Gold/Platinum) — only when tier is explicitly mentioned
-- "by marketing channel AND persona" (ad_spend only) → SELECT persona, channel, ... FROM ad_spend GROUP BY persona, channel (20 combinations: 5 personas × 4 channels). NEVER drop the channel column. NEVER join persona_assignments for ad_spend queries.
+- "by marketing channel AND persona" (ad_spend only) → SELECT persona, channel, ... FROM ad_spend GROUP BY persona, channel (5 personas × however many channels are in the CURRENT dataset — see schema context). NEVER drop the channel column. NEVER join persona_assignments for ad_spend queries.
 - "trend over time" → GROUP BY year, month ORDER BY year, month
 - ad_spend pre-computed columns (roas, roi_pct, cpa) are PER-ROW — always re-derive from SUM(revenue_usd)/NULLIF(SUM(spend_usd),0), NEVER use AVG(roas)
 - Target 5–15 rows for chart queries. Use LIMIT 10 for top-N, LIMIT 20 for two-dimension, LIMIT 24 for monthly.
@@ -1392,6 +1434,10 @@ def _build_prompt(question: str, history: List[Dict], schema: str) -> str:
 
 {history_block}USER QUESTION: {question}
 
+FORMATTING REMINDER: the "narrative" must read like a short structured report, never one dense paragraph —
+break it into multiple short paragraphs and/or "- " bullets, use "## " headers when it covers more than one
+part, and bold every number and name. A reader should be able to skim it in a few seconds.
+
 Generate the SQL, narrative, chart config, and follow-up questions as a JSON object."""
 
 
@@ -1443,7 +1489,12 @@ _NARRATIVE_SYSTEM = (
     "   If a column shows 'financial_details', say **financial_details** — not 'Financial Verification'.\n"
     "4. NEVER cite a number that is not in the table. NEVER compute percentages unless the table has them.\n"
     "5. Add a '**Recommendation:**' sentence, OR ANY strategy/action-item prose (\"consider offering...\", \"you should focus on...\", \"proactive outreach could help...\"), ONLY when the question itself is asking what to do — segment strategy, product fit, campaign targeting, retention/risk action. For a simple factual lookup (how many, count, list, name, which segment has the highest/lowest X), answer with ONLY the fact and directly-related context — 1-2 sentences, no action items, no advice, not even unlabeled. Example: Q: \"How many customers are in the At-Risk Defaulter segment?\" GOOD: \"**At-Risk Defaulter** has **800 customers**.\" BAD (do not do this): \"**At-Risk Defaulter** has **800 customers** — these borrowers show default warning signs, so consider offering payment plans or financial counseling to reduce churn.\" The BAD version answers a question that wasn't asked.\n"
-    "6. No section headers. Use bullet points only if listing 3+ items. Output plain text — NOT JSON.\n"
+    "6. If you're describing 3 or more distinct items (one line per channel/segment/product/customer/month, "
+    "etc.), open with ONE short sentence naming the single most important finding, then give every remaining "
+    "item its own '- ' bullet (bold the name and each number in it) — never cram 3+ items into one run-on "
+    "sentence full of commas. A single fact or a 1-2 item comparison stays plain sentences — don't force "
+    "bullets/headers onto something that short. No section headers (this narrative is always one topic). "
+    "Output plain text — NOT JSON.\n"
     "7. Format ALL monetary values (revenue, spend, income, balance, deposit, cost, amount) as **$X.XK** / **$X.XM** / **$X.XB** — NEVER write raw decimals. Examples: 135600.0 → **$135.6K**, 2300000 → **$2.3M**. Non-monetary metrics (ROAS, scores, counts) use bold without $: **5.69 ROAS**, **1,247 customers**.\n"
     "8. TRUST THE EXACT NUMBERS GIVEN — do NOT round or rescale a value to match what you'd 'expect' for that metric. A monthly marketing spend figure like 11606.40 is correctly **$11.6K** — do NOT inflate it to $1.1M just because a bank's total marketing budget 'sounds like' it should be in the millions. Convert the digits exactly as given (divide by 1,000 for K, by 1,000,000 for M) and nothing else — never add or remove a factor of 10, 100, or 1000 based on intuition about what the number 'should' be.\n"
     "9. NEVER state a population/segment-size count (e.g. \"which includes 5000 total customers\", \"out of 800 customers\") unless that exact count is a column value, a COUNT(*) result, or explicitly given to you as the true total. The number of rows shown is NOT the size of a segment/tier/category unless the table is actually grouped by that segment — if you don't know the true count, omit the sentence rather than inventing a plausible-sounding number.\n"
@@ -1453,6 +1504,20 @@ _NARRATIVE_SYSTEM = (
     "as a cold, context-free question when history is available.\n"
     "11. Never tell the reader to go check a dashboard, another tab, or another page — you have the data right "
     "here, so answer it directly.\n"
+    "EXAMPLE of rule 6 — 8 channels, WRONG (never write like this, it's a wall of text) vs RIGHT:\n"
+    "WRONG: \"**SMS** is your top performer with an **8.16 ROAS**, followed by **in_app** at **7.09 ROAS** and "
+    "**google_search_ads** at **5.5 ROAS**, while **branch** delivers **3.59 ROAS** on **$187.4K** spend...\"\n"
+    "RIGHT:\n"
+    "**SMS** leads with an **8.16 ROAS** this year, though it's a tiny-spend channel.\n\n"
+    "- **SMS**: **8.16 ROAS**\n"
+    "- **In_app**: **7.09 ROAS**\n"
+    "- **Google_search_ads**: **5.5 ROAS**\n"
+    "- **Branch**: **3.59 ROAS** — your highest-revenue channel at **$673.2K** on **$187.4K** spend\n"
+    "- **Podcast_audio_ads**: **2.92 ROAS**\n"
+    "- **Meta_social_ads**: **2.73 ROAS**\n"
+    "- **Youtube_ads**: **2.54 ROAS**\n"
+    "- **Email**: **0.0 ROAS** — **$58.1K** revenue with no tracked spend\n"
+    "Match this shape (one short lead sentence, then one bullet per item) whenever you list 3 or more items.\n"
     "FORBIDDEN phrases — NEVER write these (they signal hallucination and will be rejected):\n"
     "  'the data suggests', 'we can infer', 'it appears that', 'it seems that', 'may indicate',\n"
     "  'could indicate', 'further analysis', 'based on available data', 'the results indicate',\n"
@@ -1587,7 +1652,8 @@ def _generate_grounded_narrative(
         f"{count_note}{lead_note}\n"
         + (f"{agg_text}\n\n" if agg_text else "")
         + f"SQL result ({n_rows} row{'s' if n_rows != 1 else ''}):\n{table_text}\n\n"
-        "Write the narrative (3-5 sentences, plain text, no JSON):"
+        "Write the narrative (plain text, no JSON — a short lead sentence, then one '- ' bullet per item "
+        "if you're listing 3 or more; otherwise 1-3 plain sentences):"
     )
     try:
         from utils.claude_client import get_claude_client
@@ -1596,7 +1662,7 @@ def _generate_grounded_narrative(
             return client.generate_text(
                 prompt=prompt,
                 system=_NARRATIVE_SYSTEM,
-                max_tokens=400,
+                max_tokens=500,
                 temperature=0.1,
                 agent_name="chatbot",
                 call_type="narrative_grounding",
@@ -1609,7 +1675,7 @@ def _generate_grounded_narrative(
         return together_ai.generate_text(
             prompt=prompt,
             system_message=_NARRATIVE_SYSTEM,
-            max_tokens=400,
+            max_tokens=500,
             temperature=0.1,
             agent_name="chatbot",
             call_type="narrative_grounding",
@@ -3439,7 +3505,7 @@ def available_tables() -> List[Dict[str, Any]]:
     d = _meridian_dir()
     result = []
     for table, fname in TABLE_FILES:
-        p = _resolve_csv_path(d, fname)
+        p = _ACTIVE_AD_SPEND_PATH if (table == "ad_spend" and _ACTIVE_AD_SPEND_PATH is not None) else _resolve_csv_path(d, fname)
         if not p.is_file():
             continue
         cols = _columns_for(table)

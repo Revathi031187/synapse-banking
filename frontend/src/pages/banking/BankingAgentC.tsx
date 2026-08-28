@@ -2938,9 +2938,13 @@ export default function BankingAgentC() {
   }, [selectedCustomerId]);
 
   const { data: customersData, isError: customersError, isSuccess: customersSuccess, isLoading: customersLoading } = useQuery({
-    queryKey: ['banking-agent-a-customers', 500],
+    queryKey: ['banking-agent-a-customers', 5000],
     queryFn: async () => {
-      const res = await fetch(`${API_BASE}/api/banking/agent_a/customers?limit=500`);
+      // Full table, not a capped page — the search box below does its own
+      // client-side name/ID matching, so a cap silently hides every same-name
+      // customer past it (e.g. only 1 of 4 "Aaron Brown" rows would ever be
+      // searchable). Matches the limit BankingAgentD already uses.
+      const res = await fetch(`${API_BASE}/api/banking/agent_a/customers?limit=5000`);
       if (!res.ok) throw new Error('Failed to fetch customers');
       return res.json();
     },
@@ -2974,6 +2978,14 @@ export default function BankingAgentC() {
       return res.json();
     },
     enabled: !!selectedCustomerId,
+    // The app-wide QueryClient default (App.tsx) is staleTime: Infinity /
+    // refetchOnMount: false — without overriding those here, this query caches
+    // a customer's offer FOREVER in memory and never re-checks it, so factor
+    // weight changes, a re-run segmentation, or an Agent D directive applied
+    // later in the same session would keep showing the original, now-stale
+    // offer instead of what Agent C would compute right now.
+    staleTime: 0,
+    refetchOnMount: 'always',
   });
 
   const churnQueriesEnabled = customersSuccess && (customersData?.data?.customers?.length ?? 0) > 0;

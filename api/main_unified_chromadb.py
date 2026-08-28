@@ -9,6 +9,7 @@ Endpoints:
 """
 import sys
 import os
+import copy
 import json
 import asyncio
 import threading
@@ -3580,6 +3581,181 @@ class ChatAskRequest(BaseModel):
     history: Optional[List[Dict[str, Any]]] = None
 
 
+# ── Chatbot → Agent bridge ──────────────────────────────────────────────────
+# Thin, read-only wrappers the chatbot's router (utils/agent_chat_router.py)
+# calls to get a per-customer answer from Agent B/C/D — each reuses the exact
+# same underlying calls the real agent_b/c/d endpoints make, so a chat answer
+# never diverges from what those tabs would show for the same customer.
+
+def _chat_resolve_persona_customer_id(persona: str) -> Optional[str]:
+    """Resolve a persona NAME (as the chatbot sees it, e.g. "Wealth Accumulator")
+    or a raw cluster id to a representative customer_id.
+
+    Returns None (rather than guessing) when a partial name matches MORE THAN
+    ONE real persona — e.g. "Saver" matches both "Wealth Saver" and "At-Risk
+    Saver" in this dataset. Silently picking the first dict-order match here
+    previously caused the chatbot's Agent B/C answer to reflect the WRONG
+    persona for an ambiguous mention, showing numbers that looked "different
+    from Agent B/C" purely because it had quietly answered a different
+    customer/persona than the one asked about."""
+    persona = str(persona or "").strip()
+    if not persona:
+        return None
+    try:
+        int(persona)
+        return _resolve_persona_representative_customer_id(persona)
+    except ValueError:
+        pass
+    personas = (system_state['banking'].get('agent_a_results') or {}).get('personas') or {}
+    names = {
+        cid: ((p.get('persona_name') or p.get('name') or '') if isinstance(p, dict) else '')
+        for cid, p in personas.items()
+    }
+    exact = [cid for cid, name in names.items() if name and name.lower() == persona.lower()]
+    if len(exact) == 1:
+        return _resolve_persona_representative_customer_id(exact[0])
+    partial = [cid for cid, name in names.items() if name and persona.lower() in name.lower()]
+    if len(partial) == 1:
+        return _resolve_persona_representative_customer_id(partial[0])
+    return None
+
+
+async def _chat_run_agent_b(customer_id: str) -> Dict[str, Any]:
+    await init_banking_agent_b_async()
+    _sync_banking_cluster_column()
+    if banking_agent_b_chromadb is None:
+        return {"error": "Agent B is not initialized"}
+    params: Dict[str, Any] = {"customer_id": customer_id, "top_n": 5, "explain": True}
+    fw = system_state['banking'].get('agent_b_factor_weights_pct')
+    if fw:
+        params["factor_weights"] = fw
+    # Parity with the Recommender tab: it always applies any active Agent D
+    # supervisor directives (pin/boost/deprioritize) in customer mode — see
+    # BankingAgentB.tsx's `use_agent_d_directives: true`. Without this, the
+    # chatbot's answer would silently ignore a pin/boost the tab is honoring,
+    # showing a different #1 for the same customer.
+    ledger_row = system_state['banking'].get('agent_d_ledger', {}).get(str(customer_id).strip())
+    d = ledger_row.get('last_directives') if isinstance(ledger_row, dict) else None
+    if d and (
+        str(d.get('priority_pin_product_id') or '').strip()
+        or d.get('boost_product_ids')
+        or d.get('deprioritize_product_ids')
+    ):
+        params["supervisor_directives"] = d
+    try:
+        return banking_agent_b_chromadb.execute(params)
+    except Exception as e:
+        logger.warning("chat agent_b fetch failed for %s: %s", customer_id, e)
+        return {"error": str(e)}
+
+
+async def _chat_run_agent_c(customer_id: str) -> Dict[str, Any]:
+    try:
+        await init_banking_agent_b_async()
+        _sync_banking_cluster_column()
+        customer_details = banking_agent_a.get_customer_details(customer_id)
+        all_recs, exec_raw = _banking_all_recs_for_agent_c(customer_id)
+        if not all_recs:
+            all_recs = banking_agent_b.get_all_recommendations(customer_id) if banking_agent_b else {}
+            exec_raw = []
+        if not all_recs or all_recs.get("error"):
+            return {"error": (all_recs or {}).get("error", "No recommendations available for this customer")}
+        churn_score = churn_category = None
+        try:
+            df_churn = _get_churn_df()
+            row = df_churn[df_churn["customer_id"].astype(str) == str(customer_id)]
+            if len(row) > 0:
+                r = row.iloc[0]
+                churn_score = float(r.get("churn_risk_score", 0))
+                churn_category = str(r.get("churn_risk_category", ""))
+        except Exception:
+            pass
+        return banking_agent_c.get_one_best_offer(
+            customer_id=customer_id,
+            customer_details=customer_details,
+            all_recommendations=all_recs,
+            churn_risk_score=churn_score,
+            churn_category=churn_category,
+            agent_b_reference_recs=exec_raw if exec_raw else None,
+        )
+    except ValueError as e:
+        return {"error": str(e)}
+    except Exception as e:
+        logger.warning("chat agent_c fetch failed for %s: %s", customer_id, e)
+        return {"error": str(e)}
+
+
+async def _chat_run_agent_d(customer_id: str) -> Dict[str, Any]:
+    """Read-only: mirrors /api/banking/agent_d/orchestrate but works on a COPY
+    of the customer's ledger, so a chat question ("what would you show them
+    next") never mutates the live impression ledger the way an actual
+    UI-driven visit/orchestrate call is meant to."""
+    try:
+        if not system_state['banking']['agent_a_results']:
+            return {"error": "Run Agent A first."}
+        await init_banking_agent_b_async()
+        if banking_agent_b is None:
+            return {"error": "Agent B not initialized"}
+
+        ledger_store = system_state['banking'].setdefault('agent_d_ledger', {})
+        ledger = copy.deepcopy(ledger_store.get(customer_id) or
+                                {'impressions': {}, 'last_session_product_ids': [], 'last_directives': {}})
+
+        all_recs, _ = _chromadb_execute_all_recs_and_raw(customer_id)
+        if not all_recs:
+            all_recs = banking_agent_b.get_all_recommendations(customer_id)
+        if not all_recs or all_recs.get('error'):
+            return {"error": (all_recs or {}).get('error', 'Recommendations failed')}
+
+        all_recs_for_c, exec_raw = _banking_all_recs_for_agent_c(customer_id)
+        if not all_recs_for_c:
+            all_recs_for_c = banking_agent_b.get_all_recommendations(customer_id)
+            exec_raw = []
+
+        _sync_banking_cluster_column()
+        customer_details = banking_agent_a.get_customer_details(customer_id)
+        churn_score = churn_category = None
+        try:
+            df_churn = _get_churn_df()
+            row = df_churn[df_churn["customer_id"].astype(str) == str(customer_id)]
+            if len(row) > 0:
+                r = row.iloc[0]
+                churn_score = float(r.get('churn_risk_score', 0))
+                churn_category = str(r.get('churn_risk_category', ''))
+        except Exception:
+            pass
+
+        products_df = getattr(banking_agent_a, "products_df", None)
+        if products_df is None:
+            products_df = system_state["banking"].get("products")
+
+        agent_c_result = banking_agent_c.get_one_best_offer(
+            customer_id=customer_id,
+            customer_details=customer_details,
+            all_recommendations=all_recs_for_c,
+            churn_risk_score=churn_score,
+            churn_category=churn_category,
+            agent_b_reference_recs=exec_raw if exec_raw else None,
+        )
+        pname = (customer_details or {}).get('persona') or ''
+        return banking_agent_d.orchestrate(
+            customer_id=customer_id,
+            ledger=ledger,
+            saved_goals=[],
+            incomplete_applications=[],
+            clicked_product_ids=[],
+            products_df=products_df,
+            all_recs=all_recs,
+            agent_c_result=agent_c_result,
+            persona_name=str(pname),
+        )
+    except ValueError as e:
+        return {"error": str(e)}
+    except Exception as e:
+        logger.warning("chat agent_d fetch failed for %s: %s", customer_id, e)
+        return {"error": str(e)}
+
+
 @app.get("/api/banking/chat/tables")
 async def chat_tables():
     """List all available Meridian Bank tables accessible by the chatbot."""
@@ -3684,11 +3860,14 @@ async def chat_funnel():
 @app.post("/api/banking/chat/ask")
 async def chat_ask(body: ChatAskRequest):
     """
-    Advanced chatbot endpoint. Converts the question to DuckDB SQL,
-    executes it against local Meridian Bank CSVs, returns table + chart config.
+    Segment AI chatbot endpoint. Routes each question to whichever of
+    SQL / Agent A / B / C / D (possibly more than one) can answer it —
+    see utils/agent_chat_router.py — falling back to the DuckDB text-to-SQL
+    pipeline unchanged for ordinary analytics questions.
     Automatically loads Agent A persona assignments if available.
     """
-    from utils.chat_sql_engine import ask_chatbot, register_persona_results
+    from utils.agent_chat_router import route_and_answer
+    from utils.chat_sql_engine import register_persona_results, set_active_ad_spend_path
 
     q = (body.question or "").strip()
     if not q:
@@ -3703,8 +3882,25 @@ async def chat_ask(body: ChatAskRequest):
         except Exception:
             pass  # non-fatal — chatbot still works with demographic columns
 
+    # Keep the chatbot's ad_spend view in sync with whichever version (v1/v2)
+    # the Data Loader actually has active this session — checked on every
+    # question (cheap) rather than only at load time, so this can never drift.
     try:
-        result = ask_chatbot(q, history=body.history or [])
+        set_active_ad_spend_path(_resolve_ad_spend_dataset().get("path"))
+    except Exception:
+        logger.warning("chat_ask: could not sync active ad_spend dataset", exc_info=True)
+
+    try:
+        result = await route_and_answer(
+            q,
+            history=body.history or [],
+            has_agent_a_results=bool(system_state["banking"].get("agent_a_results")),
+            personas=agent_a.get("personas") or {},
+            resolve_persona_customer_id=_chat_resolve_persona_customer_id,
+            run_agent_b=_chat_run_agent_b,
+            run_agent_c=_chat_run_agent_c,
+            run_agent_d=_chat_run_agent_d,
+        )
     except Exception as e:
         logger.exception("chat_ask failed")
         raise HTTPException(status_code=500, detail=str(e))

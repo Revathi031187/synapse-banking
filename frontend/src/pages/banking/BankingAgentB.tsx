@@ -144,7 +144,11 @@ const MATCH_LEVEL_COLORS = {
 };
 
 type BankingAgentBUiState = {
-  scoringMethod: 'rules' | 'logit';
+  // Locked to 'rules' — the Hybrid ML toggle was removed since rule-based
+  // scoring is the only method actually in use; narrowing the type (rather
+  // than just no longer rendering a way to change it) means TypeScript itself
+  // guarantees nothing can set this to 'logit' again by accident.
+  scoringMethod: 'rules';
   mode: 'persona' | 'customer';
   persona: string;
   customerId: string;
@@ -212,6 +216,10 @@ function mergeAgentBUi(saved: Partial<BankingAgentBUiState>, def: BankingAgentBU
     // Always reset to the canonical default — ignore any old value in session storage
     topN: def.topN,
     weightsAccordionOpen: def.weightsAccordionOpen,
+    // Always 'rules' — a session-storage value of 'logit' saved before the
+    // Hybrid ML toggle was removed would otherwise survive this merge and
+    // re-enable dead 'logit'-only branches at runtime despite the narrowed type.
+    scoringMethod: 'rules',
     factorWeights: { ...BANKING_DEFAULTS_PERCENT, ...def.factorWeights, ...saved.factorWeights },
     factorLabels: { ...def.factorLabels, ...saved.factorLabels },
     expandedExplanations: saved.expandedExplanations ?? def.expandedExplanations,
@@ -405,7 +413,12 @@ export default function BankingAgentB() {
   const customersQuery = useQuery({
     queryKey: ['banking-customers'],
     queryFn: async () => {
-      const response = await fetch(`${API_BASE_URL}/api/banking/agent_a/customers?limit=100`);
+      // Fetch the full customer table (not a capped page) — CustomerSearchSelect
+      // does its own client-side name/ID matching over whatever it's given, so a
+      // capped ?limit here silently hides every same-name customer past the cap
+      // (e.g. only 1 of 4 "Aaron Brown" rows would ever be searchable). Matches
+      // the limit BankingAgentD already uses for the same search box.
+      const response = await fetch(`${API_BASE_URL}/api/banking/agent_a/customers?limit=5000`);
       if (!response.ok) throw new Error('Failed to fetch customers');
       return response.json();
     },
@@ -714,6 +727,26 @@ export default function BankingAgentB() {
     // eslint-disable-next-line react-hooks/exhaustive-deps -- fires once per deep link, not on every mutation identity change
   }, [searchParams]);
 
+  // On mount, if a customer/persona was already selected in a prior session
+  // (restored from sessionStorage) and its recommendations are showing from
+  // cached `executeData`, silently re-run once to confirm those numbers still
+  // match the CURRENT backend — factor weights, Agent A's segmentation, or the
+  // loaded dataset can all change between sessions (e.g. after a backend
+  // restart resets factor weights to default) while the cached executeData
+  // would otherwise keep displaying the old, now-inconsistent scores
+  // indefinitely until the user happens to click Run again themselves.
+  const didAutoRefreshStaleResults = useRef(false);
+  useEffect(() => {
+    if (didAutoRefreshStaleResults.current) return;
+    didAutoRefreshStaleResults.current = true;
+    if (searchParams.get('persona') !== null) return; // deep-link effect above already owns this mount
+    const hasSelection = (mode === 'customer' && !!customerId) || (mode === 'persona' && !!persona);
+    if (hasSelection && executeData) {
+      executeMutation.mutate();
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- fire once on mount only, not on every field change
+  }, []);
+
   const isFirstContextEffect = useRef(true);
   // Only clear when customer/persona/mode changes — do NOT depend on `executeMutation`:
   // its object identity updates after each mutate (success/pending), which would run
@@ -854,48 +887,6 @@ export default function BankingAgentB() {
             <BarChart2 className="w-5 h-5" />
             View Macro Segments
           </Link>
-        </div>
-
-        {/* Strategy tabs */}
-        <div className="flex border-b border-gray-200 px-2">
-          <button
-            type="button"
-            onClick={() => setUi((p) => ({ ...p, scoringMethod: 'rules' }))}
-            className={`relative px-5 py-3.5 font-semibold text-sm md:text-base transition-all border-b-2 -mb-px flex items-center gap-2 flex-wrap ${
-              scoringMethod === 'rules'
-                ? 'text-blue-600 border-blue-600 bg-blue-50/50'
-                : 'text-gray-500 border-transparent hover:text-gray-800 hover:bg-gray-50'
-            }`}
-          >
-            Rule-Based Scoring
-            <span className="text-xs px-2 py-0.5 rounded-full bg-gray-200 text-gray-700 font-medium">
-              Banking 12-Factor
-            </span>
-            {scoringMethod === 'rules' && (
-              <span className="text-[10px] uppercase tracking-wide px-2 py-0.5 rounded-full bg-blue-600 text-white font-bold">
-                Current
-              </span>
-            )}
-          </button>
-          <button
-            type="button"
-            onClick={() => setUi((p) => ({ ...p, scoringMethod: 'logit' }))}
-            className={`relative px-5 py-3.5 font-semibold text-sm md:text-base transition-all border-b-2 -mb-px flex items-center gap-2 flex-wrap ${
-              scoringMethod === 'logit'
-                ? 'text-purple-600 border-purple-600 bg-purple-50/50'
-                : 'text-gray-500 border-transparent hover:text-gray-800 hover:bg-gray-50'
-            }`}
-          >
-            Hybrid ML Model
-            <span className="text-xs px-2 py-0.5 rounded-full bg-gradient-to-r from-purple-500 to-fuchsia-500 text-white font-medium">
-              50% ML + 50% Rules
-            </span>
-            {scoringMethod === 'logit' && (
-              <span className="text-[10px] uppercase tracking-wide px-2 py-0.5 rounded-full bg-purple-600 text-white font-bold">
-                Current
-              </span>
-            )}
-          </button>
         </div>
 
         <div className="p-6 space-y-6">
@@ -1218,21 +1209,21 @@ export default function BankingAgentB() {
       {/* Loading State */}
       {executeMutation.isPending && (
         <div className={`border rounded-lg p-6 text-center ${
-          scoringMethod === 'logit' 
-            ? 'bg-purple-50 border-purple-200' 
+          false
+            ? 'bg-purple-50 border-purple-200'
             : 'bg-blue-50 border-blue-200'
         }`}>
           <div className={`animate-spin rounded-full h-12 w-12 border-b-2 mx-auto mb-4 ${
-            scoringMethod === 'logit' ? 'border-purple-600' : 'border-blue-600'
+            false ? 'border-purple-600' : 'border-blue-600'
           }`}></div>
           <p className={`font-medium ${
-            scoringMethod === 'logit' ? 'text-purple-700' : 'text-blue-700'
+            false ? 'text-purple-700' : 'text-blue-700'
           }`}>
-            {scoringMethod === 'logit' 
+            {false
               ? `Running Banking Hybrid ML model for ${mode === 'persona' ? persona : 'customer'}...`
               : `Calculating personalized banking scores for ${mode === 'persona' ? persona : 'customer'}...`}
           </p>
-          {scoringMethod === 'logit' && (
+          {false && (
             <p className="text-sm text-purple-600 mt-2">
               AI learning from banking transaction patterns
             </p>
@@ -1269,11 +1260,11 @@ export default function BankingAgentB() {
                 </div>
               </div>
               <div className={`px-4 py-2 rounded-full text-sm font-semibold ${
-                scoringMethod === 'logit'
+                false
                   ? 'bg-gradient-to-r from-purple-500 to-pink-500 text-white'
                   : 'bg-blue-100 text-blue-800'
               }`}>
-                {scoringMethod === 'logit'
+                {false
                   ? 'Hybrid ML (50% ML + 50% Banking Rules)'
                   : 'Banking 12-Factor Scoring'}
               </div>
@@ -1359,7 +1350,7 @@ export default function BankingAgentB() {
             )}
 
             {/* How Hybrid / ML Works (only when Hybrid ML is selected and we have methodology) */}
-            {scoringMethod === 'logit' && (scoringMethodology.formula || scoringMethodology.how_ml_probability_works) && (
+            {false && (scoringMethodology.formula || scoringMethodology.how_ml_probability_works) && (
               <details className="mt-4 p-4 bg-gradient-to-r from-purple-50 to-pink-50 rounded-lg border border-purple-200">
                 <summary className="cursor-pointer font-semibold text-purple-900 flex items-center gap-2">
                   📐 How the hybrid algorithm works (50% ML + 50% rules)
@@ -2076,7 +2067,7 @@ export default function BankingAgentB() {
                                   </div>
                                 </div>
                                 );
-                              })() : scoringMethod === 'logit' && rec.scoring_breakdown ? (
+                              })() : false && rec.scoring_breakdown ? (
                                 /* HYBRID ML MODEL EXPLANATION */
                                 <div>
                                   <p className="text-xs font-semibold text-purple-900 mb-3">

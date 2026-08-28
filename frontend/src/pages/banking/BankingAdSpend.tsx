@@ -616,7 +616,7 @@ function drawFunnel(canvas: HTMLCanvasElement, m: ChannelMetrics, color: string,
 
 // ── Seasonality sparkline strip ────────────────────────────────────────────────
 
-function drawSparkline(canvas: HTMLCanvasElement, pts: MonthlyPoint[], color: string) {
+function drawSparkline(canvas: HTMLCanvasElement, pts: MonthlyPoint[], color: string, hoverIdx: number | null = null) {
   if (!pts || pts.length === 0) return;
   const dpr = window.devicePixelRatio || 1;
   const W = canvas.offsetWidth || 120, H = canvas.offsetHeight || 48;
@@ -631,6 +631,14 @@ function drawSparkline(canvas: HTMLCanvasElement, pts: MonthlyPoint[], color: st
   const pw = W - PAD.left - PAD.right, ph = H - PAD.top - PAD.bottom;
   const x = (i: number) => PAD.left + (pw * i) / (n - 1);
   const y = (v: number) => PAD.top + ph - ((v - minV) / range) * ph;
+
+  // Month gridlines — light dashed vertical line at each of the 12 months
+  ctx.save();
+  ctx.setLineDash([2, 2]); ctx.strokeStyle = '#e5e7eb'; ctx.lineWidth = 1;
+  for (let i = 0; i < n; i++) {
+    ctx.beginPath(); ctx.moveTo(x(i), PAD.top); ctx.lineTo(x(i), PAD.top + ph); ctx.stroke();
+  }
+  ctx.restore();
 
   // Area fill
   ctx.beginPath();
@@ -649,6 +657,30 @@ function drawSparkline(canvas: HTMLCanvasElement, pts: MonthlyPoint[], color: st
   const peakIdx = vals.indexOf(maxV);
   ctx.beginPath(); ctx.arc(x(peakIdx), y(maxV), 3, 0, Math.PI * 2);
   ctx.fillStyle = color; ctx.fill(); ctx.strokeStyle = '#fff'; ctx.lineWidth = 1; ctx.stroke();
+
+  // Hover guide line + dot + tooltip
+  if (hoverIdx !== null && hoverIdx >= 0 && hoverIdx < n) {
+    const hx = x(hoverIdx), hy = y(vals[hoverIdx]);
+
+    ctx.save();
+    ctx.setLineDash([3, 3]); ctx.strokeStyle = color + '90'; ctx.lineWidth = 1;
+    ctx.beginPath(); ctx.moveTo(hx, PAD.top); ctx.lineTo(hx, PAD.top + ph); ctx.stroke();
+    ctx.restore();
+
+    ctx.beginPath(); ctx.arc(hx, hy, 3.2, 0, Math.PI * 2);
+    ctx.fillStyle = color; ctx.fill(); ctx.strokeStyle = '#fff'; ctx.lineWidth = 1.2; ctx.stroke();
+
+    const label = `${pts[hoverIdx].month_name} · ${pts[hoverIdx].roas.toFixed(1)}×`;
+    ctx.font = 'bold 8.5px system-ui,sans-serif';
+    const tipW = ctx.measureText(label).width + 10;
+    const tipH = 13;
+    const tipX = Math.max(2, Math.min(W - tipW - 2, hx - tipW / 2));
+    const tipY = 1;
+    ctx.fillStyle = 'rgba(15,23,42,0.92)';
+    roundRect(ctx, tipX, tipY, tipW, tipH, 3); ctx.fill();
+    ctx.fillStyle = '#fff'; ctx.textAlign = 'left';
+    ctx.fillText(label, tipX + 5, tipY + 9.5);
+  }
 }
 
 function SeasonalityStrip({ allMonthly, channels, ownedChannels, personaData }: {
@@ -659,14 +691,28 @@ function SeasonalityStrip({ allMonthly, channels, ownedChannels, personaData }: 
 }) {
   // Map-based, not fixed keys — the channel set varies by dataset (v1: 4, v2: 8).
   const canvasRefs = useRef(new Map<string, HTMLCanvasElement | null>());
+  const [hover, setHover] = useState<{ chId: string; idx: number } | null>(null);
 
   useEffect(() => {
     channels.forEach(ch => {
       const el = canvasRefs.current.get(ch.id);
       const pts = allMonthly[ch.id] ?? [];
-      if (el && pts.length) drawSparkline(el, pts, ch.color);
+      if (el && pts.length) drawSparkline(el, pts, ch.color, hover?.chId === ch.id ? hover.idx : null);
     });
-  }, [allMonthly, channels]);
+  }, [allMonthly, channels, hover]);
+
+  // Map mouse X to the nearest month index — mirrors the hit-testing pattern
+  // used for the main trend chart's hover (ChannelCard.handleMouseMove).
+  const handleSparklineMouseMove = (chId: string, pts: MonthlyPoint[]) => (e: React.MouseEvent<HTMLCanvasElement>) => {
+    if (pts.length === 0) return;
+    const rect = e.currentTarget.getBoundingClientRect();
+    const PAD_LEFT = 6, PAD_RIGHT = 6;
+    const pw = rect.width - PAD_LEFT - PAD_RIGHT;
+    const rawX = e.clientX - rect.left - PAD_LEFT;
+    const idx = Math.round((rawX / pw) * (pts.length - 1));
+    setHover(idx >= 0 && idx < pts.length ? { chId, idx } : null);
+  };
+  const handleSparklineMouseLeave = () => setHover(null);
 
   const peakMonth = (pts: MonthlyPoint[]) => {
     if (!pts.length) return '—';
@@ -694,7 +740,12 @@ function SeasonalityStrip({ allMonthly, channels, ownedChannels, personaData }: 
                 </span>
                 <span className="text-[10px] text-gray-400">avg {avg > 0 ? avg.toFixed(1) + '×' : '—'}</span>
               </div>
-              <canvas ref={el => { canvasRefs.current.set(ch.id, el); }} style={{ width: '100%', height: 48, display: 'block' }}/>
+              <canvas
+                ref={el => { canvasRefs.current.set(ch.id, el); }}
+                onMouseMove={handleSparklineMouseMove(ch.id, pts)}
+                onMouseLeave={handleSparklineMouseLeave}
+                style={{ width: '100%', height: 48, display: 'block', cursor: 'crosshair' }}
+              />
               <div className="flex justify-between text-[9.5px] text-gray-400 mt-0.5">
                 <span>Jan</span>
                 <span className="font-medium" style={{ color: ch.color }}>↑ {peak}</span>
@@ -1327,7 +1378,7 @@ function exportPersonaCSV(persona: string, personaData: Record<string, ChannelMe
 
 export default function BankingAdSpend() {
   const [selectedPersona, setSelectedPersona] = useState('Digital Native');
-  const [howOpen, setHowOpen] = useState(true);
+  const [howOpen, setHowOpen] = useState(false);
 
   const { data, isLoading, isError, refetch } = useQuery<AdSpendData>({
     queryKey: ['banking-ad-spend-metrics'],
@@ -1491,7 +1542,7 @@ export default function BankingAdSpend() {
         <div className="bg-slate-50 border-b border-slate-200">
           <button onClick={() => setHowOpen(o => !o)}
             className="w-full px-5 py-4 flex items-center justify-between hover:bg-slate-100/60 transition-colors">
-            <p className="text-[11px] font-bold text-slate-700 uppercase tracking-wide">How this recommendation is calculated</p>
+            <p className="text-[11px] font-bold text-slate-700 uppercase tracking-wide">How this recommendation is calculated?</p>
             <ChevronDown className={`w-4 h-4 text-slate-500 flex-shrink-0 transition-transform ${howOpen ? 'rotate-180' : ''}`} />
           </button>
           {howOpen && (

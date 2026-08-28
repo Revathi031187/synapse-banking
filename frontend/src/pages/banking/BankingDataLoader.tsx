@@ -5,7 +5,7 @@ import { motion, AnimatePresence } from 'framer-motion';
 import { useState } from 'react';
 import {
   Database, CheckCircle2, AlertCircle, Eye, X, Upload,
-  Play, Users, TrendingUp, BarChart3, Download, Sparkles, ArrowRight
+  Play, Users, TrendingUp, BarChart3, Download, Sparkles, ArrowRight, ChevronDown
 } from 'lucide-react';
 import {
   BarChart,
@@ -60,6 +60,58 @@ function groupDatasetTables(tables: any[]): DatasetTableGroup[] {
     g.displayName = canonical.display_name.replace(/\s*\(v\d+[^)]*\)\s*$/i, '').trim();
   }
   return order.map(base => groups.get(base)!);
+}
+
+// Modern pill-style replacement for a native `<select>` — used to pick which
+// version of a multi-version dataset (e.g. Ad Spend Monthly v1/v2) is active.
+function VersionDropdown({
+  versions, activeName, onSelect,
+}: {
+  versions: DatasetTableVersion[]; activeName: string; onSelect: (name: string) => void;
+}) {
+  const [open, setOpen] = useState(false);
+  const rootRef = useRef<HTMLDivElement>(null);
+  const active = versions.find(v => v.name === activeName) ?? versions[0];
+  const latestNum = versions[versions.length - 1].versionNum;
+
+  useEffect(() => {
+    if (!open) return;
+    const onDocMouseDown = (e: MouseEvent) => {
+      if (rootRef.current && !rootRef.current.contains(e.target as Node)) setOpen(false);
+    };
+    document.addEventListener('mousedown', onDocMouseDown);
+    return () => document.removeEventListener('mousedown', onDocMouseDown);
+  }, [open]);
+
+  return (
+    <div ref={rootRef} className="relative inline-block" onClick={(e) => e.stopPropagation()}>
+      <button
+        type="button"
+        onClick={() => setOpen(o => !o)}
+        className="flex items-center gap-1 text-[11px] font-semibold text-blue-700 bg-blue-50 border border-blue-200 rounded-full pl-2 pr-1.5 py-0.5 hover:bg-blue-100 hover:border-blue-300 transition-colors"
+      >
+        {active.versionLabel}{active.versionNum === latestNum ? ' (latest)' : ''}
+        <ChevronDown className={`w-3 h-3 transition-transform duration-150 ${open ? 'rotate-180' : ''}`} />
+      </button>
+      {open && (
+        <div className="absolute z-20 left-0 mt-1 min-w-[8rem] bg-white rounded-lg border border-gray-200 shadow-lg py-1">
+          {versions.map(v => (
+            <button
+              key={v.name}
+              type="button"
+              onClick={() => { onSelect(v.name); setOpen(false); }}
+              className="w-full flex items-center justify-between gap-3 px-2.5 py-1.5 text-[11px] text-left hover:bg-blue-50 transition-colors"
+            >
+              <span className={v.name === activeName ? 'text-blue-700 font-semibold' : 'text-gray-700 font-medium'}>
+                {v.versionLabel}{v.versionNum === latestNum ? ' (latest)' : ''}
+              </span>
+              {v.name === activeName && <CheckCircle2 className="w-3.5 h-3.5 text-blue-600 flex-shrink-0" />}
+            </button>
+          ))}
+        </div>
+      )}
+    </div>
+  );
 }
 
 export default function BankingDataLoader() {
@@ -433,17 +485,11 @@ export default function BankingDataLoader() {
                                 </div>
                                 {g.versions.length > 1 && (
                                   <div className="mb-1.5" onClick={(e) => e.stopPropagation()}>
-                                    <select
-                                      value={activeName}
-                                      onChange={(e) => setGroupVersion(g.base, e.target.value)}
-                                      className="text-[11px] font-semibold text-blue-700 bg-blue-50 border border-blue-200 rounded px-1.5 py-0.5"
-                                    >
-                                      {g.versions.map(v => (
-                                        <option key={v.name} value={v.name}>
-                                          {v.versionLabel}{v.versionNum === g.versions[g.versions.length - 1].versionNum ? ' (latest)' : ''}
-                                        </option>
-                                      ))}
-                                    </select>
+                                    <VersionDropdown
+                                      versions={g.versions}
+                                      activeName={activeName}
+                                      onSelect={(name) => setGroupVersion(g.base, name)}
+                                    />
                                   </div>
                                 )}
                                 <div className="text-xs text-gray-600">
