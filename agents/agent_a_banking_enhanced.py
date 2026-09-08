@@ -319,10 +319,25 @@ class AgentA_Banking_Enhanced:
         """
         Generate segment name + plain-English description via LLM.
         Returns (name: str, description: str). Falls back to canonical name on failure.
+
+        Reuses a previously-generated name for this same archetype for
+        CACHE_TTL_HOURS (utils/segment_name_cache.py) instead of re-generating
+        one on every re-run — archetype_type is a stable identity for "this
+        same segment" across runs regardless of n_clusters (see
+        _relabel_clusters_to_archetypes), so this is safe even when the
+        underlying cluster membership/stats shift slightly run to run.
         """
         import time
+        from utils.segment_name_cache import get_cached_name, save_name
         extra = extra_stats or {}
         archetype_type = extra.get('archetype_type', '')
+        _cache_key = archetype_type or f"cluster_{cluster_id}"
+
+        _cached = get_cached_name('banking_macro', _cache_key)
+        if _cached and _cached['name'] not in (used_names or set()):
+            characteristics['_segment_name_source'] = _cached['source']
+            characteristics['_segment_description'] = _cached['description']
+            return _cached['name'], _cached['description']
 
         if CLAUDE_AVAILABLE and get_claude_client:
             try:
@@ -357,6 +372,7 @@ class AgentA_Banking_Enhanced:
                         logger.info(f"LLM segment: '{llm_name}' ({archetype_type}, {duration_ms}ms)")
                         characteristics['_segment_name_source'] = 'llm'
                         characteristics['_segment_description'] = llm_desc
+                        save_name('banking_macro', _cache_key, llm_name, llm_desc, 'llm')
                         return llm_name, llm_desc
             except Exception as e:
                 logger.warning(f"Claude segment profile failed, using fallback: {e}")
@@ -369,6 +385,7 @@ class AgentA_Banking_Enhanced:
         characteristics['_segment_name_source'] = 'rule_based'
         desc = f"{fallback_name} — {archetype_type or primary_trait} customer group."
         characteristics['_segment_description'] = desc
+        save_name('banking_macro', _cache_key, fallback_name, desc, 'rule_based')
         return fallback_name, desc
 
     def _generate_dynamic_segment_name(self, characteristics, percentile, primary_trait, avg_transactions_real, cluster_id=None, used_names=None):
@@ -1769,7 +1786,12 @@ class AgentA_Banking_Enhanced:
         else:
             cluster_id = 0
 
-        persona = self.personas.get(cluster_id, {})
+        # self.personas is keyed by int right after a fresh Agent A run, but by
+        # STRING once restored from the on-disk JSON cache (JSON object keys
+        # are always strings) — try both so a persona lookup never silently
+        # misses and falls back to "Unknown" just because of which path
+        # populated it this process.
+        persona = self.personas.get(cluster_id) or self.personas.get(str(cluster_id)) or {}
         
         def _safe_str(val, default=''):
             if val is None:

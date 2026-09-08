@@ -326,6 +326,12 @@ system_state = {
         '_agent_d_csv_loaded': False,
         'dashboard_persona_freq_recs_cache': {},  # (cluster_id, weights_sig, agent_a_last_refreshed, top_n) -> frequency-ranked recommendations
         'active_extra_tables': None,  # None until an explicit POST /datasets/load — set(table_name) of extra tables the user chose to load
+        'transactions_download': {
+            'status': 'idle',  # idle | downloading | complete | error
+            'downloaded_bytes': 0,
+            'total_bytes': None,  # None when the source doesn't report a size
+            'error': None,
+        },
     }
 }
 
@@ -371,6 +377,14 @@ _AD_SPEND_V2_CHANNELS = [
 ]
 _AD_SPEND_V2_OWNED_CHANNELS = {"email"}  # spend-free — excluded from ROAS/optimization math
 
+# Real channels in the CSVs that are permanently hidden from the website —
+# not just one chart section. Filtered out at the single choke point every
+# /api/banking/ad_spend/* endpoint reads through (_resolve_ad_spend_dataset),
+# so no per-endpoint/per-component filtering can miss one and let them leak
+# back in. The raw CSV rows are untouched (chat_sql_engine reads the file
+# directly, independent of this) — only what this app surfaces is affected.
+_AD_SPEND_HIDDEN_CHANNELS = {"in_app", "branch"}
+
 _ad_spend_dataset_cache: Optional[dict] = None  # resolved once per process
 
 
@@ -391,6 +405,25 @@ def _valid_ad_spend_csv(path: Path, expected_channels: list) -> bool:
 
 def _resolve_ad_spend_dataset() -> dict:
     """
+    Public entrypoint — same contract as _resolve_ad_spend_dataset_raw() below,
+    minus any channel in _AD_SPEND_HIDDEN_CHANNELS. Every endpoint should call
+    this, never the _raw version, so a hidden channel can never reappear by
+    one call site forgetting to filter it.
+    """
+    raw = _resolve_ad_spend_dataset_raw()
+    if not raw.get("channels"):
+        return raw
+    owned = raw["owned_channels"]
+    return {
+        **raw,
+        "channels": [c for c in raw["channels"] if c not in _AD_SPEND_HIDDEN_CHANNELS],
+        "owned_channels": (owned - _AD_SPEND_HIDDEN_CHANNELS) if isinstance(owned, set)
+                          else set(owned) - _AD_SPEND_HIDDEN_CHANNELS,
+    }
+
+
+def _resolve_ad_spend_dataset_raw() -> dict:
+    """
     Decide which ad-spend CSV backs /api/banking/ad_spend/* this session, and
     cache the result so the file-exists check (and any generation attempt)
     only happens once per process — same caching shape as
@@ -399,7 +432,9 @@ def _resolve_ad_spend_dataset() -> dict:
     Returns {"path": Path|None, "version": "v1"|"v2"|None, "channels": [...],
              "owned_channels": {...}, "error": None|str}. `error` is only set
     when AD_SPEND_DATASET_PREFERENCE == "v1" and v1 itself is unusable (the
-    one case that must NOT be silently substituted).
+    one case that must NOT be silently substituted). Callers should use
+    _resolve_ad_spend_dataset() above, not this directly — this returns every
+    real channel in the file, including ones the website permanently hides.
     """
     global _ad_spend_dataset_cache
     if _ad_spend_dataset_cache is not None:
@@ -2980,6 +3015,78 @@ async def view_banking_dataset_table(dataset_name: str, table_name: str):
         raise HTTPException(status_code=500, detail=str(e))
 
 
+def _run_transactions_download_background():
+    """
+    Background worker for the explicit "Download" button on the transactions.csv
+    card in the Data Loader — mirrors _run_agent_a_background's status/progress
+    pattern. Delegates to the exact same ensure_csv() fallback chain every other
+    caller (Agent A, Agent B, the chat engine, /datasets/load) already uses, so
+    once this completes the file is cached at the same /tmp path they all
+    check first — nothing downstream needs to download it again.
+    """
+    from utils.large_file_loader import ensure_csv
+    state = system_state['banking']['transactions_download']
+    try:
+        state['status'] = 'downloading'
+        state['downloaded_bytes'] = 0
+        state['total_bytes'] = None
+        state['error'] = None
+
+        def _on_progress(downloaded: int, total):
+            state['downloaded_bytes'] = downloaded
+            state['total_bytes'] = total
+
+        failure_reason = {'text': None}
+
+        def _on_error(reason: str):
+            failure_reason['text'] = reason
+
+        data_path = _banking_fmb_path()
+        transactions_file = data_path / "transactions.csv"
+        resolved = ensure_csv(transactions_file, on_progress=_on_progress, on_error=_on_error, allow_download=True)
+        if resolved.exists():
+            size = resolved.stat().st_size
+            state['downloaded_bytes'] = size
+            state['total_bytes'] = size
+            state['status'] = 'complete'
+        else:
+            state['status'] = 'error'
+            state['error'] = failure_reason['text'] or (
+                "Download failed for an unknown reason — check server logs."
+            )
+    except Exception as exc:
+        logger.exception("transactions.csv download failed")
+        state['status'] = 'error'
+        state['error'] = str(exc)
+
+
+@app.post("/api/banking/datasets/transactions/download")
+async def start_transactions_download(background_tasks: BackgroundTasks):
+    """Explicitly trigger the transactions.csv download from the Data Loader,
+    independent of /datasets/load and Agent A — see _run_transactions_download_background."""
+    from utils.large_file_loader import _TMP_BASE as _txn_tmp_base
+    data_path = _banking_fmb_path()
+    transactions_file = data_path / "transactions.csv"
+    tmp_path = _txn_tmp_base / "transactions.csv"
+
+    state = system_state['banking']['transactions_download']
+    if transactions_file.exists() or tmp_path.exists():
+        size = (transactions_file if transactions_file.exists() else tmp_path).stat().st_size
+        state.update({'status': 'complete', 'downloaded_bytes': size, 'total_bytes': size, 'error': None})
+        return {"success": True, "status": "complete", "message": "transactions.csv already available"}
+    if state['status'] == 'downloading':
+        return {"success": True, "status": "downloading", "message": "Download already in progress"}
+
+    background_tasks.add_task(_run_transactions_download_background)
+    return {"success": True, "status": "downloading"}
+
+
+@app.get("/api/banking/datasets/transactions/download/status")
+async def get_transactions_download_status():
+    """Polled by the Data Loader's progress bar while a download is in flight."""
+    return {"success": True, **system_state['banking']['transactions_download']}
+
+
 @app.post("/api/banking/datasets/load")
 async def load_banking_dataset(request: dict):
     """
@@ -3372,6 +3479,14 @@ def _run_agent_a_background(config_dict: dict):
 async def execute_banking_agent_a(config: AgentAConfigAcademy, background_tasks: BackgroundTasks):
     """Execute Banking Agent A asynchronously. Poll /api/banking/agent_a/status for progress."""
     print(f"[AGENT-A] execute called — n_clusters={config.n_clusters}, gamma={config.gamma}", flush=True)
+    # Banking-specific bound (NOT applied to AgentAConfigAcademy's other user,
+    # the real Academy execute endpoint, which has no such constraint):
+    # _relabel_clusters_to_archetypes() only defines 5 fixed archetype slots,
+    # so n_clusters > 5 collapses multiple clusters onto the same archetype
+    # and crashes on the existing duplicate-name check further down the
+    # pipeline. Reject it here with a clear error instead of a mid-run crash.
+    if not (2 <= config.n_clusters <= 5):
+        raise HTTPException(status_code=400, detail="n_clusters must be between 2 and 5 for banking segmentation.")
     if system_state['banking']['agent_a_status'] == 'running':
         return {
             "success": True,
@@ -5298,12 +5413,17 @@ async def execute_banking_agent_b(request: dict = Body(...)):
             cid_key = str(customer_id).strip()
             ledger_row = system_state['banking'].setdefault('agent_d_ledger', {}).get(cid_key)
             ledger = ledger_row if isinstance(ledger_row, dict) else {}
-            d = ledger.get('last_directives')
-            has_pin = bool(d and str(d.get('priority_pin_product_id') or '').strip())
-            has_boost = bool(d and (d.get('boost_product_ids') or []))
-            has_dep = bool(d and (d.get('deprioritize_product_ids') or []))
-            if d and (has_pin or has_boost or has_dep):
-                exec_params['supervisor_directives'] = d
+            d = ledger.get('last_directives') or {}
+            # The pin is Recommender's own — independent of Offer's pin and of
+            # Director's auto-computed last_directives (which orchestrate()
+            # fully overwrites every run, so it can't hold a manual pin).
+            # Boost/deprioritize stay shared, sourced from last_directives as before.
+            recommender_pin = str(ledger.get('recommender_pin_product_id') or '').strip()
+            has_pin = bool(recommender_pin)
+            has_boost = bool(d.get('boost_product_ids') or [])
+            has_dep = bool(d.get('deprioritize_product_ids') or [])
+            if has_pin or has_boost or has_dep:
+                exec_params['supervisor_directives'] = {**d, 'priority_pin_product_id': recommender_pin or None}
                 logger.info(f"📌 Agent B: applying Agent D supervisor directives for {cid_key} (pin={has_pin})")
             else:
                 logger.warning(
@@ -6108,6 +6228,58 @@ async def banking_agent_d_ledger_reset(customer_id: str):
     return {'success': True, 'message': f'Ledger cleared for {cid}'}
 
 
+class AgentDPinRequest(BaseModel):
+    product_id: str
+
+
+def _agent_d_pin_key(scope: str) -> str:
+    if scope not in ('recommender', 'offer'):
+        raise HTTPException(status_code=400, detail="scope must be 'recommender' or 'offer'")
+    return f"{scope}_pin_product_id"
+
+
+@app.post("/api/banking/agent_d/pin/{scope}/{customer_id}")
+async def banking_agent_d_pin(scope: str, customer_id: str, body: AgentDPinRequest):
+    """
+    Manually pin a product for this customer, scoped to ONE agent only —
+    'recommender' (Agent B) or 'offer' (Agent C). Independent of Director's
+    own auto-computed last_directives (which orchestrate() fully overwrites
+    on every run — anything stored there wouldn't survive) and independent
+    of each other, so pinning in one never affects the other.
+    """
+    key = _agent_d_pin_key(scope)
+    cid = str(customer_id).strip()
+    ledger = system_state['banking'].setdefault('agent_d_ledger', {}).setdefault(cid, {})
+    ledger[key] = str(body.product_id).strip()
+    return {'success': True, 'scope': scope, 'product_id': ledger[key]}
+
+
+@app.delete("/api/banking/agent_d/pin/{scope}/{customer_id}")
+async def banking_agent_d_unpin(scope: str, customer_id: str):
+    """Clear ONLY this customer's pin for this one scope — impressions, click
+    history, and the other scope's pin are untouched."""
+    key = _agent_d_pin_key(scope)
+    cid = str(customer_id).strip()
+    ledger = system_state['banking'].get('agent_d_ledger', {}).get(cid) or {}
+    was_pinned = bool(ledger.get(key))
+    ledger.pop(key, None)
+    return {'success': True, 'scope': scope, 'was_pinned': was_pinned, 'message': f'{scope} pin cleared for {cid}'}
+
+
+@app.get("/api/banking/agent_d/pins/{customer_id}")
+async def banking_agent_d_pins(customer_id: str):
+    """Current manual pin state for both scopes — used by the Director tab to
+    show each card's own pin/unpin toggle independent of its own narrative
+    (last_directives), which is a separate, auto-computed concept."""
+    cid = str(customer_id).strip()
+    ledger = system_state['banking'].get('agent_d_ledger', {}).get(cid) or {}
+    return {
+        'success': True,
+        'recommender_pin_product_id': ledger.get('recommender_pin_product_id'),
+        'offer_pin_product_id': ledger.get('offer_pin_product_id'),
+    }
+
+
 @app.post("/api/banking/agent_director/analyze")
 async def banking_director_analyze(request: Request):
     """
@@ -6492,7 +6664,7 @@ async def banking_ad_spend_simulate(request: Request):
     CHANNEL_LABELS = {
         "in_app": "In-App", "email": "Email", "sms": "SMS", "branch": "Branch",
         "youtube_ads": "YouTube Ads", "meta_social_ads": "Meta Paid Social",
-        "google_search_ads": "Google Search Ads", "podcast_audio_ads": "Podcast/Audio Ads",
+        "google_search_ads": "Paid Search", "podcast_audio_ads": "Podcast/Audio Ads",
     }
     PERSONA_SHORT    = {
         "Digital Native": "Digital Native", "Wealth Builder": "Wealth Builder",
@@ -6866,6 +7038,15 @@ async def get_banking_one_best_offer(customer_id: str):
                     "min_balance": row.get("min_balance"),
                     "interest_rate_apy": row.get("interest_rate_apy") or row.get("interest_rate"),
                 })
+        # Always apply Offer's OWN pin for this customer — independent of
+        # Recommender's pin and of Director's auto-computed last_directives
+        # (which orchestrate() fully overwrites every run, so it can't hold
+        # a manual pin). Boost/deprioritize, if any, still come from last_directives.
+        _ledger_row = system_state['banking'].get('agent_d_ledger', {}).get(str(customer_id).strip())
+        _ledger = _ledger_row if isinstance(_ledger_row, dict) else {}
+        _base_directives = _ledger.get('last_directives') or {}
+        _offer_pin = str(_ledger.get('offer_pin_product_id') or '').strip()
+        _directives = {**_base_directives, 'priority_pin_product_id': _offer_pin or None} if (_offer_pin or _base_directives) else None
         result = banking_agent_c.get_one_best_offer(
             customer_id=customer_id,
             customer_details=customer_details,
@@ -6874,6 +7055,7 @@ async def get_banking_one_best_offer(customer_id: str):
             churn_category=churn_category,
             fallback_products=fallback_products if fallback_products else None,
             agent_b_reference_recs=exec_raw if exec_raw else None,
+            supervisor_directives=_directives,
         )
         data = numpy_to_python_types(result)
         if churn_extra:

@@ -82,7 +82,7 @@ const CHANNEL_REGISTRY = [
   { id: 'branch',            label: 'Branch',             icon: '🏦', color: '#059669', bg: '#f0fdf4', border: '#bbf7d0', funnelLabels: ['Contacted', 'Engaged', 'Interested', 'Converted'] as FunnelLabels },
   { id: 'youtube_ads',       label: 'YouTube Ads',        icon: '▶️', color: '#dc2626', bg: '#fef2f2', border: '#fecaca', funnelLabels: ['Sent', 'Viewed', 'Clicked', 'Converted'] as FunnelLabels },
   { id: 'meta_social_ads',   label: 'Meta Paid Social',   icon: '📸', color: '#7c3aed', bg: '#f5f3ff', border: '#ddd6fe', funnelLabels: ['Sent', 'Viewed', 'Clicked', 'Converted'] as FunnelLabels },
-  { id: 'google_search_ads', label: 'Google Search Ads',  icon: '🔍', color: '#0d9488', bg: '#f0fdfa', border: '#99f6e4', funnelLabels: ['Sent', 'Viewed', 'Clicked', 'Converted'] as FunnelLabels },
+  { id: 'google_search_ads', label: 'Paid Search',        icon: '🔍', color: '#0d9488', bg: '#f0fdfa', border: '#99f6e4', funnelLabels: ['Sent', 'Viewed', 'Clicked', 'Converted'] as FunnelLabels },
   { id: 'podcast_audio_ads', label: 'Podcast/Audio Ads',  icon: '🎙️', color: '#c2410c', bg: '#fff7ed', border: '#fed7aa', funnelLabels: ['Sent', 'Listened', 'Engaged', 'Converted'] as FunnelLabels },
 ] as const;
 
@@ -94,6 +94,18 @@ function channelMeta(id: string): ChannelMeta {
   return CHANNEL_REGISTRY.find(c => c.id === id) ?? {
     id, label: id, icon: '📊', color: '#6b7280', bg: '#f9fafb', border: '#e5e7eb', funnelLabels: DEFAULT_FUNNEL_LABELS,
   };
+}
+
+// In-App and Branch are no longer shown anywhere on this tab — charts, the
+// Seasonality strip, and every spend/revenue total below all exclude them.
+const HIDDEN_CHANNEL_IDS = new Set(['in_app', 'branch']);
+
+// Fixed display order for every remaining channel (paid + owned), applied
+// wherever channels are listed on this tab.
+const CHANNEL_ORDER = ['meta_social_ads', 'youtube_ads', 'google_search_ads', 'email', 'sms', 'podcast_audio_ads'];
+function byChannelOrder(a: string, b: string): number {
+  const ia = CHANNEL_ORDER.indexOf(a), ib = CHANNEL_ORDER.indexOf(b);
+  return (ia === -1 ? CHANNEL_ORDER.length : ia) - (ib === -1 ? CHANNEL_ORDER.length : ib);
 }
 
 const PERSONAS = [
@@ -683,11 +695,9 @@ function drawSparkline(canvas: HTMLCanvasElement, pts: MonthlyPoint[], color: st
   }
 }
 
-function SeasonalityStrip({ allMonthly, channels, ownedChannels, personaData }: {
+function SeasonalityStrip({ allMonthly, channels }: {
   allMonthly: Record<string, MonthlyPoint[]>;
-  channels: ChannelMeta[];       // paid channels only — a ROAS trend needs spend > 0
-  ownedChannels: ChannelMeta[];  // e.g. email — shown as a callout, not a sparkline
-  personaData: Record<string, ChannelMetrics>;
+  channels: ChannelMeta[];  // paid channels only — email is always $0 spend, excluded here
 }) {
   // Map-based, not fixed keys — the channel set varies by dataset (v1: 4, v2: 8).
   const canvasRefs = useRef(new Map<string, HTMLCanvasElement | null>());
@@ -726,7 +736,7 @@ function SeasonalityStrip({ allMonthly, channels, ownedChannels, personaData }: 
   return (
     <div className="bg-white rounded-xl border border-gray-200 px-4 py-3">
       <p className="text-[10px] font-bold uppercase tracking-widest text-gray-400 mb-3">Seasonality · ROAS trend Jan–Dec 2025</p>
-      <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+      <div className="grid grid-cols-2 sm:grid-cols-3 gap-3">
         {channels.map(ch => {
           const pts = allMonthly[ch.id] ?? [];
           const avg = avgRoas(pts);
@@ -755,14 +765,6 @@ function SeasonalityStrip({ allMonthly, channels, ownedChannels, personaData }: 
           );
         })}
       </div>
-      {ownedChannels.length > 0 && (
-        <p className="text-[10px] text-gray-400 mt-3 pt-2.5 border-t border-gray-100">
-          {ownedChannels.map(ch => {
-            const rev = personaData[ch.id]?.attributed_revenue_usd ?? 0;
-            return `${ch.label} excluded — $0 media spend (owned channel); ${fmtK(rev)} attributed revenue this year, tracked separately.`;
-          }).join(' ')}
-        </p>
-      )}
     </div>
   );
 }
@@ -1419,18 +1421,34 @@ export default function BankingAdSpend() {
     </div>
   );
 
-  const { summary, personas } = data;
+  const { personas } = data;
   const personaData = personas[selectedPersona] ?? {};
   const monthly     = monthlyData?.data?.[selectedPersona] ?? {};
 
-  const allChannels   = data.channels.map(channelMeta);
-  const paidChannels   = data.channels.filter(id => !data.owned_channels.includes(id)).map(channelMeta);
-  const ownedChannels  = data.owned_channels.map(channelMeta);
+  const activeChannelIds = data.channels.filter(id => !HIDDEN_CHANNEL_IDS.has(id)).slice().sort(byChannelOrder);
+  const allChannels    = activeChannelIds.map(channelMeta);
+  const paidChannels   = activeChannelIds.filter(id => !data.owned_channels.includes(id)).map(channelMeta);
+  const ownedChannels  = data.owned_channels.filter(id => !HIDDEN_CHANNEL_IDS.has(id)).map(channelMeta);
 
   const segUplift = paidChannels.reduce((s, ch) => {
     const m = personaData[ch.id] as PaidChannelMetrics | undefined;
     return (!m || m.status !== 'under') ? s : s + (m.optimal_spend_usd - m.spend_usd) * m.marginal_roas;
   }, 0);
+
+  // The backend's `summary` totals are computed across every channel in the
+  // dataset, including the two now hidden from this tab — recompute the
+  // headline totals across only the channels actually shown, so "Total Ad
+  // Spend" always matches what the visible channel cards add up to.
+  let visibleTotalSpend = 0, visibleTotalRevenue = 0;
+  Object.values(personas).forEach(personaMetrics => {
+    activeChannelIds.forEach(id => {
+      const m = personaMetrics[id];
+      if (!m) return;
+      visibleTotalSpend += m.spend_usd;
+      visibleTotalRevenue += m.attributed_revenue_usd;
+    });
+  });
+  const visibleBlendedRoas = visibleTotalSpend > 0 ? visibleTotalRevenue / visibleTotalSpend : 0;
 
   return (
     <div className="space-y-5 pb-10">
@@ -1451,9 +1469,9 @@ export default function BankingAdSpend() {
       {/* Metrics bar */}
       <div className="grid grid-cols-3 divide-x divide-gray-200 border border-gray-200 rounded-xl overflow-hidden bg-white">
         {[
-          { label:'Total Ad Spend',      value:fmtK(summary.total_spend_usd),                    sub:`across ${paidChannels.length} paid channels${ownedChannels.length ? ` (+${ownedChannels.length} owned)` : ''} · ${PERSONAS.length} segments`, Icon:DollarSign, color:'text-gray-800' },
-          { label:'Attributed Revenue',  value:fmtK(summary.total_revenue_usd),                  sub:'annual marketing attributed (paid channels)', Icon:BarChart2,  color:'text-gray-800' },
-          { label:'Blended ROAS',        value:fmtRoas(summary.blended_roas),                    sub:'revenue per $ spent',            Icon:TrendingUp,  color:'text-blue-700' },
+          { label:'Total Ad Spend',      value:fmtK(visibleTotalSpend),                          sub:`across ${paidChannels.length} paid channels${ownedChannels.length ? ` (+${ownedChannels.length} owned)` : ''} · ${PERSONAS.length} segments`, Icon:DollarSign, color:'text-gray-800' },
+          { label:'Attributed Revenue',  value:fmtK(visibleTotalRevenue),                        sub:'annual marketing attributed (paid channels)', Icon:BarChart2,  color:'text-gray-800' },
+          { label:'Blended ROAS',        value:fmtRoas(visibleBlendedRoas),                      sub:'revenue per $ spent',            Icon:TrendingUp,  color:'text-blue-700' },
         ].map(m => (
           <div key={m.label} className="px-4 py-4 flex flex-col items-center text-center">
             <div className="flex items-center justify-center gap-1.5 mb-2">
@@ -1486,7 +1504,7 @@ export default function BankingAdSpend() {
 
       {/* Seasonality sparkline strip */}
       {monthlyData?.data?.[selectedPersona] && (
-        <SeasonalityStrip allMonthly={monthly} channels={paidChannels} ownedChannels={ownedChannels} personaData={personaData} />
+        <SeasonalityStrip allMonthly={monthly} channels={paidChannels} />
       )}
 
       {/* Channel grid */}

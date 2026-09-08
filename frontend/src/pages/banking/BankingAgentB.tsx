@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useMemo, useRef } from 'react';
 import { Link, useSearchParams } from 'react-router-dom';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
+import PinnedOfferCard, { type PinnedOfferCardData } from '../../components/PinnedOfferCard';
 import {
   Search,
   CreditCard,
@@ -20,6 +21,8 @@ import {
   Gift,
   Tag,
   Clock,
+  Pin,
+  PinOff,
 } from 'lucide-react';
 import { getBankingApiBase } from '../../utils/apiBase';
 import { useSessionStorageState } from '../../hooks/useSessionStorageState';
@@ -206,6 +209,14 @@ function stripStalePinnedRankIntro(rankExplanation: string | undefined): string 
   return rankExplanation;
 }
 
+// Persona mode recommends for a whole segment, so a wider list (5) is more
+// useful; single-customer mode is a focused, one-on-one view, so a tighter
+// list (3) reads better. Applied whenever mode is set (initial default,
+// session restore, and switching modes mid-session).
+function topNForMode(mode: 'persona' | 'customer'): number {
+  return mode === 'persona' ? 5 : 3;
+}
+
 function mergeAgentBUi(saved: Partial<BankingAgentBUiState>, def: BankingAgentBUiState): BankingAgentBUiState {
   return {
     ...def,
@@ -213,8 +224,8 @@ function mergeAgentBUi(saved: Partial<BankingAgentBUiState>, def: BankingAgentBU
     // Never restore stale results or run-state from session storage
     executeData: null,
     lastRunFactorWeights: null,
-    // Always reset to the canonical default — ignore any old value in session storage
-    topN: def.topN,
+    // Always reset to the mode-appropriate default — ignore any old value in session storage
+    topN: topNForMode(saved.mode ?? def.mode),
     weightsAccordionOpen: def.weightsAccordionOpen,
     // Always 'rules' — a session-storage value of 'logit' saved before the
     // Hybrid ML toggle was removed would otherwise survive this merge and
@@ -248,68 +259,8 @@ const DEFAULT_BANKING_AGENT_B_UI: BankingAgentBUiState = {
 
 const AGENT_B_UI_KEY = 'banking-agent-b-v1';
 
-type PinnedOfferCardData = {
-  product_id?: string;
-  product_name?: string;
-  offer_name?: string;
-  offer_type?: string;
-  headline_value?: string;
-  content_benefit_1?: string;
-  content_benefit_2?: string;
-  content_benefit_3?: string;
-  days_remaining?: number | null;
-  terms_summary?: string;
-};
-
-function PinnedOfferCard({ card }: { card: PinnedOfferCardData }) {
-  const benefits = [card.content_benefit_1, card.content_benefit_2, card.content_benefit_3].filter(Boolean);
-  return (
-    <div className="mb-4 rounded-2xl overflow-hidden border border-indigo-200 shadow-md">
-      {/* Gradient header */}
-      <div className="bg-gradient-to-r from-indigo-700 via-violet-700 to-purple-700 px-5 py-4">
-        <div className="flex items-start gap-3 justify-between">
-          <div className="min-w-0">
-            <p className="text-[10px] font-bold uppercase tracking-widest text-indigo-200 mb-1 flex items-center gap-1.5">
-              <Gift className="w-3 h-3" />
-              Director's pinned offer · {card.product_name}
-            </p>
-            {card.offer_name && (
-              <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-white/20 text-white text-xs font-semibold">
-                <Tag className="w-3 h-3" />
-                {card.offer_name}
-              </span>
-            )}
-          </div>
-          {card.days_remaining != null && card.days_remaining < 30 && (
-            <span className="shrink-0 inline-flex items-center gap-1 px-2.5 py-1 rounded-full bg-amber-400/90 text-amber-950 text-[11px] font-bold">
-              <Clock className="w-3 h-3" />
-              {card.days_remaining}d left
-            </span>
-          )}
-        </div>
-        {card.headline_value && (
-          <p className="text-xl font-extrabold text-white mt-2.5 leading-tight">{card.headline_value}</p>
-        )}
-      </div>
-      {/* Benefits */}
-      {benefits.length > 0 && (
-        <div className="bg-white px-5 py-3.5 space-y-2">
-          {benefits.map((b, i) => (
-            <div key={i} className="flex items-start gap-2 text-sm text-slate-700">
-              <CheckCircle2 className="w-4 h-4 text-indigo-500 shrink-0 mt-0.5" />
-              <span>{b}</span>
-            </div>
-          ))}
-          {card.terms_summary && (
-            <p className="text-[11px] text-slate-400 leading-relaxed border-t border-slate-100 pt-2.5 mt-2">
-              {card.terms_summary}
-            </p>
-          )}
-        </div>
-      )}
-    </div>
-  );
-}
+// PinnedOfferCard moved to frontend/src/components/PinnedOfferCard.tsx — shared
+// with the Offer tab so a Director pin looks identical wherever it surfaces.
 
 export default function BankingAgentB() {
   const queryClient = useQueryClient();
@@ -682,6 +633,41 @@ export default function BankingAgentB() {
     },
   });
 
+  // Pin/unpin are scoped to Recommender only — independent of Offer's own
+  // pin (each reads its own field server-side; see api/main_unified_chromadb.py).
+  // Either way, re-run the recommendation query so the list reflects the new
+  // pin state immediately.
+  const pinMutation = useMutation({
+    mutationFn: async (vars: { targetCustomerId: string; productId: string }) => {
+      const res = await fetch(
+        `${API_BASE_URL}/api/banking/agent_d/pin/recommender/${encodeURIComponent(vars.targetCustomerId)}`,
+        { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ product_id: vars.productId }) }
+      );
+      if (!res.ok) throw new Error('Failed to pin');
+      return res.json();
+    },
+    onSuccess: (_data, vars) => {
+      void queryClient.invalidateQueries({ queryKey: ['banking-agent-d-directives-b', vars.targetCustomerId] });
+      void queryClient.invalidateQueries({ queryKey: ['banking-agent-d-directives-persona'] });
+      executeMutation.mutate();
+    },
+  });
+  const unpinMutation = useMutation({
+    mutationFn: async (targetCustomerId: string) => {
+      const res = await fetch(
+        `${API_BASE_URL}/api/banking/agent_d/pin/recommender/${encodeURIComponent(targetCustomerId)}`,
+        { method: 'DELETE' }
+      );
+      if (!res.ok) throw new Error('Failed to unpin');
+      return res.json();
+    },
+    onSuccess: (_data, targetCustomerId) => {
+      void queryClient.invalidateQueries({ queryKey: ['banking-agent-d-directives-b', targetCustomerId] });
+      void queryClient.invalidateQueries({ queryKey: ['banking-agent-d-directives-persona'] });
+      executeMutation.mutate();
+    },
+  });
+
   // Deep link from other pages (e.g. Dashboard's "View in Recommender" button):
   // ?persona=<cluster_id>&category=<type|''> selects persona mode with that
   // persona/category and fires the search immediately, so the page lands
@@ -703,7 +689,7 @@ export default function BankingAgentB() {
     const personaParam = searchParams.get('persona');
     if (personaParam === null || executeMutation.isPending) return;
     const categoryParam = searchParams.get('category') || '';
-    setUi((p) => ({ ...p, mode: 'persona', persona: personaParam, category: categoryParam }));
+    setUi((p) => ({ ...p, mode: 'persona', persona: personaParam, category: categoryParam, topN: topNForMode('persona') }));
     executeMutation
       .mutateAsync()
       .then((data: { _factorWeightsUsed?: Record<string, number> }) => {
@@ -896,7 +882,7 @@ export default function BankingAgentB() {
             <div className="inline-flex rounded-full border border-gray-200 p-1 bg-gray-50 shadow-inner">
               <button
                 type="button"
-                onClick={() => setUi((p) => ({ ...p, mode: 'persona' }))}
+                onClick={() => setUi((p) => ({ ...p, mode: 'persona', topN: topNForMode('persona') }))}
                 className={`flex items-center gap-2 px-5 py-2.5 rounded-full text-sm font-semibold transition-all ${
                   mode === 'persona'
                     ? 'bg-emerald-600 text-white shadow-md'
@@ -908,7 +894,7 @@ export default function BankingAgentB() {
               </button>
               <button
                 type="button"
-                onClick={() => setUi((p) => ({ ...p, mode: 'customer' }))}
+                onClick={() => setUi((p) => ({ ...p, mode: 'customer', topN: topNForMode('customer') }))}
                 className={`flex items-center gap-2 px-5 py-2.5 rounded-full text-sm font-semibold transition-all ${
                   mode === 'customer'
                     ? 'bg-emerald-600 text-white shadow-md'
@@ -1442,6 +1428,28 @@ export default function BankingAgentB() {
                     <div className="flex flex-wrap items-center gap-3 mb-2">
                       <span className="text-2xl font-bold text-gray-400">#{index + 1}</span>
                       <h3 className="text-xl font-bold text-gray-900">{rec.product_name}</h3>
+                      <button
+                        type="button"
+                        onClick={() => {
+                          const targetCustomerId = mode === 'persona' ? personaRepCustomerId : customerId;
+                          if (!targetCustomerId) return;
+                          if (rec.supervisor_pinned) {
+                            unpinMutation.mutate(targetCustomerId);
+                          } else {
+                            pinMutation.mutate({ targetCustomerId, productId: rec.product_id });
+                          }
+                        }}
+                        disabled={pinMutation.isPending || unpinMutation.isPending}
+                        title={rec.supervisor_pinned ? 'Unpin this recommendation' : 'Pin this recommendation'}
+                        className={`ml-auto inline-flex items-center gap-1 px-2.5 py-1 rounded-full border text-[11px] font-semibold disabled:opacity-50 transition-colors ${
+                          rec.supervisor_pinned
+                            ? 'border-indigo-300 bg-indigo-50 text-indigo-700 hover:bg-indigo-100'
+                            : 'border-gray-200 bg-white text-gray-500 hover:bg-gray-50'
+                        }`}
+                      >
+                        {rec.supervisor_pinned ? <PinOff className="w-3 h-3" /> : <Pin className="w-3 h-3" />}
+                        {rec.supervisor_pinned ? 'Unpin' : 'Pin'}
+                      </button>
                     </div>
                     <div className="flex items-center gap-4 text-sm text-gray-600">
                       <span className="flex items-center gap-1">
@@ -1531,7 +1539,11 @@ export default function BankingAgentB() {
                     <>
                       {/* Director offer card — shown above spotlight for pinned product */}
                       {showPinnedOffer && directivePinnedOfferCard && (
-                        <PinnedOfferCard card={directivePinnedOfferCard} />
+                        <PinnedOfferCard
+                          card={directivePinnedOfferCard}
+                          onUnpin={() => unpinMutation.mutate(mode === 'persona' ? personaRepCustomerId : customerId)}
+                          unpinning={unpinMutation.isPending}
+                        />
                       )}
 
                       {showSpotlight && (

@@ -504,9 +504,19 @@ class AgentA_Banking_Micro:
                 parent_name,
                 micro_id,
                 used_names=used_names,
+                macro_segment_id=macro_segment_id,
             )
 
-            if segment_name in used_names:
+            # A name reused from the segment-name cache (see
+            # _generate_micro_segment_profile) is EXPECTED to already be in
+            # used_names — that persistent set tracks every name ever used
+            # across all past runs, and a cached name was used before by
+            # definition. Only treat "already used" as a real collision for a
+            # freshly-generated name, not a legitimate historical reuse of
+            # this exact (macro_segment_id, micro_id) slot's own name.
+            from utils.segment_name_cache import get_cached_name as _get_cached_micro_name
+            _is_cache_hit = _get_cached_micro_name('banking_micro', f"{macro_segment_id}:{micro_id}") is not None
+            if segment_name in used_names and not _is_cache_hit:
                 logger.warning(f"Micro name collision '{segment_name}' — regenerating with rule-based fallback")
                 fp   = characteristics.get('_feature_profile', {})
                 sf   = characteristics.get('_split_features', [])
@@ -558,6 +568,7 @@ class AgentA_Banking_Micro:
         macro_name: str,
         micro_id: int = 0,
         used_names: set = None,
+        macro_segment_id: int = None,
     ) -> tuple:
         """
         Generate micro segment name + description in one LLM call.
@@ -567,7 +578,26 @@ class AgentA_Banking_Micro:
         - macro parent name (so names feel like sub-categories of that macro)
         - feature profile (High/Mid/Low on each split dimension)
         - globally used names (to prevent cross-macro repeats)
+
+        Reuses a previously-generated name for this same (macro_segment_id,
+        micro_id) slot for CACHE_TTL_HOURS (utils/segment_name_cache.py)
+        instead of re-generating one on every re-run.
         """
+        from utils.segment_name_cache import get_cached_name, save_name
+        _cache_key = f"{macro_segment_id}:{micro_id}"
+
+        # NOTE: no "not in used_names" re-check here, unlike the macro cache
+        # hook — `used_names`/`_global_used_names` for micro is a PERSISTENT
+        # registry of every name ever used across ALL past runs (see
+        # __init__'s global_used_names param), not a per-run set. A cached
+        # name is by definition already in it (that's why it's cached), so
+        # that check would reject every real cache hit. Each (macro_segment_id,
+        # micro_id) key is only ever looked up once per run, so a cache hit
+        # here can't collide with itself within this run.
+        _cached = get_cached_name('banking_micro', _cache_key)
+        if _cached:
+            return _cached['name'], _cached['description']
+
         feature_profile = characteristics.get('_feature_profile', {})
         split_features  = characteristics.get('_split_features', [])
         macro_trait     = characteristics.get('_macro_primary_trait', 'deposits')
@@ -614,6 +644,7 @@ class AgentA_Banking_Micro:
                     llm_name = result.get('name', '').strip()
                     llm_desc = result.get('description', '').strip()
                     if llm_name and llm_desc and llm_name not in (used_names or set()):
+                        save_name('banking_micro', _cache_key, llm_name, llm_desc, 'llm')
                         return llm_name, llm_desc
                     elif llm_name and llm_desc:
                         # LLM returned a duplicate — fall through to rule-based naming
@@ -632,6 +663,7 @@ class AgentA_Banking_Micro:
             f"Customers with {split_context}. "
             f"Avg savings ${deposits:,.0f}, {digital*100:.0f}% digital usage, {portfolio:.1f} products held."
         )
+        save_name('banking_micro', _cache_key, segment_name, desc, 'rule_based')
         return segment_name, desc
 
     def _generate_micro_segment_name(self, characteristics, ltv_tier, macro_name, micro_id=0, used_names=None) -> str:

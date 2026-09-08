@@ -7,7 +7,6 @@ import {
   Users,
   User,
   Loader2,
-  Trash2,
   Sparkles,
   CreditCard,
   LayoutGrid,
@@ -17,6 +16,7 @@ import {
   Tag,
   TrendingUp,
   Pin,
+  PinOff,
   Zap,
   BarChart2,
 } from 'lucide-react';
@@ -73,6 +73,14 @@ export const DEFAULT_AGENT_D_UI = {
   personaId: '',
   customerId: '',
   persistedOrchestrate: null as { customerId: string; response: unknown } | null,
+  // True right after the user clicks Unpin, until the next explicit "Load
+  // supervisor view" run. orchestrate() always recomputes a pin from
+  // underlying signals (last click / incomplete app / saved goal / Agent C's
+  // offer / Agent B's #1) and unconditionally overwrites last_directives —
+  // so re-running it immediately after an unpin would just re-derive and
+  // silently reinstate the same pin. This flag hides pin UI locally instead
+  // of re-fetching data that would fight the unpin.
+  pinCleared: false,
 };
 
 function BoldParts({ text }: { text: string }) {
@@ -184,7 +192,7 @@ function OfferIntelCard({ offer }: { offer: OfferCard }) {
 export default function BankingAgentD() {
   const queryClient = useQueryClient();
   const [ui, setUi] = useSessionStorageState(AGENT_D_UI_KEY, DEFAULT_AGENT_D_UI);
-  const { mode, personaId, customerId, persistedOrchestrate } = ui;
+  const { mode, personaId, customerId, persistedOrchestrate, pinCleared } = ui;
   const [, setSessionLog] = useSessionStorageState<AgentDSessionLogEntry[]>(AGENT_D_SESSION_LOG_KEY, []);
 
   const personasQuery = useQuery({
@@ -293,7 +301,7 @@ export default function BankingAgentD() {
     onSuccess: (payload) => {
       const cid = String(customerId).trim();
       if (cid) {
-        setUi((prev) => ({ ...prev, persistedOrchestrate: { customerId: cid, response: payload } }));
+        setUi((prev) => ({ ...prev, persistedOrchestrate: { customerId: cid, response: payload }, pinCleared: false }));
         setSessionLog((prev) => [
           ...prev,
           { customerId: cid, timestamp: new Date().toISOString(), data: payload?.data },
@@ -304,19 +312,57 @@ export default function BankingAgentD() {
     },
   });
 
-  const resetLedgerMutation = useMutation({
-    mutationFn: async () => {
-      const res = await fetch(`${API_BASE}/api/banking/agent_d/ledger/${customerId}`, { method: 'DELETE' });
-      if (!res.ok) throw new Error('Reset failed');
-      return res.json();
+  const cidKey = String(customerId).trim();
+
+  // Recommender's and Offer's pins are independent (each reads its own field
+  // server-side) — this is the shared source of truth both cards' toggle
+  // buttons read from, refetched (not orchestrate() re-run) after every
+  // pin/unpin so a card's button flips immediately without triggering
+  // orchestrate()'s slow, unrelated recompute of its own auto-pin narrative.
+  const pinsQuery = useQuery({
+    queryKey: ['banking-agent-d-pins', cidKey],
+    queryFn: async () => {
+      const res = await fetch(`${API_BASE}/api/banking/agent_d/pins/${encodeURIComponent(cidKey)}`);
+      if (!res.ok) throw new Error('Failed to load pins');
+      return res.json() as Promise<{ recommender_pin_product_id: string | null; offer_pin_product_id: string | null }>;
     },
-    onSuccess: () => {
-      orchestrateMutation.reset();
-      setUi((prev) => ({ ...prev, persistedOrchestrate: null }));
-    },
+    enabled: !!cidKey,
+    staleTime: 0,
+    refetchOnMount: 'always',
+    // Pinning/unpinning from Recommender or Offer directly (not through this
+    // page) doesn't touch anything Director itself would know to invalidate —
+    // this is a cheap dict lookup (no LLM calls), so poll it while the tab is
+    // open, plus refetch on refocus, so an external change shows up here
+    // without requiring a manual reload.
+    refetchOnWindowFocus: true,
+    refetchInterval: 5000,
   });
 
-  const cidKey = String(customerId).trim();
+  function usePinToggle(scope: 'recommender' | 'offer') {
+    const pin = useMutation({
+      mutationFn: async (productId: string) => {
+        const res = await fetch(`${API_BASE}/api/banking/agent_d/pin/${scope}/${encodeURIComponent(cidKey)}`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ product_id: productId }),
+        });
+        if (!res.ok) throw new Error('Pin failed');
+        return res.json();
+      },
+      onSuccess: () => void queryClient.invalidateQueries({ queryKey: ['banking-agent-d-pins', cidKey] }),
+    });
+    const unpin = useMutation({
+      mutationFn: async () => {
+        const res = await fetch(`${API_BASE}/api/banking/agent_d/pin/${scope}/${encodeURIComponent(cidKey)}`, { method: 'DELETE' });
+        if (!res.ok) throw new Error('Unpin failed');
+        return res.json();
+      },
+      onSuccess: () => void queryClient.invalidateQueries({ queryKey: ['banking-agent-d-pins', cidKey] }),
+    });
+    return { pin, unpin };
+  }
+  const recommenderPinToggle = usePinToggle('recommender');
+  const offerPinToggle = usePinToggle('offer');
   type OrchestrateBody = NonNullable<typeof orchestrateMutation.data>['data'];
   const data: OrchestrateBody | undefined =
     orchestrateMutation.data?.data ??
@@ -333,7 +379,7 @@ export default function BankingAgentD() {
   const bRecs = sv?.agent_b_product_recommendations ?? [];
   const cOffer = sv?.agent_c_primary_offer as OfferCard | undefined | null;
   const focus = sv?.focus_product as { product_id?: string; product_name?: string } | undefined | null;
-  const autoPinnedProductId = (data?.next_visit_directives as { priority_pin_product_id?: string } | undefined)
+  const autoPinnedProductId = pinCleared ? undefined : (data?.next_visit_directives as { priority_pin_product_id?: string } | undefined)
     ?.priority_pin_product_id;
   const autoPinnedProduct = autoPinnedProductId
     ? liveStack.find((r) => String(r.product_id) === String(autoPinnedProductId)) ??
@@ -505,7 +551,7 @@ export default function BankingAgentD() {
                   loading={segmentCustomersQuery.isLoading}
                   emptyListLabel="No customers in segment (run Segmentation)"
                   onChange={(id) => {
-                    setUi((prev) => ({ ...prev, customerId: id, persistedOrchestrate: null }));
+                    setUi((prev) => ({ ...prev, customerId: id, persistedOrchestrate: null, pinCleared: false }));
                     orchestrateMutation.reset();
                   }}
                 />
@@ -523,7 +569,7 @@ export default function BankingAgentD() {
                 loading={customersQuery.isLoading}
                 emptyListLabel="No customers — run Segmentation first"
                 onChange={(id) => {
-                  setUi((prev) => ({ ...prev, customerId: id, persistedOrchestrate: null }));
+                  setUi((prev) => ({ ...prev, customerId: id, persistedOrchestrate: null, pinCleared: false }));
                   orchestrateMutation.reset();
                 }}
               />
@@ -544,21 +590,12 @@ export default function BankingAgentD() {
               )}
               Load supervisor view
             </button>
-            <button
-              type="button"
-              disabled={!customerId || resetLedgerMutation.isPending}
-              onClick={() => resetLedgerMutation.mutate()}
-              className="inline-flex items-center gap-2 px-4 py-2 rounded-xl border border-slate-300 text-slate-600 text-sm hover:bg-slate-50"
-            >
-              <Trash2 className="w-4 h-4" />
-              Reset impression ledger
-            </button>
           </div>
 
           <p className="text-xs text-slate-500 leading-relaxed border-t border-slate-100 pt-4">
             After Director runs, open <strong>Recommender</strong> → <strong>Customer mode</strong> → same customer →{' '}
             <strong>Run recommendations</strong>. The <strong>supervisor focus product</strong> is auto-applied as{' '}
-            <strong>#1</strong>. No manual pin required.
+            <strong>#1</strong>. Use the <strong>unpin</strong> button on either card below to clear it.
           </p>
         </div>
 
@@ -599,36 +636,6 @@ export default function BankingAgentD() {
               </span>
             </div>
 
-            {/* ── Auto-synced pin banner ── */}
-            {autoPinnedProduct && (
-              <div className="relative overflow-hidden rounded-2xl border border-emerald-300 bg-gradient-to-r from-emerald-600 to-teal-600 shadow-md px-5 py-4">
-                <div className="absolute inset-0 bg-[radial-gradient(ellipse_at_top_right,rgba(255,255,255,0.12),transparent)] pointer-events-none" />
-                <div className="relative flex flex-wrap items-center gap-4">
-                  <div className="flex items-center gap-2 shrink-0">
-                    <div className="w-9 h-9 rounded-xl bg-white/20 flex items-center justify-center">
-                      <Pin className="w-5 h-5 text-white" />
-                    </div>
-                    <div>
-                      <p className="text-[10px] font-bold uppercase tracking-widest text-emerald-100">Auto-synced · Recommender</p>
-                      <p className="text-xs text-emerald-200">Pushed as #1 for the next run</p>
-                    </div>
-                  </div>
-                  <div className="flex-1 min-w-0">
-                    <div className="inline-flex items-center gap-2.5 bg-white/15 rounded-xl px-4 py-2.5">
-                      <span className="text-white font-bold text-sm truncate">
-                        {autoPinnedProduct.product_name || autoPinnedProduct.product_id}
-                      </span>
-                      <span className="text-emerald-200 text-xs font-mono shrink-0">{autoPinnedProduct.product_id}</span>
-                      <span className="shrink-0 inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-white text-emerald-700 text-[10px] font-extrabold uppercase tracking-wide">
-                        <Zap className="w-2.5 h-2.5" />
-                        Auto Pinned #1
-                      </span>
-                    </div>
-                  </div>
-                </div>
-              </div>
-            )}
-
             {/* ── Two-column grid: Recommender top 3 + Best Offer ── */}
             <div className="grid lg:grid-cols-2 gap-6">
 
@@ -642,6 +649,26 @@ export default function BankingAgentD() {
                     <p className="text-sm font-bold text-slate-900">Recommender — Top 3</p>
                     <p className="text-[11px] text-slate-500">12-factor persona fit ranking</p>
                   </div>
+                  {bRecs[0]?.product_id && (() => {
+                    const isPinned = String(pinsQuery.data?.recommender_pin_product_id ?? '') === String(bRecs[0].product_id);
+                    const busy = recommenderPinToggle.pin.isPending || recommenderPinToggle.unpin.isPending;
+                    return (
+                      <button
+                        type="button"
+                        onClick={() =>
+                          isPinned ? recommenderPinToggle.unpin.mutate() : recommenderPinToggle.pin.mutate(bRecs[0].product_id)
+                        }
+                        disabled={busy}
+                        title={isPinned ? 'Unpin this recommendation' : 'Pin this recommendation'}
+                        className={`ml-auto inline-flex items-center gap-1 px-2.5 py-1 rounded-full border text-[11px] font-semibold disabled:opacity-50 ${
+                          isPinned ? 'border-blue-200 bg-white text-blue-700 hover:bg-blue-50' : 'border-slate-200 bg-white text-slate-500 hover:bg-slate-50'
+                        }`}
+                      >
+                        {isPinned ? <PinOff className="w-3 h-3" /> : <Pin className="w-3 h-3" />}
+                        {busy ? 'Working…' : isPinned ? 'Unpin' : 'Pin'}
+                      </button>
+                    );
+                  })()}
                 </div>
                 <div className="divide-y divide-slate-100">
                   {bRecs.map((r: { product_id: string; product_name: string; category?: string; score: number }, idx: number) => {
@@ -687,6 +714,26 @@ export default function BankingAgentD() {
                     <p className="text-sm font-bold text-slate-900">Best Offer Agent</p>
                     <p className="text-[11px] text-slate-500">Offer engine — retention & eligibility</p>
                   </div>
+                  {cOffer?.product_id && (() => {
+                    const isPinned = String(pinsQuery.data?.offer_pin_product_id ?? '') === String(cOffer.product_id);
+                    const busy = offerPinToggle.pin.isPending || offerPinToggle.unpin.isPending;
+                    return (
+                      <button
+                        type="button"
+                        onClick={() =>
+                          isPinned ? offerPinToggle.unpin.mutate() : offerPinToggle.pin.mutate(cOffer.product_id!)
+                        }
+                        disabled={busy}
+                        title={isPinned ? 'Unpin this offer' : 'Pin this offer'}
+                        className={`shrink-0 inline-flex items-center gap-1 px-2.5 py-1 rounded-full border text-[11px] font-semibold disabled:opacity-50 ${
+                          isPinned ? 'border-violet-200 bg-white text-violet-700 hover:bg-violet-50' : 'border-slate-200 bg-white text-slate-500 hover:bg-slate-50'
+                        }`}
+                      >
+                        {isPinned ? <PinOff className="w-3 h-3" /> : <Pin className="w-3 h-3" />}
+                        {busy ? 'Working…' : isPinned ? 'Unpin' : 'Pin'}
+                      </button>
+                    );
+                  })()}
                   {cOffer?.status === 'Segment recommendation' && (
                     <span className="text-[10px] font-bold uppercase px-2 py-0.5 rounded-full bg-slate-100 text-slate-500 shrink-0">Segment fallback</span>
                   )}

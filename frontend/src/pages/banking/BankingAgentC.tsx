@@ -2,7 +2,8 @@ import React, { useState, useMemo, useRef, useEffect } from 'react';
 import { useSearchParams } from 'react-router-dom';
 import BankingAdSpend from './BankingAdSpend';
 import CustomerSearchSelect from '../../components/CustomerSearchSelect';
-import { useQuery } from '@tanstack/react-query';
+import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
+import PinnedOfferCard from '../../components/PinnedOfferCard';
 import { motion, AnimatePresence } from 'framer-motion';
 import {
   Sparkles,
@@ -38,6 +39,7 @@ import {
   Activity,
   Info,
   MessageCircle,
+  Pin,
 } from 'lucide-react';
 import { getBankingApiBase } from '../../utils/apiBase';
 import { useSessionStorageState } from '../../hooks/useSessionStorageState';
@@ -394,10 +396,14 @@ type PersonalizedCommunication = {
 /** API payload from GET /api/banking/agent_c/one-best-offer/:id */
 type OneBestOfferPayload = {
   offer?: {
+    product_id?: string;
     product_name?: string;
     category?: string;
     subcategory?: string;
+    supervisor_pinned?: boolean;
+    priority_pin_reason?: string;
   };
+  supervisor_pinned?: boolean;
   score?: number;
   reason?: string;
   persona?: string;
@@ -2913,6 +2919,7 @@ export default function BankingAgentC() {
   const [ui, setUi] = useSessionStorageState<BankingAgentCUiState>(AGENT_C_UI_KEY, DEFAULT_AGENT_C_UI);
   const { offerScope, churnRiskView, selectedCustomerId, explainOpen, selectedPersonaId, personaCustomerId, activeCommTab, offerScoreOpen, personaCommTab } = ui;
   const offerCardRef = useRef<HTMLDivElement>(null);
+  const queryClient = useQueryClient();
 
   // Deep link from other pages (e.g. Dashboard's "View in Offer & Ad Spend" button):
   // ?persona=<cluster_id> selects that persona in the offer scope and lets the
@@ -2986,6 +2993,36 @@ export default function BankingAgentC() {
     // offer instead of what Agent C would compute right now.
     staleTime: 0,
     refetchOnMount: 'always',
+  });
+
+  // Pin/unpin are scoped to Offer only — independent of Recommender's own
+  // pin (each reads its own field server-side; see api/main_unified_chromadb.py).
+  // Either way, refetch the offer so it reflects the new pin state immediately.
+  const pinOfferMutation = useMutation({
+    mutationFn: async (vars: { targetCustomerId: string; productId: string }) => {
+      const res = await fetch(
+        `${API_BASE}/api/banking/agent_d/pin/offer/${encodeURIComponent(vars.targetCustomerId)}`,
+        { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ product_id: vars.productId }) }
+      );
+      if (!res.ok) throw new Error('Failed to pin');
+      return res.json();
+    },
+    onSuccess: () => {
+      void queryClient.invalidateQueries({ queryKey: ['banking-one-best-offer', selectedCustomerId] });
+    },
+  });
+  const unpinOfferMutation = useMutation({
+    mutationFn: async (targetCustomerId: string) => {
+      const res = await fetch(
+        `${API_BASE}/api/banking/agent_d/pin/offer/${encodeURIComponent(targetCustomerId)}`,
+        { method: 'DELETE' }
+      );
+      if (!res.ok) throw new Error('Failed to unpin');
+      return res.json();
+    },
+    onSuccess: () => {
+      void queryClient.invalidateQueries({ queryKey: ['banking-one-best-offer', selectedCustomerId] });
+    },
   });
 
   const churnQueriesEnabled = customersSuccess && (customersData?.data?.customers?.length ?? 0) > 0;
@@ -3278,6 +3315,17 @@ export default function BankingAgentC() {
                         transition={{ duration: 0.35 }}
                         className="space-y-6"
                       >
+                        {offer.offer.supervisor_pinned && (
+                          <PinnedOfferCard
+                            card={{
+                              product_id: offer.offer.product_id,
+                              product_name: offer.offer.product_name,
+                              reason: offer.offer.priority_pin_reason,
+                            }}
+                            onUnpin={() => selectedCustomerId && unpinOfferMutation.mutate(selectedCustomerId)}
+                            unpinning={unpinOfferMutation.isPending}
+                          />
+                        )}
                         <div className="rounded-2xl bg-white overflow-hidden">
                           {/* ── Card header: customer + persona ── */}
                           <div className="bg-gradient-to-r from-violet-500/10 via-indigo-500/10 to-blue-500/10 px-6 py-4 border-b border-slate-100">
@@ -3289,7 +3337,23 @@ export default function BankingAgentC() {
                                 </p>
                                 <p className="text-sm text-slate-500 mt-0.5">{offer.persona}</p>
                               </div>
-                              <div className="flex flex-wrap gap-2 mt-1">
+                              <div className="flex flex-wrap gap-2 mt-1 items-start">
+                                {!offer.offer.supervisor_pinned && (
+                                  <button
+                                    type="button"
+                                    onClick={() =>
+                                      selectedCustomerId &&
+                                      offer.offer?.product_id &&
+                                      pinOfferMutation.mutate({ targetCustomerId: selectedCustomerId, productId: offer.offer.product_id })
+                                    }
+                                    disabled={pinOfferMutation.isPending}
+                                    title="Pin this offer"
+                                    className="inline-flex items-center gap-1 px-2.5 py-1 rounded-full border border-slate-200 bg-white text-slate-500 text-xs font-semibold hover:bg-slate-50 disabled:opacity-50"
+                                  >
+                                    <Pin className="w-3 h-3" />
+                                    Pin
+                                  </button>
+                                )}
                                 {selectedCustomer?.channel_preference && (
                                   <span className="inline-flex items-center gap-1 text-xs font-semibold px-2.5 py-1 rounded-full bg-indigo-50 border border-indigo-200 text-indigo-700">
                                     <Smartphone className="w-3 h-3" />

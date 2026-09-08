@@ -246,6 +246,58 @@ export default function BankingDataLoader() {
     }
   });
 
+  // ── transactions.csv explicit download (Databricks Files REST API, see
+  // utils/large_file_loader.py) — an explicit, watchable step in the Data
+  // Loader itself instead of an invisible fetch buried inside Segmentation.
+  const [txnDownload, setTxnDownload] = useState<{
+    status: 'idle' | 'downloading' | 'complete' | 'error';
+    pct: number | null; // null = indeterminate (source didn't report a size)
+    error?: string;
+  }>({ status: 'idle', pct: null });
+  const txnPollRef = useRef<ReturnType<typeof setInterval> | null>(null);
+
+  const startTransactionsDownload = async () => {
+    if (txnPollRef.current) return; // already polling
+    try {
+      const res = await fetch(`${API_BASE_URL}/api/banking/datasets/transactions/download`, { method: 'POST' });
+      const body = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        setTxnDownload({ status: 'error', pct: null, error: body?.detail || 'Failed to start download' });
+        return;
+      }
+      if (body.status === 'complete') {
+        setTxnDownload({ status: 'complete', pct: 100 });
+        void queryClient.invalidateQueries({ queryKey: ['banking-datasets'] });
+        return;
+      }
+      setTxnDownload({ status: 'downloading', pct: null });
+      txnPollRef.current = setInterval(async () => {
+        try {
+          const statusRes = await fetch(`${API_BASE_URL}/api/banking/datasets/transactions/download/status`);
+          if (!statusRes.ok) return;
+          const s = await statusRes.json();
+          const pct = s.total_bytes ? Math.round((s.downloaded_bytes / s.total_bytes) * 100) : null;
+          if (s.status === 'complete') {
+            clearInterval(txnPollRef.current!);
+            txnPollRef.current = null;
+            setTxnDownload({ status: 'complete', pct: 100 });
+            void queryClient.invalidateQueries({ queryKey: ['banking-datasets'] });
+          } else if (s.status === 'error') {
+            clearInterval(txnPollRef.current!);
+            txnPollRef.current = null;
+            setTxnDownload({ status: 'error', pct: null, error: s.error || 'Download failed' });
+          } else {
+            setTxnDownload({ status: 'downloading', pct });
+          }
+        } catch { /* transient poll error — try again next tick */ }
+      }, 1000);
+    } catch {
+      setTxnDownload({ status: 'error', pct: null, error: 'Failed to start download' });
+    }
+  };
+
+  useEffect(() => () => { if (txnPollRef.current) clearInterval(txnPollRef.current); }, []);
+
   const handleViewTable = async (tableName: string) => {
     try {
       const datasetToUse = selectedDataset || datasetsData?.datasets?.[0]?.name || 'banking_v1';
@@ -499,6 +551,31 @@ export default function BankingDataLoader() {
                                       {active.row_count?.toLocaleString() || 0} rows
                                       {!checked && <span className="text-amber-600 ml-1">(unchecked — will be skipped)</span>}
                                     </span>
+                                  ) : g.base === 'transactions' && txnDownload.status === 'downloading' ? (
+                                    <div className="space-y-1">
+                                      <span className="text-gray-500">Downloading from Databricks…</span>
+                                      <div className="h-1.5 rounded-full bg-gray-100 overflow-hidden">
+                                        {txnDownload.pct != null ? (
+                                          <div className="h-full rounded-full bg-blue-500 transition-all" style={{ width: `${txnDownload.pct}%` }} />
+                                        ) : (
+                                          <div className="h-full w-1/3 rounded-full bg-blue-500 animate-pulse" />
+                                        )}
+                                      </div>
+                                    </div>
+                                  ) : g.base === 'transactions' ? (
+                                    <div className="flex items-center justify-between gap-2">
+                                      <span className="text-amber-600">
+                                        {txnDownload.status === 'error' ? (txnDownload.error || 'Download failed') : 'Not loaded'}
+                                      </span>
+                                      <button
+                                        onClick={(e) => { e.stopPropagation(); void startTransactionsDownload(); }}
+                                        className="shrink-0 inline-flex items-center gap-1 px-1.5 py-0.5 rounded border border-blue-200 bg-blue-50 text-blue-700 text-[11px] font-semibold hover:bg-blue-100"
+                                        title="Download transactions.csv from Databricks"
+                                      >
+                                        <Download className="w-3 h-3" />
+                                        {txnDownload.status === 'error' ? 'Retry' : 'Download'}
+                                      </button>
+                                    </div>
                                   ) : (
                                     <span className="text-amber-600">File not found</span>
                                   )}

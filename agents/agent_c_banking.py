@@ -25,6 +25,8 @@ except ImportError:
     CLAUDE_AVAILABLE = False
     get_claude_client = None
 
+from agents.agent_d_banking import AgentD_Banking
+
 try:
     from agents.offer_scorer import OfferScorer, load_offers_registry
     OFFER_SCORER_AVAILABLE = True
@@ -190,6 +192,7 @@ class AgentC_Banking:
         fallback_products: Optional[List[Dict]] = None,
         agent_b_reference_recs: Optional[List[Dict[str, Any]]] = None,
         transactions_df=None,
+        supervisor_directives: Optional[Dict[str, Any]] = None,
     ) -> Dict[str, Any]:
         """
         Select the single best offer for this customer and build explainability.
@@ -197,6 +200,11 @@ class AgentC_Banking:
 
         agent_b_reference_recs: Raw rows from rule-based Agent B execute (same order as UI #1–#3).
         When set, B vs C comparison uses execute #1 vs Agent C pick — otherwise raw merge rank vs churn-boosted pick.
+
+        supervisor_directives: Agent D's last_directives for this customer (same dict Agent B's
+        execute() already respects). When it carries a priority_pin_product_id, that product is
+        forced to be THE offer here too — reusing AgentD_Banking.apply_directives_to_recommendations,
+        the exact same pin-forcing logic Agent B uses, so pin behavior stays identical between tabs.
         """
         import time as _time
         _offer_start = _time.monotonic()
@@ -307,6 +315,20 @@ class AgentC_Banking:
                 boosted = self._apply_life_event_boost(boosted, customer_details)
                 boosted.sort(key=lambda x: (-float(x.get("score") or 0), str(x.get("product_id") or "")))
                 best = boosted[0]
+
+        # ── Director pin override ──────────────────────────────────────────
+        # Forces the same product Agent B would show as #1 for this customer,
+        # reusing its exact pin-forcing/stub-synthesis logic so a pin can win
+        # even when nothing else was eligible (best is still None here).
+        if supervisor_directives and supervisor_directives.get('priority_pin_product_id'):
+            pin_pool = list(agent_b_reference_recs) if agent_b_reference_recs else ([best] if best is not None else [])
+            forced = AgentD_Banking.apply_directives_to_recommendations(
+                pin_pool, supervisor_directives, customer_context=customer_details, persona_name=persona_name,
+            )
+            if forced:
+                best = forced[0]
+                selected_from_agent_b = False
+                agent_b_product_rank = None
 
         if best is None:
             channels, best_channel, best_channel_reason = self._compute_channels(
@@ -603,7 +625,10 @@ class AgentC_Banking:
                 "annual_fee": best.get("annual_fee"),
                 "min_balance": best.get("min_balance"),
                 "interest_rate_apy": best.get("interest_rate_apy"),
+                "supervisor_pinned": bool(best.get("supervisor_pinned")),
+                "priority_pin_reason": best.get("priority_pin_reason"),
             },
+            "supervisor_pinned": bool(best.get("supervisor_pinned")),
             "score": score_val,
             "reason": reason,
             "explainability": {
