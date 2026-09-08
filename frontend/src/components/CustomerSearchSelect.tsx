@@ -22,6 +22,14 @@ interface CustomerSearchSelectProps {
   className?: string;
 }
 
+// Virtualization constants for the empty-query "show everything" list (can
+// be thousands of customers) — a fixed row height keeps the windowing math
+// exact; ROW_HEIGHT must match the button's h-[..] class below.
+const ROW_HEIGHT = 52;
+const LIST_HEIGHT = 256; // matches the dropdown's fixed h-64 (a fixed, not max, height —
+                          // virtualization math needs a stable clientHeight to stay exact)
+const OVERSCAN = 6;
+
 function labelFor(c: CustomerSearchOption | undefined, fallbackId: string): string {
   if (!c) return fallbackId;
   return c.customer_name ? `${c.customer_name} (${c.customer_id})` : String(c.customer_id);
@@ -109,7 +117,12 @@ export default function CustomerSearchSelect({
 
   const results = useMemo(() => {
     const q = query.trim().toLowerCase();
-    if (!q) return [];
+    // Empty query: the full customer list, in whatever order it was given —
+    // no scoring/sort needed. Can be thousands of rows; the dropdown below
+    // virtualizes its rendering so this stays smooth. A typed query still
+    // caps at maxResults — a real search already narrows things down, and
+    // there's no benefit to showing every weak fuzzy match.
+    if (!q) return customers;
     return customers
       .map((c) => ({
         customer: c,
@@ -120,6 +133,40 @@ export default function CustomerSearchSelect({
       .slice(0, maxResults)
       .map((r) => r.customer);
   }, [customers, query, maxResults]);
+
+  // Virtualized window into `results` — only these rows actually mount.
+  // Reuses dropdownRef (below) as the scrollable element itself, since it's
+  // already the container these calculations need to track.
+  const [scrollTop, setScrollTop] = useState(0);
+  const startIndex = Math.max(0, Math.floor(scrollTop / ROW_HEIGHT) - OVERSCAN);
+  const endIndex = Math.min(results.length, Math.ceil((scrollTop + LIST_HEIGHT) / ROW_HEIGHT) + OVERSCAN);
+  const visibleResults = results.slice(startIndex, endIndex);
+  const topSpacer = startIndex * ROW_HEIGHT;
+  const bottomSpacer = (results.length - endIndex) * ROW_HEIGHT;
+
+  // A fresh list (query changed, or the dropdown just opened) should start
+  // scrolled to the top, not wherever a previous, longer list left it.
+  useEffect(() => {
+    setScrollTop(0);
+    if (dropdownRef.current) dropdownRef.current.scrollTop = 0;
+  }, [query, open]);
+
+  // Keyboard nav can move `highlight` outside the currently-rendered window —
+  // scroll it into view (and keep scrollTop state in sync, since this moves
+  // the DOM's scroll position directly) so arrowing through a long list works.
+  useEffect(() => {
+    const el = dropdownRef.current;
+    if (!el) return;
+    const rowTop = highlight * ROW_HEIGHT;
+    const rowBottom = rowTop + ROW_HEIGHT;
+    if (rowTop < el.scrollTop) {
+      el.scrollTop = rowTop;
+      setScrollTop(rowTop);
+    } else if (rowBottom > el.scrollTop + LIST_HEIGHT) {
+      el.scrollTop = rowBottom - LIST_HEIGHT;
+      setScrollTop(rowBottom - LIST_HEIGHT);
+    }
+  }, [highlight]);
 
   const trimmedQuery = query.trim();
 
@@ -194,38 +241,42 @@ export default function CustomerSearchSelect({
             ref={dropdownRef}
             role="listbox"
             onMouseDown={(e) => e.preventDefault()}
-            className="fixed max-h-64 overflow-y-auto rounded-xl border border-slate-200 bg-white shadow-lg"
+            onScroll={(e) => setScrollTop(e.currentTarget.scrollTop)}
+            className="fixed h-64 overflow-y-auto rounded-xl border border-slate-200 bg-white shadow-lg"
             style={{ top: dropdownRect.top, left: dropdownRect.left, width: dropdownRect.width, zIndex: 9999 }}
           >
-            {trimmedQuery === '' ? (
-              <div className="px-4 py-3 text-sm text-slate-400">
-                No results
-                <div className="text-xs text-slate-400 mt-0.5">Start typing a customer name or ID to search.</div>
-              </div>
-            ) : results.length === 0 ? (
+            {results.length === 0 ? (
               <div className="px-4 py-3 text-sm text-slate-400">
                 No results for &ldquo;{trimmedQuery}&rdquo;
               </div>
             ) : (
-              results.map((c, i) => (
-                <button
-                  key={c.customer_id}
-                  type="button"
-                  role="option"
-                  aria-selected={String(c.customer_id) === String(value)}
-                  onClick={() => selectCustomer(c)}
-                  onMouseEnter={() => setHighlight(i)}
-                  className={`w-full flex items-center gap-2.5 px-4 py-2.5 text-left border-b border-slate-100 last:border-0 transition-colors ${
-                    i === highlight ? 'bg-blue-50' : 'bg-white'
-                  } ${String(c.customer_id) === String(value) ? 'text-blue-700' : 'text-slate-800'}`}
-                >
-                  <User className="w-4 h-4 text-slate-400 flex-shrink-0" />
-                  <div className="min-w-0 flex-1">
-                    <p className="font-medium truncate">{c.customer_name || c.customer_id}</p>
-                    <p className="text-xs text-slate-500 truncate">{c.customer_id}</p>
-                  </div>
-                </button>
-              ))
+              <>
+                {topSpacer > 0 && <div style={{ height: topSpacer }} />}
+                {visibleResults.map((c, i) => {
+                  const actualIndex = startIndex + i;
+                  return (
+                    <button
+                      key={c.customer_id}
+                      type="button"
+                      role="option"
+                      aria-selected={String(c.customer_id) === String(value)}
+                      onClick={() => selectCustomer(c)}
+                      onMouseEnter={() => setHighlight(actualIndex)}
+                      style={{ height: ROW_HEIGHT }}
+                      className={`w-full flex items-center gap-2.5 px-4 text-left border-b border-slate-100 transition-colors ${
+                        actualIndex === highlight ? 'bg-blue-50' : 'bg-white'
+                      } ${String(c.customer_id) === String(value) ? 'text-blue-700' : 'text-slate-800'}`}
+                    >
+                      <User className="w-4 h-4 text-slate-400 flex-shrink-0" />
+                      <div className="min-w-0 flex-1">
+                        <p className="font-medium truncate">{c.customer_name || c.customer_id}</p>
+                        <p className="text-xs text-slate-500 truncate">{c.customer_id}</p>
+                      </div>
+                    </button>
+                  );
+                })}
+                {bottomSpacer > 0 && <div style={{ height: bottomSpacer }} />}
+              </>
             )}
           </div>,
           document.body,

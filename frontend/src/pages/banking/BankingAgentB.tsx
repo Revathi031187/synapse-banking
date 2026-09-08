@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useMemo, useRef } from 'react';
 import { Link, useSearchParams } from 'react-router-dom';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
+import PinnedOfferCard, { type PinnedOfferCardData } from '../../components/PinnedOfferCard';
 import {
   Search,
   CreditCard,
@@ -20,6 +21,8 @@ import {
   Gift,
   Tag,
   Clock,
+  Pin,
+  PinOff,
 } from 'lucide-react';
 import { getBankingApiBase } from '../../utils/apiBase';
 import { useSessionStorageState } from '../../hooks/useSessionStorageState';
@@ -144,7 +147,11 @@ const MATCH_LEVEL_COLORS = {
 };
 
 type BankingAgentBUiState = {
-  scoringMethod: 'rules' | 'logit';
+  // Locked to 'rules' — the Hybrid ML toggle was removed since rule-based
+  // scoring is the only method actually in use; narrowing the type (rather
+  // than just no longer rendering a way to change it) means TypeScript itself
+  // guarantees nothing can set this to 'logit' again by accident.
+  scoringMethod: 'rules';
   mode: 'persona' | 'customer';
   persona: string;
   customerId: string;
@@ -202,6 +209,14 @@ function stripStalePinnedRankIntro(rankExplanation: string | undefined): string 
   return rankExplanation;
 }
 
+// Persona mode recommends for a whole segment, so a wider list (5) is more
+// useful; single-customer mode is a focused, one-on-one view, so a tighter
+// list (3) reads better. Applied whenever mode is set (initial default,
+// session restore, and switching modes mid-session).
+function topNForMode(mode: 'persona' | 'customer'): number {
+  return mode === 'persona' ? 5 : 3;
+}
+
 function mergeAgentBUi(saved: Partial<BankingAgentBUiState>, def: BankingAgentBUiState): BankingAgentBUiState {
   return {
     ...def,
@@ -209,9 +224,13 @@ function mergeAgentBUi(saved: Partial<BankingAgentBUiState>, def: BankingAgentBU
     // Never restore stale results or run-state from session storage
     executeData: null,
     lastRunFactorWeights: null,
-    // Always reset to the canonical default — ignore any old value in session storage
-    topN: def.topN,
+    // Always reset to the mode-appropriate default — ignore any old value in session storage
+    topN: topNForMode(saved.mode ?? def.mode),
     weightsAccordionOpen: def.weightsAccordionOpen,
+    // Always 'rules' — a session-storage value of 'logit' saved before the
+    // Hybrid ML toggle was removed would otherwise survive this merge and
+    // re-enable dead 'logit'-only branches at runtime despite the narrowed type.
+    scoringMethod: 'rules',
     factorWeights: { ...BANKING_DEFAULTS_PERCENT, ...def.factorWeights, ...saved.factorWeights },
     factorLabels: { ...def.factorLabels, ...saved.factorLabels },
     expandedExplanations: saved.expandedExplanations ?? def.expandedExplanations,
@@ -240,68 +259,8 @@ const DEFAULT_BANKING_AGENT_B_UI: BankingAgentBUiState = {
 
 const AGENT_B_UI_KEY = 'banking-agent-b-v1';
 
-type PinnedOfferCardData = {
-  product_id?: string;
-  product_name?: string;
-  offer_name?: string;
-  offer_type?: string;
-  headline_value?: string;
-  content_benefit_1?: string;
-  content_benefit_2?: string;
-  content_benefit_3?: string;
-  days_remaining?: number | null;
-  terms_summary?: string;
-};
-
-function PinnedOfferCard({ card }: { card: PinnedOfferCardData }) {
-  const benefits = [card.content_benefit_1, card.content_benefit_2, card.content_benefit_3].filter(Boolean);
-  return (
-    <div className="mb-4 rounded-2xl overflow-hidden border border-indigo-200 shadow-md">
-      {/* Gradient header */}
-      <div className="bg-gradient-to-r from-indigo-700 via-violet-700 to-purple-700 px-5 py-4">
-        <div className="flex items-start gap-3 justify-between">
-          <div className="min-w-0">
-            <p className="text-[10px] font-bold uppercase tracking-widest text-indigo-200 mb-1 flex items-center gap-1.5">
-              <Gift className="w-3 h-3" />
-              Director's pinned offer · {card.product_name}
-            </p>
-            {card.offer_name && (
-              <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-white/20 text-white text-xs font-semibold">
-                <Tag className="w-3 h-3" />
-                {card.offer_name}
-              </span>
-            )}
-          </div>
-          {card.days_remaining != null && card.days_remaining < 30 && (
-            <span className="shrink-0 inline-flex items-center gap-1 px-2.5 py-1 rounded-full bg-amber-400/90 text-amber-950 text-[11px] font-bold">
-              <Clock className="w-3 h-3" />
-              {card.days_remaining}d left
-            </span>
-          )}
-        </div>
-        {card.headline_value && (
-          <p className="text-xl font-extrabold text-white mt-2.5 leading-tight">{card.headline_value}</p>
-        )}
-      </div>
-      {/* Benefits */}
-      {benefits.length > 0 && (
-        <div className="bg-white px-5 py-3.5 space-y-2">
-          {benefits.map((b, i) => (
-            <div key={i} className="flex items-start gap-2 text-sm text-slate-700">
-              <CheckCircle2 className="w-4 h-4 text-indigo-500 shrink-0 mt-0.5" />
-              <span>{b}</span>
-            </div>
-          ))}
-          {card.terms_summary && (
-            <p className="text-[11px] text-slate-400 leading-relaxed border-t border-slate-100 pt-2.5 mt-2">
-              {card.terms_summary}
-            </p>
-          )}
-        </div>
-      )}
-    </div>
-  );
-}
+// PinnedOfferCard moved to frontend/src/components/PinnedOfferCard.tsx — shared
+// with the Offer tab so a Director pin looks identical wherever it surfaces.
 
 export default function BankingAgentB() {
   const queryClient = useQueryClient();
@@ -405,7 +364,12 @@ export default function BankingAgentB() {
   const customersQuery = useQuery({
     queryKey: ['banking-customers'],
     queryFn: async () => {
-      const response = await fetch(`${API_BASE_URL}/api/banking/agent_a/customers?limit=100`);
+      // Fetch the full customer table (not a capped page) — CustomerSearchSelect
+      // does its own client-side name/ID matching over whatever it's given, so a
+      // capped ?limit here silently hides every same-name customer past the cap
+      // (e.g. only 1 of 4 "Aaron Brown" rows would ever be searchable). Matches
+      // the limit BankingAgentD already uses for the same search box.
+      const response = await fetch(`${API_BASE_URL}/api/banking/agent_a/customers?limit=5000`);
       if (!response.ok) throw new Error('Failed to fetch customers');
       return response.json();
     },
@@ -669,6 +633,41 @@ export default function BankingAgentB() {
     },
   });
 
+  // Pin/unpin are scoped to Recommender only — independent of Offer's own
+  // pin (each reads its own field server-side; see api/main_unified_chromadb.py).
+  // Either way, re-run the recommendation query so the list reflects the new
+  // pin state immediately.
+  const pinMutation = useMutation({
+    mutationFn: async (vars: { targetCustomerId: string; productId: string }) => {
+      const res = await fetch(
+        `${API_BASE_URL}/api/banking/agent_d/pin/recommender/${encodeURIComponent(vars.targetCustomerId)}`,
+        { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ product_id: vars.productId }) }
+      );
+      if (!res.ok) throw new Error('Failed to pin');
+      return res.json();
+    },
+    onSuccess: (_data, vars) => {
+      void queryClient.invalidateQueries({ queryKey: ['banking-agent-d-directives-b', vars.targetCustomerId] });
+      void queryClient.invalidateQueries({ queryKey: ['banking-agent-d-directives-persona'] });
+      executeMutation.mutate();
+    },
+  });
+  const unpinMutation = useMutation({
+    mutationFn: async (targetCustomerId: string) => {
+      const res = await fetch(
+        `${API_BASE_URL}/api/banking/agent_d/pin/recommender/${encodeURIComponent(targetCustomerId)}`,
+        { method: 'DELETE' }
+      );
+      if (!res.ok) throw new Error('Failed to unpin');
+      return res.json();
+    },
+    onSuccess: (_data, targetCustomerId) => {
+      void queryClient.invalidateQueries({ queryKey: ['banking-agent-d-directives-b', targetCustomerId] });
+      void queryClient.invalidateQueries({ queryKey: ['banking-agent-d-directives-persona'] });
+      executeMutation.mutate();
+    },
+  });
+
   // Deep link from other pages (e.g. Dashboard's "View in Recommender" button):
   // ?persona=<cluster_id>&category=<type|''> selects persona mode with that
   // persona/category and fires the search immediately, so the page lands
@@ -690,7 +689,7 @@ export default function BankingAgentB() {
     const personaParam = searchParams.get('persona');
     if (personaParam === null || executeMutation.isPending) return;
     const categoryParam = searchParams.get('category') || '';
-    setUi((p) => ({ ...p, mode: 'persona', persona: personaParam, category: categoryParam }));
+    setUi((p) => ({ ...p, mode: 'persona', persona: personaParam, category: categoryParam, topN: topNForMode('persona') }));
     executeMutation
       .mutateAsync()
       .then((data: { _factorWeightsUsed?: Record<string, number> }) => {
@@ -713,6 +712,26 @@ export default function BankingAgentB() {
       });
     // eslint-disable-next-line react-hooks/exhaustive-deps -- fires once per deep link, not on every mutation identity change
   }, [searchParams]);
+
+  // On mount, if a customer/persona was already selected in a prior session
+  // (restored from sessionStorage) and its recommendations are showing from
+  // cached `executeData`, silently re-run once to confirm those numbers still
+  // match the CURRENT backend — factor weights, Agent A's segmentation, or the
+  // loaded dataset can all change between sessions (e.g. after a backend
+  // restart resets factor weights to default) while the cached executeData
+  // would otherwise keep displaying the old, now-inconsistent scores
+  // indefinitely until the user happens to click Run again themselves.
+  const didAutoRefreshStaleResults = useRef(false);
+  useEffect(() => {
+    if (didAutoRefreshStaleResults.current) return;
+    didAutoRefreshStaleResults.current = true;
+    if (searchParams.get('persona') !== null) return; // deep-link effect above already owns this mount
+    const hasSelection = (mode === 'customer' && !!customerId) || (mode === 'persona' && !!persona);
+    if (hasSelection && executeData) {
+      executeMutation.mutate();
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- fire once on mount only, not on every field change
+  }, []);
 
   const isFirstContextEffect = useRef(true);
   // Only clear when customer/persona/mode changes — do NOT depend on `executeMutation`:
@@ -856,48 +875,6 @@ export default function BankingAgentB() {
           </Link>
         </div>
 
-        {/* Strategy tabs */}
-        <div className="flex border-b border-gray-200 px-2">
-          <button
-            type="button"
-            onClick={() => setUi((p) => ({ ...p, scoringMethod: 'rules' }))}
-            className={`relative px-5 py-3.5 font-semibold text-sm md:text-base transition-all border-b-2 -mb-px flex items-center gap-2 flex-wrap ${
-              scoringMethod === 'rules'
-                ? 'text-blue-600 border-blue-600 bg-blue-50/50'
-                : 'text-gray-500 border-transparent hover:text-gray-800 hover:bg-gray-50'
-            }`}
-          >
-            Rule-Based Scoring
-            <span className="text-xs px-2 py-0.5 rounded-full bg-gray-200 text-gray-700 font-medium">
-              Banking 12-Factor
-            </span>
-            {scoringMethod === 'rules' && (
-              <span className="text-[10px] uppercase tracking-wide px-2 py-0.5 rounded-full bg-blue-600 text-white font-bold">
-                Current
-              </span>
-            )}
-          </button>
-          <button
-            type="button"
-            onClick={() => setUi((p) => ({ ...p, scoringMethod: 'logit' }))}
-            className={`relative px-5 py-3.5 font-semibold text-sm md:text-base transition-all border-b-2 -mb-px flex items-center gap-2 flex-wrap ${
-              scoringMethod === 'logit'
-                ? 'text-purple-600 border-purple-600 bg-purple-50/50'
-                : 'text-gray-500 border-transparent hover:text-gray-800 hover:bg-gray-50'
-            }`}
-          >
-            Hybrid ML Model
-            <span className="text-xs px-2 py-0.5 rounded-full bg-gradient-to-r from-purple-500 to-fuchsia-500 text-white font-medium">
-              50% ML + 50% Rules
-            </span>
-            {scoringMethod === 'logit' && (
-              <span className="text-[10px] uppercase tracking-wide px-2 py-0.5 rounded-full bg-purple-600 text-white font-bold">
-                Current
-              </span>
-            )}
-          </button>
-        </div>
-
         <div className="p-6 space-y-6">
           {/* Operational mode — pill toggle */}
           <div>
@@ -905,7 +882,7 @@ export default function BankingAgentB() {
             <div className="inline-flex rounded-full border border-gray-200 p-1 bg-gray-50 shadow-inner">
               <button
                 type="button"
-                onClick={() => setUi((p) => ({ ...p, mode: 'persona' }))}
+                onClick={() => setUi((p) => ({ ...p, mode: 'persona', topN: topNForMode('persona') }))}
                 className={`flex items-center gap-2 px-5 py-2.5 rounded-full text-sm font-semibold transition-all ${
                   mode === 'persona'
                     ? 'bg-emerald-600 text-white shadow-md'
@@ -917,7 +894,7 @@ export default function BankingAgentB() {
               </button>
               <button
                 type="button"
-                onClick={() => setUi((p) => ({ ...p, mode: 'customer' }))}
+                onClick={() => setUi((p) => ({ ...p, mode: 'customer', topN: topNForMode('customer') }))}
                 className={`flex items-center gap-2 px-5 py-2.5 rounded-full text-sm font-semibold transition-all ${
                   mode === 'customer'
                     ? 'bg-emerald-600 text-white shadow-md'
@@ -1218,21 +1195,21 @@ export default function BankingAgentB() {
       {/* Loading State */}
       {executeMutation.isPending && (
         <div className={`border rounded-lg p-6 text-center ${
-          scoringMethod === 'logit' 
-            ? 'bg-purple-50 border-purple-200' 
+          false
+            ? 'bg-purple-50 border-purple-200'
             : 'bg-blue-50 border-blue-200'
         }`}>
           <div className={`animate-spin rounded-full h-12 w-12 border-b-2 mx-auto mb-4 ${
-            scoringMethod === 'logit' ? 'border-purple-600' : 'border-blue-600'
+            false ? 'border-purple-600' : 'border-blue-600'
           }`}></div>
           <p className={`font-medium ${
-            scoringMethod === 'logit' ? 'text-purple-700' : 'text-blue-700'
+            false ? 'text-purple-700' : 'text-blue-700'
           }`}>
-            {scoringMethod === 'logit' 
+            {false
               ? `Running Banking Hybrid ML model for ${mode === 'persona' ? persona : 'customer'}...`
               : `Calculating personalized banking scores for ${mode === 'persona' ? persona : 'customer'}...`}
           </p>
-          {scoringMethod === 'logit' && (
+          {false && (
             <p className="text-sm text-purple-600 mt-2">
               AI learning from banking transaction patterns
             </p>
@@ -1269,11 +1246,11 @@ export default function BankingAgentB() {
                 </div>
               </div>
               <div className={`px-4 py-2 rounded-full text-sm font-semibold ${
-                scoringMethod === 'logit'
+                false
                   ? 'bg-gradient-to-r from-purple-500 to-pink-500 text-white'
                   : 'bg-blue-100 text-blue-800'
               }`}>
-                {scoringMethod === 'logit'
+                {false
                   ? 'Hybrid ML (50% ML + 50% Banking Rules)'
                   : 'Banking 12-Factor Scoring'}
               </div>
@@ -1359,7 +1336,7 @@ export default function BankingAgentB() {
             )}
 
             {/* How Hybrid / ML Works (only when Hybrid ML is selected and we have methodology) */}
-            {scoringMethod === 'logit' && (scoringMethodology.formula || scoringMethodology.how_ml_probability_works) && (
+            {false && (scoringMethodology.formula || scoringMethodology.how_ml_probability_works) && (
               <details className="mt-4 p-4 bg-gradient-to-r from-purple-50 to-pink-50 rounded-lg border border-purple-200">
                 <summary className="cursor-pointer font-semibold text-purple-900 flex items-center gap-2">
                   📐 How the hybrid algorithm works (50% ML + 50% rules)
@@ -1451,6 +1428,28 @@ export default function BankingAgentB() {
                     <div className="flex flex-wrap items-center gap-3 mb-2">
                       <span className="text-2xl font-bold text-gray-400">#{index + 1}</span>
                       <h3 className="text-xl font-bold text-gray-900">{rec.product_name}</h3>
+                      <button
+                        type="button"
+                        onClick={() => {
+                          const targetCustomerId = mode === 'persona' ? personaRepCustomerId : customerId;
+                          if (!targetCustomerId) return;
+                          if (rec.supervisor_pinned) {
+                            unpinMutation.mutate(targetCustomerId);
+                          } else {
+                            pinMutation.mutate({ targetCustomerId, productId: rec.product_id });
+                          }
+                        }}
+                        disabled={pinMutation.isPending || unpinMutation.isPending}
+                        title={rec.supervisor_pinned ? 'Unpin this recommendation' : 'Pin this recommendation'}
+                        className={`ml-auto inline-flex items-center gap-1 px-2.5 py-1 rounded-full border text-[11px] font-semibold disabled:opacity-50 transition-colors ${
+                          rec.supervisor_pinned
+                            ? 'border-indigo-300 bg-indigo-50 text-indigo-700 hover:bg-indigo-100'
+                            : 'border-gray-200 bg-white text-gray-500 hover:bg-gray-50'
+                        }`}
+                      >
+                        {rec.supervisor_pinned ? <PinOff className="w-3 h-3" /> : <Pin className="w-3 h-3" />}
+                        {rec.supervisor_pinned ? 'Unpin' : 'Pin'}
+                      </button>
                     </div>
                     <div className="flex items-center gap-4 text-sm text-gray-600">
                       <span className="flex items-center gap-1">
@@ -1540,7 +1539,11 @@ export default function BankingAgentB() {
                     <>
                       {/* Director offer card — shown above spotlight for pinned product */}
                       {showPinnedOffer && directivePinnedOfferCard && (
-                        <PinnedOfferCard card={directivePinnedOfferCard} />
+                        <PinnedOfferCard
+                          card={directivePinnedOfferCard}
+                          onUnpin={() => unpinMutation.mutate(mode === 'persona' ? personaRepCustomerId : customerId)}
+                          unpinning={unpinMutation.isPending}
+                        />
                       )}
 
                       {showSpotlight && (
@@ -2076,7 +2079,7 @@ export default function BankingAgentB() {
                                   </div>
                                 </div>
                                 );
-                              })() : scoringMethod === 'logit' && rec.scoring_breakdown ? (
+                              })() : false && rec.scoring_breakdown ? (
                                 /* HYBRID ML MODEL EXPLANATION */
                                 <div>
                                   <p className="text-xs font-semibold text-purple-900 mb-3">
