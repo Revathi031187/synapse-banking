@@ -6,8 +6,9 @@ import {
   LayoutDashboard, TrendingUp, ChevronLeft, ChevronRight, Info,
   AlertTriangle, Star, PenSquare, Database, X,
 } from 'lucide-react';
+import { getBankingApiBase } from '../../utils/apiBase';
 
-const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || 'http://localhost:8002';
+const API_BASE_URL = getBankingApiBase();
 
 // ─── Types ──────────────────────────────────────────────────────────────────
 // A per-factor entry from Banking12FactorScorer.score_product()'s breakdown —

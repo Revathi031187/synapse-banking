@@ -2,8 +2,9 @@ import React, { useState } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import { useQuery } from '@tanstack/react-query';
 import { ArrowLeft, Search, Star, DollarSign, ShoppingBag, TrendingUp, Package } from 'lucide-react';
+import { getBankingApiBase } from '../../utils/apiBase';
 
-const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || 'http://localhost:8002/api';
+const API_BASE_URL = `${getBankingApiBase()}/api`;
 
 export default function AcademyRecommendations() {
   const { customerId } = useParams<{ customerId: string }>();

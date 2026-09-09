@@ -1,8 +1,9 @@
 import React, { useState } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { ChevronDown, ChevronRight, Users, Target, TrendingUp, DollarSign, Activity, Layers } from 'lucide-react';
+import { getBankingApiBase } from '../../utils/apiBase';
 
-const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || 'http://localhost:8002';
+const API_BASE_URL = getBankingApiBase();
 
 interface MacroPersona {
   cluster_id: number;

@@ -3,12 +3,13 @@ import { Home, Database, Users, Target, BarChart3, Search, Crosshair, Star, Acti
 import { AnimatePresence, motion } from 'framer-motion';
 import latentviewLogo from '../assets/latentview-logo.svg';
 import { useQuery } from '@tanstack/react-query';
+import { getBankingApiBase } from '../utils/apiBase';
 
 interface UnifiedLayoutProps {
   industry: 'banking' | 'retail' | 'academy';
 }
 
-const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || 'http://localhost:8002';
+const API_BASE_URL = getBankingApiBase();
 
 export default function UnifiedLayout({ industry }: UnifiedLayoutProps) {
   const navigate = useNavigate();
