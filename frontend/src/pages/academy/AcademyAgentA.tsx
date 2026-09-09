@@ -28,8 +28,9 @@ import {
 } from 'recharts';
 import AcademyAgentA_CustomerInsights from './AcademyAgentA_CustomerInsights';
 import AcademyDataLoader from './AcademyDataLoader';
+import { getBankingApiBase } from '../../utils/apiBase';
 
-const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || 'http://localhost:8002';
+const API_BASE_URL = getBankingApiBase();
 
 const COLORS = ['#059669', '#2563eb', '#ea580c'];
 const COLOR_MAP: Record<string, string> = {

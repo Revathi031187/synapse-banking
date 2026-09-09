@@ -2,14 +2,15 @@ import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { motion, AnimatePresence } from 'framer-motion';
 import { useState } from 'react';
 import { FolderOpen, Database, CheckCircle2, AlertCircle, Eye, X } from 'lucide-react';
+import { getBankingApiBase } from '../../utils/apiBase';
 
 export default function AcademyDataLoader() {
   const queryClient = useQueryClient();
   const [selectedDataset, setSelectedDataset] = useState<string>('');
   const [viewingTable, setViewingTable] = useState<string | null>(null);
   const [tableData, setTableData] = useState<any | null>(null);
-  
-  const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || 'http://localhost:8002';
+
+  const API_BASE_URL = getBankingApiBase();
   
   // Fetch available datasets
   const { data: datasetsData, isLoading } = useQuery({

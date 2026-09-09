@@ -1,8 +1,9 @@
 import React, { useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { X, User, TrendingUp, ShoppingBag, Target, DollarSign, Award, Package, AlertCircle } from 'lucide-react';
+import { getBankingApiBase } from '../utils/apiBase';
 
-const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || 'http://localhost:8002';
+const API_BASE_URL = getBankingApiBase();
 
 interface CustomerInsightModalProps {
   customerId: string;

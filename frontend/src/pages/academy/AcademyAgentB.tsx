@@ -1,8 +1,9 @@
 import React, { useState, useEffect } from 'react';
 import { useQuery, useMutation } from '@tanstack/react-query';
 import { Search, Package, TrendingUp, AlertCircle, CheckCircle2, Star, DollarSign, ChevronDown, ShoppingCart } from 'lucide-react';
+import { getBankingApiBase } from '../../utils/apiBase';
 
-const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || 'http://localhost:8002';
+const API_BASE_URL = getBankingApiBase();
 
 const MATCH_LEVEL_COLORS = {
   'Perfect Match': 'bg-green-100 text-green-800 border-green-300',
