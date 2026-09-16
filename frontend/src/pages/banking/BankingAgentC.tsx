@@ -51,12 +51,14 @@ const AGENT_C_UI_KEY = 'banking-agent-c-v1';
 type BankingAgentCUiState = {
   offerScope: 'customer' | 'persona';
   churnRiskView: 'customer' | 'persona';
+  /** Customer mode: a real customer_id. Persona mode: a `persona:<id>` marker, set
+   * only when "Compute Best Offer" is clicked (no customer picker — persona mode is
+   * segment-wide, not one hand-picked person); see the offerData queryFn below,
+   * which branches on this prefix to call the segment-wide endpoint instead of the
+   * per-customer one. */
   selectedCustomerId: string | null;
   explainOpen: boolean;
   selectedPersonaId: string | null;
-  /** Staged customer chosen from the persona-scoped search — NOT yet computed
-   * until "Compute Best Offer" is clicked (see personaCustomerId usage below). */
-  personaCustomerId: string | null;
   activeCommTab: 'push' | 'email' | 'flyer';
   offerScoreOpen: boolean;
   personaOfferScoreOpen: boolean;
@@ -69,7 +71,6 @@ const DEFAULT_AGENT_C_UI: BankingAgentCUiState = {
   selectedCustomerId: null,
   explainOpen: true,
   selectedPersonaId: null,
-  personaCustomerId: null,
   activeCommTab: 'push',
   offerScoreOpen: false,
   personaOfferScoreOpen: false,
@@ -2917,18 +2918,20 @@ function CommunicationPreviewPanel({
 
 export default function BankingAgentC() {
   const [ui, setUi] = useSessionStorageState<BankingAgentCUiState>(AGENT_C_UI_KEY, DEFAULT_AGENT_C_UI);
-  const { offerScope, churnRiskView, selectedCustomerId, explainOpen, selectedPersonaId, personaCustomerId, activeCommTab, offerScoreOpen, personaCommTab } = ui;
+  const { offerScope, churnRiskView, selectedCustomerId, explainOpen, selectedPersonaId, activeCommTab, offerScoreOpen, personaCommTab } = ui;
   const offerCardRef = useRef<HTMLDivElement>(null);
   const queryClient = useQueryClient();
 
   // Deep link from other pages (e.g. Dashboard's "View in Offer & Ad Spend" button):
   // ?persona=<cluster_id> selects that persona in the offer scope and lets the
-  // existing scroll-to-offer effect below carry it into view.
+  // existing scroll-to-offer effect below carry it into view. Also sets the
+  // persona: marker directly so the offer computes immediately, matching persona
+  // mode's own segment-picker behavior (no separate customer selection step).
   const [searchParams, setSearchParams] = useSearchParams();
   useEffect(() => {
     const personaParam = searchParams.get('persona');
     if (!personaParam) return;
-    setUi((p) => ({ ...p, offerScope: 'persona', selectedPersonaId: personaParam }));
+    setUi((p) => ({ ...p, offerScope: 'persona', selectedPersonaId: personaParam, selectedCustomerId: `persona:${personaParam}` }));
     const next = new URLSearchParams(searchParams);
     next.delete('persona');
     setSearchParams(next, { replace: true });
@@ -2936,8 +2939,9 @@ export default function BankingAgentC() {
   }, [searchParams]);
 
   // Scroll to offer card once a best offer has actually been computed — for
-  // either mode, since persona mode now funnels into the same shared
-  // selectedCustomerId + offer card once "Compute Best Offer" is clicked.
+  // either mode, since persona mode's "Compute Best Offer" button (see the segment
+  // picker below) sets selectedCustomerId to a `persona:` marker and shares this
+  // same effect with Customer mode's search-driven selection.
   useEffect(() => {
     if (!selectedCustomerId) return;
     const t = setTimeout(() => offerCardRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' }), 400);
@@ -2970,6 +2974,11 @@ export default function BankingAgentC() {
     }>;
   }, [customersData]);
 
+  // Persona mode never picks a real customer — selectedCustomerId carries a
+  // `persona:<id>` marker instead, set as soon as a segment is chosen. This branch
+  // is what actually swaps in the segment-wide endpoint for that case.
+  const personaMarkerId = selectedCustomerId?.startsWith('persona:') ? selectedCustomerId.slice('persona:'.length) : null;
+
   const {
     data: offerData,
     isLoading: offerLoading,
@@ -2977,7 +2986,10 @@ export default function BankingAgentC() {
   } = useQuery({
     queryKey: ['banking-one-best-offer', selectedCustomerId],
     queryFn: async () => {
-      const res = await fetch(`${API_BASE}/api/banking/agent_c/one-best-offer/${selectedCustomerId}`);
+      const url = personaMarkerId
+        ? `${API_BASE}/api/banking/agent_c/persona-best-offer?persona_id=${encodeURIComponent(personaMarkerId)}`
+        : `${API_BASE}/api/banking/agent_c/one-best-offer/${selectedCustomerId}`;
+      const res = await fetch(url);
       if (!res.ok) {
         const err = await res.json().catch(() => ({}));
         throw new Error(err.detail || 'Failed to load offer');
@@ -3087,41 +3099,6 @@ export default function BankingAgentC() {
 
   const personas = (personasData?.personas ?? []) as Array<{ id: string; name: string; size: number; percentage?: number }>;
 
-  // Customers scoped to the selected persona — lets the marketer search within
-  // just that segment instead of picking a generic representative customer.
-  // Mirrors the same pattern used by the Director tab (BankingAgentD.tsx).
-  const {
-    data: personaCustomersData,
-    isLoading: personaCustomersLoading,
-  } = useQuery({
-    queryKey: ['banking-agent-c-persona-customers', selectedPersonaId],
-    queryFn: async () => {
-      const res = await fetch(`${API_BASE}/api/banking/agent_a/customers?cluster_id=${encodeURIComponent(selectedPersonaId ?? '')}&limit=500&skip=0`);
-      if (!res.ok) throw new Error('Failed to fetch segment customers');
-      return res.json();
-    },
-    enabled: offerScope === 'persona' && !!selectedPersonaId,
-  });
-  const personaCustomers = (personaCustomersData?.data?.customers ?? []) as Array<{
-    customer_id: string;
-    customer_name?: string;
-    [key: string]: unknown;
-  }>;
-
-  // Pre-fill the search box with the segment's first customer (the same
-  // "default customer" this tab used to auto-compute for), without firing
-  // any compute — matches the Director tab's default-selection pattern.
-  useEffect(() => {
-    if (offerScope !== 'persona' || !selectedPersonaId) return;
-    if (personaCustomersData === undefined) return;
-    if (personaCustomers.length === 0) return;
-    const inList = personaCustomers.some((c) => String(c.customer_id) === String(personaCustomerId));
-    if (!personaCustomerId || !inList) {
-      setUi((p) => ({ ...p, personaCustomerId: String(personaCustomers[0].customer_id) }));
-    }
-    // eslint-disable-next-line react-hooks/exhaustive-deps -- only re-run when the persona-scoped list changes
-  }, [offerScope, selectedPersonaId, personaCustomersData]);
-
   const offer = offerData?.data as OneBestOfferPayload | undefined;
   const cohortHighRisk = useMemo(
     () => (churnHighData?.cohort ?? []) as ChurnCohortCustomerRow[],
@@ -3159,6 +3136,13 @@ export default function BankingAgentC() {
     () => customers.find((c) => c.customer_id === selectedCustomerId),
     [customers, selectedCustomerId]
   );
+
+  // Persona mode has no real customer to display or pin against — show the
+  // segment's name instead, and pin/unpin (which write to Agent D's per-customer
+  // ledger) are hidden entirely rather than acting on a synthetic id.
+  const displayCustomerLabel = personaMarkerId
+    ? (personas.find((p) => p.id === personaMarkerId)?.name ?? 'Segment')
+    : (selectedCustomer?.customer_name ?? selectedCustomerId ?? '');
 
   return (
     <div className="space-y-6 animate-fadeIn">
@@ -3232,47 +3216,39 @@ export default function BankingAgentC() {
               </>
             )}
 
-            {/* Persona-mode picker — kept above the shared result card (like Customer
-                mode's picker above) so the segment/customer controls stay reachable
-                and don't get scrolled out of view once a tall offer result renders. */}
+            {/* Persona mode: no customer selection step — that's what Customer mode
+                above is for. Persona mode is segment-wide (aggregate profile + the
+                segment's #1 recommended product from Agent B, matching the
+                Dashboard's Best Offer card), computed on demand via the button below
+                rather than immediately on segment selection. */}
             {offerScope === 'persona' && customersSuccess && (customersData?.data?.customers?.length ?? 0) > 0 && (
               <div className="space-y-4">
                 <p className="text-xs text-slate-500">
-                  Pick a segment, then search for the specific customer within it you want to market to — nothing
-                  is computed until you click <strong>Compute Best Offer</strong> below.
+                  Pick a segment, then click <strong>Compute Best Offer</strong> to see its best offer for the
+                  segment as a whole.
                 </p>
-                <div className="grid md:grid-cols-2 gap-4">
-                  <div>
-                    <label className="block text-sm font-semibold text-slate-700 mb-2">Segment (persona)</label>
-                    <select
-                      value={selectedPersonaId ?? ''}
-                      onChange={(e) => setUi((p) => ({ ...p, selectedPersonaId: e.target.value || null, personaCustomerId: null, selectedCustomerId: null }))}
-                      className="w-full rounded-xl border border-slate-200 bg-white px-4 py-3 shadow-sm focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500"
-                    >
-                      <option value="">Select a segment…</option>
-                      {personas.map((p) => (
-                        <option key={p.id} value={p.id}>
-                          {p.name} ({p.size} customers)
-                        </option>
-                      ))}
-                    </select>
-                  </div>
-                  <div>
-                    <label className="block text-sm font-semibold text-slate-700 mb-2">Customer in this segment</label>
-                    <CustomerSearchSelect
-                      customers={personaCustomers}
-                      value={personaCustomerId ?? ''}
-                      onChange={(id) => setUi((p) => ({ ...p, personaCustomerId: id }))}
-                      loading={personaCustomersLoading}
-                      emptyListLabel={selectedPersonaId ? 'No customers found in this segment.' : 'Select a segment first.'}
-                      placeholder="Search by name or ID..."
-                    />
-                  </div>
+                <div>
+                  <label className="block text-sm font-semibold text-slate-700 mb-2">Segment (persona)</label>
+                  <select
+                    value={selectedPersonaId ?? ''}
+                    onChange={(e) => {
+                      const id = e.target.value || null;
+                      setUi((p) => ({ ...p, selectedPersonaId: id, selectedCustomerId: null }));
+                    }}
+                    className="w-full max-w-xl rounded-xl border border-slate-200 bg-white px-4 py-3 shadow-sm focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500"
+                  >
+                    <option value="">Select a segment…</option>
+                    {personas.map((p) => (
+                      <option key={p.id} value={p.id}>
+                        {p.name} ({p.size} customers)
+                      </option>
+                    ))}
+                  </select>
                 </div>
 
                 <button
-                  onClick={() => setUi((p) => ({ ...p, selectedCustomerId: p.personaCustomerId }))}
-                  disabled={!personaCustomerId}
+                  onClick={() => setUi((p) => (p.selectedPersonaId ? { ...p, selectedCustomerId: `persona:${p.selectedPersonaId}` } : p))}
+                  disabled={!selectedPersonaId}
                   className="w-full max-w-xl rounded-xl bg-indigo-600 text-white font-semibold px-4 py-3 shadow-sm hover:bg-indigo-700 disabled:bg-slate-200 disabled:text-slate-400 disabled:cursor-not-allowed transition-colors"
                 >
                   Compute Best Offer
@@ -3284,10 +3260,11 @@ export default function BankingAgentC() {
               <p className="text-sm text-slate-500">Load customers from Segmentation to use persona mode.</p>
             )}
 
-            {/* Shared result card — populated once selectedCustomerId is set, whether
-                from Customer mode's search above or Persona mode's "Compute Best Offer"
-                button above. Kept as a single render path so persona mode reuses the
-                exact same computation/markup instead of a separate implementation. */}
+            {/* Shared result card — populated once selectedCustomerId is set, whether a
+                real customer_id from Customer mode's search above, or a `persona:` marker
+                set by persona mode's "Compute Best Offer" button above. Kept as a single
+                render path so persona mode reuses the exact same computation/markup
+                instead of a separate implementation. */}
             {!!selectedCustomerId && (
               <>
                 <div className="mt-6">
@@ -3302,7 +3279,7 @@ export default function BankingAgentC() {
                       >
                         <Loader2 className="w-12 h-12 text-violet-500 animate-spin mb-4" />
                         <p className="text-slate-600 font-medium">
-                          Computing best offer for {selectedCustomer?.customer_name ?? selectedCustomerId}...
+                          Computing best offer for {displayCustomerLabel}...
                         </p>
                       </motion.div>
                     ) : offer?.offer ? (
@@ -3315,7 +3292,9 @@ export default function BankingAgentC() {
                         transition={{ duration: 0.35 }}
                         className="space-y-6"
                       >
-                        {offer.offer.supervisor_pinned && (
+                        {/* Pin/unpin write to Agent D's per-customer ledger — meaningless
+                            for a segment-wide aggregate result, so hidden in persona mode. */}
+                        {!personaMarkerId && offer.offer.supervisor_pinned && (
                           <PinnedOfferCard
                             card={{
                               product_id: offer.offer.product_id,
@@ -3333,12 +3312,12 @@ export default function BankingAgentC() {
                               <div>
                                 <p className="text-xs font-semibold text-slate-500 uppercase tracking-wider">One Best Offer</p>
                                 <p className="text-xl font-bold text-slate-900 mt-0.5">
-                                  {selectedCustomer?.customer_name ?? selectedCustomerId}
+                                  {displayCustomerLabel}
                                 </p>
                                 <p className="text-sm text-slate-500 mt-0.5">{offer.persona}</p>
                               </div>
                               <div className="flex flex-wrap gap-2 mt-1 items-start">
-                                {!offer.offer.supervisor_pinned && (
+                                {!personaMarkerId && !offer.offer.supervisor_pinned && (
                                   <button
                                     type="button"
                                     onClick={() =>
