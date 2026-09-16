@@ -290,6 +290,10 @@ export default function BankingAgentD() {
           saved_goals: [],
           incomplete_applications: [],
           clicked_product_ids: [],
+          // Persona mode: recommendation + offer are computed for the whole segment
+          // server-side (same logic as the Recommender/Offer tabs' persona modes) —
+          // customer_id still identifies which real customer's ledger tracks impressions/clicks.
+          ...(mode === 'persona' && personaId ? { persona_id: personaId } : {}),
         }),
       });
       if (!res.ok) {
@@ -513,49 +517,43 @@ export default function BankingAgentD() {
           </div>
 
           {mode === 'persona' && (
-            <div className="grid md:grid-cols-2 gap-4">
-              <div>
-                <label className="block text-sm font-medium text-slate-700 mb-1">Persona / segment</label>
-                <select
-                  className="w-full border border-slate-300 rounded-xl px-3 py-2.5 bg-white"
-                  value={personaId}
-                  disabled={personas.length === 0 || personasQuery.isLoading}
-                  onChange={(e) => {
-                    setUi((prev) => ({
-                      ...prev,
-                      personaId: e.target.value,
-                      customerId: '',
-                    }));
-                    orchestrateMutation.reset();
-                  }}
-                >
-                  {personasQuery.isLoading ? (
-                    <option value="">Loading segments…</option>
-                  ) : personas.length === 0 ? (
-                    <option value="">Run Segmentation first — no segments</option>
-                  ) : (
-                    personas.map((p) => (
-                      <option key={String(p.id)} value={String(p.id)}>
-                        {p.name}
-                        {p.size != null ? ` (${p.size})` : ''}
-                      </option>
-                    ))
-                  )}
-                </select>
-              </div>
-              <div>
-                <label className="block text-sm font-medium text-slate-700 mb-1">Customer in segment</label>
-                <CustomerSearchSelect
-                  customers={segmentCustomers}
-                  value={customerId}
-                  loading={segmentCustomersQuery.isLoading}
-                  emptyListLabel="No customers in segment (run Segmentation)"
-                  onChange={(id) => {
-                    setUi((prev) => ({ ...prev, customerId: id, persistedOrchestrate: null, pinCleared: false }));
-                    orchestrateMutation.reset();
-                  }}
-                />
-              </div>
+            // No customer picker here by design — persona mode runs Director for the
+            // segment as a whole, not a hand-picked individual (that's what Customer
+            // mode above is for). The segment's representative customer is still
+            // resolved automatically underneath (see the effect populating customerId
+            // from segmentCustomers below) since Director's orchestrate logic — the
+            // impression ledger, click tracking, incomplete-application recovery — is
+            // inherently tied to one real customer's behavioral history; there's no
+            // whole-segment equivalent to run instead, unlike Recommender/Offer's
+            // aggregate-profile approach.
+            <div className="max-w-md">
+              <label className="block text-sm font-medium text-slate-700 mb-1">Persona / segment</label>
+              <select
+                className="w-full border border-slate-300 rounded-xl px-3 py-2.5 bg-white"
+                value={personaId}
+                disabled={personas.length === 0 || personasQuery.isLoading}
+                onChange={(e) => {
+                  setUi((prev) => ({
+                    ...prev,
+                    personaId: e.target.value,
+                    customerId: '',
+                  }));
+                  orchestrateMutation.reset();
+                }}
+              >
+                {personasQuery.isLoading ? (
+                  <option value="">Loading segments…</option>
+                ) : personas.length === 0 ? (
+                  <option value="">Run Segmentation first — no segments</option>
+                ) : (
+                  personas.map((p) => (
+                    <option key={String(p.id)} value={String(p.id)}>
+                      {p.name}
+                      {p.size != null ? ` (${p.size})` : ''}
+                    </option>
+                  ))
+                )}
+              </select>
             </div>
           )}
 
@@ -608,7 +606,7 @@ export default function BankingAgentD() {
         {/* Empty state */}
         {!data && !orchestrateMutation.isPending && (
           <div className="border-2 border-dashed border-slate-300 rounded-2xl py-20 px-6 text-center text-slate-500 text-sm">
-            Select mode, choose a customer, then <strong>Load supervisor view</strong>.
+            Select mode, choose a customer or segment, then <strong>Load supervisor view</strong>.
           </div>
         )}
 

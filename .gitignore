@@ -83,6 +83,7 @@ Desktop.ini
 *_cache.json
 .agent_a_cache.json
 data/preloaded/meridian_bank/.agent_a_cache.json
+data/preloaded/meridian_bank/agent_d_test_log.csv
 
 # Large data files excluded from git (too big for Databricks Repos/Apps 10MB
 # per-file limit — fetched at runtime instead, see utils/large_file_loader.py)
