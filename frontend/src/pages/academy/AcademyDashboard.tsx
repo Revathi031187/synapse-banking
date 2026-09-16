@@ -2,8 +2,9 @@ import React from 'react';
 import { Link } from 'react-router-dom';
 import { Users, ShoppingBag, Target, ArrowRight } from 'lucide-react';
 import { useQuery } from '@tanstack/react-query';
+import { getBankingApiBase } from '../../utils/apiBase';
 
-const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || 'http://localhost:8002';
+const API_BASE_URL = getBankingApiBase();
 
 export default function AcademyDashboard() {
   // Check if Agent A has been run

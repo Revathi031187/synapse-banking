@@ -3,8 +3,9 @@ import { useParams, useNavigate } from 'react-router-dom';
 import { useQuery, useMutation } from '@tanstack/react-query';
 import { ArrowLeft, Users, DollarSign, TrendingUp, Award, Shield, Star, ChevronRight } from 'lucide-react';
 import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer, PieChart, Pie, Cell } from 'recharts';
+import { getBankingApiBase } from '../../utils/apiBase';
 
-const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || 'http://localhost:8002/api';
+const API_BASE_URL = `${getBankingApiBase()}/api`;
 
 const COLORS = ['#10b981', '#3b82f6', '#f59e0b', '#ef4444'];
 

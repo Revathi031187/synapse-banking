@@ -2,6 +2,7 @@ import { useState, useEffect } from 'react';
 import { useQuery, useMutation } from '@tanstack/react-query';
 import { motion, AnimatePresence } from 'framer-motion';
 import { RadarChart, Radar, PolarGrid, PolarAngleAxis, PolarRadiusAxis, Tooltip, Legend, ResponsiveContainer } from 'recharts';
+import { getBankingApiBase } from '../../utils/apiBase';
 
 interface Customer {
   customer_id: string;
@@ -63,7 +64,7 @@ interface Recommendation {
   reason: string;
 }
 
-const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || 'http://localhost:8002';
+const API_BASE_URL = getBankingApiBase();
 const API_BASE = `${API_BASE_URL}/api`;
 
 export default function AcademyAgentA_CustomerInsights() {
