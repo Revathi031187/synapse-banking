@@ -1,3 +1,4 @@
+import { useEffect } from 'react';
 import { Outlet, NavLink, useNavigate, useLocation } from 'react-router-dom';
 import { Home, Database, Users, Target, BarChart3, Search, Crosshair, Star, Activity, Sparkles, Globe, TrendingUp, LayoutDashboard, Plug } from 'lucide-react';
 import { AnimatePresence, motion } from 'framer-motion';
@@ -15,7 +16,15 @@ export default function UnifiedLayout({ industry }: UnifiedLayoutProps) {
   const navigate = useNavigate();
   const location = useLocation();
   const isDashboard = location.pathname === `/${industry}/dashboard`;
-  
+
+  // React Router doesn't scroll to top on navigation by default  -  without this,
+  // switching tabs (e.g. scrolled deep into Offer's page, then clicking
+  // Recommender) landed wherever the previous page's scroll position was,
+  // instead of at the top of the newly-opened tab.
+  useEffect(() => {
+    window.scrollTo(0, 0);
+  }, [location.pathname]);
+
   // Check if Agent A has been run (for Academy industry)
   const { data: agentAResults } = useQuery({
     queryKey: ['academy-agent-a-results'],
@@ -176,7 +185,7 @@ export default function UnifiedLayout({ industry }: UnifiedLayoutProps) {
         </motion.div>
       </AnimatePresence>
 
-      {/* Footer — hidden on dashboard (no-scroll layout) */}
+      {/* Footer  -  hidden on dashboard (no-scroll layout) */}
       {!isDashboard && <footer className="bg-white border-t border-gray-200 mt-16">
         <div className="max-w-7xl mx-auto px-6 py-8">
           <div className="flex items-center justify-between">

@@ -144,7 +144,7 @@ class AgentC_Banking:
 
     def _check_compliance_rules(self, candidate: Dict, customer_details: Dict) -> bool:
         """
-        Fast Python compliance check — no LLM.
+        Fast Python compliance check  -  no LLM.
         Returns True if the offer is eligible, False if it must be skipped.
         """
         metrics = customer_details.get('metrics') or {}
@@ -171,7 +171,7 @@ class AgentC_Banking:
             return False
 
         # Debt guard: don't push high-APR rewards/premium credit cards at heavily-indebted,
-        # fee-sensitive customers — only balance-transfer and secured cards are appropriate
+        # fee-sensitive customers  -  only balance-transfer and secured cards are appropriate
         outstanding_debt = float(metrics.get('outstanding_debt_total', 0) or 0)
         category_val = str(candidate.get('category', '')).lower()
         subcategory_val = str(candidate.get('subcategory', '')).lower()
@@ -199,11 +199,11 @@ class AgentC_Banking:
         If no candidates from recommendations, uses fallback_products when provided.
 
         agent_b_reference_recs: Raw rows from rule-based Agent B execute (same order as UI #1–#3).
-        When set, B vs C comparison uses execute #1 vs Agent C pick — otherwise raw merge rank vs churn-boosted pick.
+        When set, B vs C comparison uses execute #1 vs Agent C pick  -  otherwise raw merge rank vs churn-boosted pick.
 
         supervisor_directives: Agent D's last_directives for this customer (same dict Agent B's
         execute() already respects). When it carries a priority_pin_product_id, that product is
-        forced to be THE offer here too — reusing AgentD_Banking.apply_directives_to_recommendations,
+        forced to be THE offer here too  -  reusing AgentD_Banking.apply_directives_to_recommendations,
         the exact same pin-forcing logic Agent B uses, so pin behavior stays identical between tabs.
         """
         import time as _time
@@ -227,21 +227,30 @@ class AgentC_Banking:
         agent_b_product_rank = None
 
         # ── Primary path: use Agent B's ordered product list ─────────────────
-        # Agent C's job is now OFFER SELECTION, not product reselection.
-        # Respect the Recommender's product choice; apply life event + churn boosts
-        # only to re-order within Agent B's list before picking the first eligible.
+        # Agent C's job is OFFER SELECTION, not product reselection  -  the best
+        # offer must always be Agent B's #1 product (same list, same order),
+        # for both per-customer and per-cluster calls. Life event / churn signals
+        # are surfaced in the "why this offer" narrative below, but must NOT
+        # re-rank the pool here  -  that was previously letting a boosted #2/#3
+        # win over Agent B's actual #1, which is exactly the Recommender-vs-
+        # Offer (and, downstream, Director) disconnect this pathway must avoid.
+        # Exclusions/compliance are the only reason to skip past #1  -  a real
+        # eligibility block, not a preference reordering.
+        #
+        # Agent B's own execute() (rule-based agent_b_banking_chromadb.py) applies
+        # any Agent D supervisor directives (boost/deprioritize/pin from the
+        # customer's ledger) via this exact same AgentD_Banking helper whenever
+        # the Recommender tab is loaded with use_agent_d_directives  -  so Agent C
+        # must apply them here too, in the same order, or a lingering boost/pin
+        # from an earlier click/goal/Director run makes Recommender show one
+        # product while Offer, having never looked at the ledger, shows another.
         best = None
         if agent_b_reference_recs and len(agent_b_reference_recs) > 0:
             primary_pool = [dict(r) for r in agent_b_reference_recs]
-            # Apply life event signal to surface the most contextually relevant product
-            primary_pool = self._apply_life_event_boost(primary_pool, customer_details)
-            # Apply churn retention boost within the list
-            if churn_risk_score is not None and churn_category in ("High", "Critical"):
-                for p in primary_pool:
-                    cat = p.get("category") or ""
-                    if any(rc in cat for rc in retention_categories):
-                        p["score"] = float(p.get("score") or 0) + 0.12
-            primary_pool.sort(key=lambda x: (-float(x.get("score") or 0), str(x.get("product_id") or "")))
+            if supervisor_directives:
+                primary_pool = AgentD_Banking.apply_directives_to_recommendations(
+                    primary_pool, supervisor_directives, customer_context=customer_details, persona_name=persona_name,
+                )
             for rank, candidate in enumerate(primary_pool):
                 pid = str(candidate.get("product_id") or "")
                 if pid in excluded_product_ids:
@@ -337,7 +346,7 @@ class AgentC_Banking:
             _offer_ms = int((_time.monotonic() - _offer_start) * 1000)
             logger.info(
                 f"[Agent C] No eligible offer for customer={customer_id} after exclusions/compliance "
-                f"(duration={_offer_ms}ms) — falling back to manual review / retention outreach"
+                f"(duration={_offer_ms}ms)  -  falling back to manual review / retention outreach"
             )
             return {
                 "customer_id": customer_id,
@@ -358,7 +367,7 @@ class AgentC_Banking:
                 "agent_b_product_rank": None,
             }
 
-        # Raw Agent B reference ranking — for Recommender vs Best Offer comparison panel
+        # Raw Agent B reference ranking  -  for Recommender vs Best Offer comparison panel
         b_ranked = sorted(
             [dict(r) for r in (agent_b_reference_recs or [best])],
             key=lambda x: float(x.get("score") or 0),
@@ -539,7 +548,7 @@ class AgentC_Banking:
 
         # ── MTA Two-Tier Channel Override (personal signal > segment signal) ────
         # If customer has >= 3 sends with any engagement, use their personal
-        # click/open rates to select the channel — not segment-level Markov.
+        # click/open rates to select the channel  -  not segment-level Markov.
         # Segment attribution is only the fallback when personal data is thin.
         mta_channel_recommendation: Dict[str, Any] = {}
         if MTA_AVAILABLE and _get_mta_engine is not None:
@@ -648,9 +657,9 @@ class AgentC_Banking:
             "personalized_communication": offer_intel_result.get("personalized_communication"),
             # Credit Personalization
             "credit_personalization": credit_personalization,
-            # Agentic Analysis — LLM deep-dive across all 52+ customer signals
+            # Agentic Analysis  -  LLM deep-dive across all 52+ customer signals
             "customer_analysis": customer_analysis if customer_analysis else None,
-            # Provenance — did Agent C anchor on Agent B's product choice?
+            # Provenance  -  did Agent C anchor on Agent B's product choice?
             "selected_from_agent_b": selected_from_agent_b,
             "agent_b_product_rank": agent_b_product_rank,
             # Multi-Touch Attribution
@@ -708,19 +717,19 @@ class AgentC_Banking:
         regular_apr = float(product.get("regular_apr_pct") or 22.99)
         if credit_score >= 740:
             pre_approval_tier  = "excellent"
-            approval_confidence = "Pre-approved — excellent credit"
+            approval_confidence = "Pre-approved  -  excellent credit"
             apr = float(product.get("rate_tier_excellent") or regular_apr)
         elif credit_score >= 700:
             pre_approval_tier  = "good"
-            approval_confidence = "Likely approved — strong credit"
+            approval_confidence = "Likely approved  -  strong credit"
             apr = float(product.get("rate_tier_good") or regular_apr)
         elif credit_score >= 670:
             pre_approval_tier  = "fair"
-            approval_confidence = "Conditionally approved — good credit"
+            approval_confidence = "Conditionally approved  -  good credit"
             apr = regular_apr
         else:
             pre_approval_tier  = "fair_borderline"
-            approval_confidence = "Review required — borderline qualification"
+            approval_confidence = "Review required  -  borderline qualification"
             apr = regular_apr
 
         cash_back_pct  = float(product.get("cash_back_pct") or 1.5)
@@ -743,7 +752,7 @@ class AgentC_Banking:
         if net_annual_value > 0:
             pitch_parts.append(
                 f"Based on your spending, you'd earn ~${projected_annual_rewards:.0f}/yr in rewards"
-                f" — ${net_annual_value:.0f} net after the ${annual_fee:.0f} annual fee."
+                f"  -  ${net_annual_value:.0f} net after the ${annual_fee:.0f} annual fee."
             )
         if balance_transfer_savings and balance_transfer_savings > 100:
             pitch_parts.append(
@@ -774,7 +783,7 @@ class AgentC_Banking:
         import math as _math
         income = float(income) if income and not _math.isnan(float(income)) else 0.0
         if income <= 0:
-            income = 50_000  # safe fallback — no NaN in downstream calculations
+            income = 50_000  # safe fallback  -  no NaN in downstream calculations
         if credit_score >= 740:
             rate = float(product.get("rate_tier_excellent") or product.get("interest_rate") or 6.75)
             tier = "excellent"
@@ -943,7 +952,7 @@ class AgentC_Banking:
     ) -> str:
         """
         Builds a human-readable, persona-specific explanation for why this offer
-        was selected for this customer — e.g.:
+        was selected for this customer  -  e.g.:
         "For Retiree Depositor (age 68, retiree, goal: retirement savings):
          '5.00% APY Intro Rate' selected because lifestyle profile
          [retirement_focused, retirement_saver] aligns with this offer's target audience."
@@ -1125,7 +1134,7 @@ class AgentC_Banking:
             logger.info(
                 f"[AGENT-C]   🥈 runner-up: {ru.get('offer_id')} "
                 f"'{ru.get('offer_name')}' ({ru.get('offer_score', 0):.4f}) "
-                f"— {ru.get('reason_not_selected', '')}"
+                f" -  {ru.get('reason_not_selected', '')}"
             )
         logger.info(f"[AGENT-C] {SEP}")
         # ─────────────────────────────────────────────────────────────────────
@@ -1227,7 +1236,7 @@ class AgentC_Banking:
         b3 = str(offer.get("content_benefit_3") or "")
         benefits_txt = "\n".join(f"• {b}" for b in [b1, b2, b3] if b)
 
-        flyer_headline = f"Your {offer_name} — available now"
+        flyer_headline = f"Your {offer_name}  -  available now"
         flyer_body     = (
             f"Focused on {goal_hint}? The {product_name} with our {offer_name} "
             f"is designed for you. {how_earn}"
@@ -1274,7 +1283,7 @@ class AgentC_Banking:
         if churn_category in ("High", "Critical"):
             churn_bit = (
                 f" With {churn_category} churn risk, Agent C prioritizes retention-oriented offers so outreach "
-                f"leads with a product that protects the relationship—not only the highest raw fit score."
+                f"leads with a product that protects the relationship - not only the highest raw fit score."
             )
         return (
             f'Agent B\'s top match-ranked product is "{agent_b_top_name}" ({agent_b_top_score*100:.0f}% fit). '
@@ -1387,7 +1396,7 @@ class AgentC_Banking:
                 {"channel": "web", "priority": 3, "label": "Web"},
             ]
             best_channel = "in_app"
-            best_channel_reason = "Customer channel preference: Digital — in-app is their primary touchpoint."
+            best_channel_reason = "Customer channel preference: Digital  -  in-app is their primary touchpoint."
         elif channel_pref == "Branch" or is_traditional:
             channels = [
                 {"channel": "branch", "priority": 1, "label": "Branch"},
@@ -1395,7 +1404,7 @@ class AgentC_Banking:
                 {"channel": "email", "priority": 3, "label": "Email"},
             ]
             best_channel = "branch"
-            best_channel_reason = "Customer channel preference: Branch — in-person interaction preferred."
+            best_channel_reason = "Customer channel preference: Branch  -  in-person interaction preferred."
         elif digital >= DIGITAL_HIGH:
             channels = [
                 {"channel": "in_app", "priority": 1, "label": "In-app"},

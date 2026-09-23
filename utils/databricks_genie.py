@@ -1,7 +1,7 @@
 """
 Databricks Genie + Unity Catalog persona sync helpers.
 
-- Unity Catalog location: resolve once via ``resolve_unity_catalog()`` — ``DOMAIN_CATALOG`` /
+- Unity Catalog location: resolve once via ``resolve_unity_catalog()``  -  ``DOMAIN_CATALOG`` /
   ``DOMAIN_SCHEMA`` first, then ``ACADEMY_CATALOG`` / ``ACADEMY_SCHEMA`` for compatibility.
 - Local / non-Databricks: sync returns HTTP-friendly skipped payload (no DATABRICKS_RUNTIME_VERSION).
 - Databricks: Spark via ``_get_spark_session()`` (reuse active session or ``getOrCreate()`` so
@@ -438,7 +438,7 @@ def _sync_via_sql_warehouse(
     full_assign: str,
     full_def: str,
 ) -> Dict[str, Any]:
-    """Write persona tables via the Databricks SQL warehouse REST API — works outside Databricks runtime."""
+    """Write persona tables via the Databricks SQL warehouse REST API  -  works outside Databricks runtime."""
     import httpx, time as _time
 
     host = (os.getenv("DATABRICKS_HOST") or "").strip().rstrip("/")
@@ -629,18 +629,18 @@ def build_genie_persona_context(
         f"IMPORTANT RESPONSE RULES:\n"
         f"1. ALWAYS run a SQL query and return tabular data when the question is about customers, segments, products, revenue, churn, or any metric. Never answer data questions with text only.\n"
         f"2. Do NOT ask clarifying questions. Make a reasonable assumption and run the query immediately. If the question has multiple interpretations, pick the most useful one and show the data.\n"
-        f"3. When the user says 'Yes', 'Yes please', or similar, execute the action you most recently proposed — run the SQL and return the table.\n"
+        f"3. When the user says 'Yes', 'Yes please', or similar, execute the action you most recently proposed  -  run the SQL and return the table.\n"
         f"4. Keep narrative text brief (2-3 sentences max). The table IS the answer.\n"
-        f"5. CRITICAL — persona names: ALWAYS get the persona_name from `{pa}` by joining on customer_id. NEVER read persona_name directly from `{customers_tbl}` — that column is stale and will give wrong results. The authoritative persona assignment is ONLY in `{pa}`.\n"
-        f"6. If a customer name matches multiple rows, list ALL matching rows in the table — do not pick just one. State clearly that multiple customers share this name and refer to customer_id to disambiguate.\n"
-        f"7. CRITICAL — NEVER write placeholder text such as '(value from SQL result)', '**', '[insert value]', '[X]', or any unfilled template token in your narrative. If you reference a number or fact, it MUST be the real computed value from your SQL query. If you are unsure of a value, omit that sentence and let the table speak.\n\n"
+        f"5. CRITICAL  -  persona names: ALWAYS get the persona_name from `{pa}` by joining on customer_id. NEVER read persona_name directly from `{customers_tbl}`  -  that column is stale and will give wrong results. The authoritative persona assignment is ONLY in `{pa}`.\n"
+        f"6. If a customer name matches multiple rows, list ALL matching rows in the table  -  do not pick just one. State clearly that multiple customers share this name and refer to customer_id to disambiguate.\n"
+        f"7. CRITICAL  -  NEVER write placeholder text such as '(value from SQL result)', '**', '[insert value]', '[X]', or any unfilled template token in your narrative. If you reference a number or fact, it MUST be the real computed value from your SQL query. If you are unsure of a value, omit that sentence and let the table speak.\n\n"
         f"For persona or segment questions, join `{customers_tbl}` to `{pa}` ON `customer_id`. "
         f"Use `{pa}.persona_name` and `{pa}.cluster_id` as the ONLY source of truth for current segments. "
-        f"NEVER use `{customers_tbl}.persona_name` — it is legacy data from dataset generation and does not reflect the current segmentation.\n\n"
+        f"NEVER use `{customers_tbl}.persona_name`  -  it is legacy data from dataset generation and does not reflect the current segmentation.\n\n"
         f"Summary tables:\n"
         f"- `{pa}` (customer_id, cluster_id, persona_name)\n"
         f"- `{pd_tbl}` (cluster_id, persona_name, size, total_revenue, avg_spend, percentage)\n\n"
-        f"Current persona names from the latest segmentation run: {', '.join(names) if names else '(none — run segmentation and sync)'}\n\n"
+        f"Current persona names from the latest segmentation run: {', '.join(names) if names else '(none  -  run segmentation and sync)'}\n\n"
         f"---\nUser question:\n"
     )
 
@@ -734,7 +734,7 @@ def _genie_message_to_payload(msg: Any) -> Dict[str, Any]:
         ad: Dict[str, Any] = {"type": str(atype)}
         text = getattr(att, "text", None)
         if text:
-            # SDK wraps text in a TextAttachment(content=...) object — extract .content
+            # SDK wraps text in a TextAttachment(content=...) object  -  extract .content
             text_str = getattr(text, "content", None) or str(text)
             ad["text"] = text_str
             narrative_parts.append(text_str)
@@ -769,7 +769,7 @@ def _genie_message_to_payload(msg: Any) -> Dict[str, Any]:
         for attr in ("content", "text", "body"):
             v = getattr(msg, attr, None)
             if v:
-                # May be a TextAttachment object — extract .content if present
+                # May be a TextAttachment object  -  extract .content if present
                 out["narrative"] = (getattr(v, "content", None) or str(v)).strip()
                 break
     return out
@@ -794,7 +794,7 @@ def _genie_message_dict_to_payload(d: Dict[str, Any]) -> Dict[str, Any]:
         ad: Dict[str, Any] = {"type": str(atype)}
         text = att.get("text")
         if text:
-            # Raw API may return {"content": "...", "id": null} — extract content
+            # Raw API may return {"content": "...", "id": null}  -  extract content
             text_str = text.get("content") if isinstance(text, dict) else (getattr(text, "content", None) or str(text))
             ad["text"] = text_str
             narrative_parts.append(text_str)
@@ -929,14 +929,14 @@ def _genie_rest_wait_message_completed(
 _GENIE_SPACE_NOT_FOUND_HINT = (
     "The Genie API cannot resolve this **dataroom** for your **host + credentials**. If Genie → Settings "
     "shows this `space_id`, check: "
-    "(1) **Host** — `DATABRICKS_HOST` is the same `https://adb-…azuredatabricks.net` you use in the browser. "
-    "(2) **Identity** — **GET /api/banking/genie/spaces** must list this id for the same PAT/SP; if not, grant "
+    "(1) **Host**  -  `DATABRICKS_HOST` is the same `https://adb-…azuredatabricks.net` you use in the browser. "
+    "(2) **Identity**  -  **GET /api/banking/genie/spaces** must list this id for the same PAT/SP; if not, grant "
     "that identity Genie/SQL access. "
-    "(3) **Workspace org id** — set **`DATABRICKS_WORKSPACE_ID`** to the numeric workspace id (same value as "
+    "(3) **Workspace org id**  -  set **`DATABRICKS_WORKSPACE_ID`** to the numeric workspace id (same value as "
     "response header **`x-databricks-org-id`** on a request in the browser DevTools Network tab, or from "
     "admin/workspace metadata). This app sends it as **`X-Databricks-Org-Id`** on Genie calls; the SDK often "
     "omits it on Azure workspace URLs without this. "
-    "(4) **Azure resource** — optional **`DATABRICKS_AZURE_RESOURCE_ID`** (full workspace Azure resource id) for SP auth. "
+    "(4) **Azure resource**  -  optional **`DATABRICKS_AZURE_RESOURCE_ID`** (full workspace Azure resource id) for SP auth. "
     "(5) Wrong id from export JSON vs Settings. **GET /api/banking/genie/spaces/verify** tests `get_space`."
 )
 
@@ -1214,10 +1214,10 @@ def ask_genie(question: str, context_prefix: str, conversation_id: Optional[str]
                 "success": False,
                 "error": "The AI could not generate an answer for this question.",
                 "hint": (
-                    "This usually means: (1) the question references data not connected to this AI space — "
+                    "This usually means: (1) the question references data not connected to this AI space  -  "
                     "make sure all meridian_* tables and persona_assignments are added as data sources in your space settings; "
-                    "(2) the question is too ambiguous — try rephrasing it with a specific metric, table, or segment name; "
-                    "(3) the AI space instructions don't cover this topic — check your space instructions include the table reference."
+                    "(2) the question is too ambiguous  -  try rephrasing it with a specific metric, table, or segment name; "
+                    "(3) the AI space instructions don't cover this topic  -  check your space instructions include the table reference."
                 ),
                 "config": cfg,
             }

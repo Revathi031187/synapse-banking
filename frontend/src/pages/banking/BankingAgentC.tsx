@@ -39,7 +39,6 @@ import {
   Activity,
   Info,
   MessageCircle,
-  Pin,
 } from 'lucide-react';
 import { getBankingApiBase } from '../../utils/apiBase';
 import { useSessionStorageState } from '../../hooks/useSessionStorageState';
@@ -52,23 +51,37 @@ type BankingAgentCUiState = {
   offerScope: 'customer' | 'persona';
   churnRiskView: 'customer' | 'persona';
   /** Customer mode: a real customer_id. Persona mode: a `persona:<id>` marker, set
-   * only when "Compute Best Offer" is clicked (no customer picker — persona mode is
+   * only when "Compute Best Offer" is clicked (no customer picker  -  persona mode is
    * segment-wide, not one hand-picked person); see the offerData queryFn below,
    * which branches on this prefix to call the segment-wide endpoint instead of the
    * per-customer one. */
   selectedCustomerId: string | null;
+  /** Customer mode only: the picker's current selection, staged until "Get Best
+   * Offer" is clicked (see offerData's useQuery below  -  computing only happens on
+   * demand now, never just from picking a customer). */
+  pendingCustomerId: string | null;
   explainOpen: boolean;
   selectedPersonaId: string | null;
   activeCommTab: 'push' | 'email' | 'flyer';
   offerScoreOpen: boolean;
   personaOfferScoreOpen: boolean;
   personaCommTab: 'push' | 'email' | 'flyer';
+  // Mirror of the last successful one-best-offer response, persisted across a
+  // reload (this tab has no merge function stripping it, matching Director's
+  // "restore what I left" convention). Seeds the query's initialData so a
+  // reload shows the last result immediately with no network call  -  without
+  // this, `enabled: !!selectedCustomerId` (also reload-persisted) would fire a
+  // fresh fetch the instant the component mounts, since the in-memory
+  // QueryClient cache (unlike sessionStorage) does not survive a reload.
+  lastResult: { customerId: string; response: unknown } | null;
 };
 
 const DEFAULT_AGENT_C_UI: BankingAgentCUiState = {
   offerScope: 'customer',
   churnRiskView: 'customer',
   selectedCustomerId: null,
+  pendingCustomerId: null,
+  lastResult: null,
   explainOpen: true,
   selectedPersonaId: null,
   activeCommTab: 'push',
@@ -76,6 +89,23 @@ const DEFAULT_AGENT_C_UI: BankingAgentCUiState = {
   personaOfferScoreOpen: false,
   personaCommTab: 'push',
 };
+
+/** Standalone one-best-offer fetch, given an explicit customer/persona-marker
+ * snapshot rather than closing over live component state - used both by the
+ * reactive offerData query and by the compute buttons' always-fresh imperative
+ * fetchQuery calls. */
+async function fetchOneBestOffer(apiBase: string, selectedCustomerId: string | null) {
+  const personaMarkerId = selectedCustomerId?.startsWith('persona:') ? selectedCustomerId.slice('persona:'.length) : null;
+  const url = personaMarkerId
+    ? `${apiBase}/api/banking/agent_c/persona-best-offer?persona_id=${encodeURIComponent(personaMarkerId)}`
+    : `${apiBase}/api/banking/agent_c/one-best-offer/${selectedCustomerId}`;
+  const res = await fetch(url);
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}));
+    throw new Error(err.detail || 'Failed to load offer');
+  }
+  return res.json();
+}
 
 const channelIcons: Record<string, React.ReactNode> = {
   email: <Mail className="w-4 h-4" />,
@@ -101,7 +131,7 @@ function formatRetentionStrategy(text: string | undefined): string {
 }
 
 function pct(v: number | null | undefined): string {
-  if (v == null || Number.isNaN(v)) return '—';
+  if (v == null || Number.isNaN(v)) return ' - ';
   return `${Math.round(v * 100)}%`;
 }
 
@@ -116,7 +146,7 @@ function CollapsibleChurnText({
 }) {
   const [expanded, setExpanded] = useState(false);
   const t = (text || '').trim();
-  if (!t) return <span className="text-slate-400">—</span>;
+  if (!t) return <span className="text-slate-400"> - </span>;
   const long = t.length > collapseThreshold || t.split(/\n/).length > 2;
   return (
     <div className="min-w-0 max-w-md">
@@ -234,7 +264,7 @@ function ChurnCohortCustomerTable({
                   <p className="font-medium text-slate-900">{c.customer_name}</p>
                   <p className="text-slate-500 text-xs">{c.customer_id}</p>
                 </td>
-                <td className="py-3 px-4 text-slate-600">{c.persona ?? '—'}</td>
+                <td className="py-3 px-4 text-slate-600">{c.persona ?? ' - '}</td>
                 <td className="py-3 px-4 text-right">
                   <span
                     className={`font-semibold ${
@@ -247,7 +277,7 @@ function ChurnCohortCustomerTable({
                         : 'text-slate-600'
                     }`}
                   >
-                    {c.churn_risk_score?.toFixed(0) ?? '—'}
+                    {c.churn_risk_score?.toFixed(0) ?? ' - '}
                   </span>
                   <span className="text-slate-400 ml-1 text-xs">{c.churn_risk_category}</span>
                 </td>
@@ -261,13 +291,13 @@ function ChurnCohortCustomerTable({
                   />
                   {c.customer_metrics && (
                     <p className="mt-2 text-[11px] text-slate-500">
-                      90d txns {c.customer_metrics.txn_count_90d ?? '—'} | mobile {pct(c.customer_metrics.mobile_share_90d)} |
-                      active products {c.customer_metrics.active_products_180d ?? '—'}
+                      90d txns {c.customer_metrics.txn_count_90d ?? ' - '} | mobile {pct(c.customer_metrics.mobile_share_90d)} |
+                      active products {c.customer_metrics.active_products_180d ?? ' - '}
                     </p>
                   )}
                 </td>
                 <td className="py-3 px-4 text-slate-600 text-xs">
-                  {c.recommended_retention_action?.replace(/_/g, ' ') ?? '—'}
+                  {c.recommended_retention_action?.replace(/_/g, ' ') ?? ' - '}
                 </td>
                 <td className="py-3 px-4">
                   <button
@@ -674,7 +704,7 @@ type MTAJourneyRow = {
 
 // ── MTA constants ─────────────────────────────────────────────────────────────
 
-// All channels the backend may return — must match utils/banking_constants.py CHANNELS
+// All channels the backend may return  -  must match utils/banking_constants.py CHANNELS
 const MTA_CHANNELS = ['in_app', 'email', 'sms', 'direct_mail', 'branch', 'outbound_call', 'web'];
 // Channels that have journey data in the MTA CSV (used for donut/attribution charts)
 const MTA_JOURNEY_CHANNELS = ['in_app', 'email', 'sms', 'direct_mail', 'branch'];
@@ -903,7 +933,7 @@ function MTAIntelligencePanel({
               )}
             </div>
 
-            {/* Scope clarifier — one-liner */}
+            {/* Scope clarifier  -  one-liner */}
             <p className="text-[10px] text-slate-400 leading-relaxed">
               <span className="font-semibold text-indigo-600">%</span> = segment-wide Markov share &nbsp;·&nbsp;
               <span className="font-semibold text-amber-600">Fatigued</span> = this customer's individual history
@@ -957,7 +987,7 @@ function MTAIntelligencePanel({
                         data={custData}
                         size={130}
                         thickness={24}
-                        centerLabel={totalSent > 0 ? String(totalSent) : '—'}
+                        centerLabel={totalSent > 0 ? String(totalSent) : ' - '}
                         centerSub={totalSent > 0 ? 'total sends' : 'no history'}
                       />
                       <div className="w-full space-y-1 pt-1">
@@ -989,14 +1019,14 @@ function MTAIntelligencePanel({
               </div>
             </div>
 
-            {/* Attribution bars — sorted high to low */}
+            {/* Attribution bars  -  sorted high to low */}
             <div className="space-y-2">
               {[...MTA_CHANNELS]
                 .sort((a, b) => (mtaAttribution?.[b] ?? 0) - (mtaAttribution?.[a] ?? 0))
                 .map(ch => {
                   const pct = Math.round((mtaAttribution?.[ch] ?? 0) * 100);
                   const fatigue = channelFatigue?.[ch];
-                  // Strict boolean check — avoids React rendering `{0}` as "0"
+                  // Strict boolean check  -  avoids React rendering `{0}` as "0"
                   const isFatigued = fatigue?.is_fatigued === true;
                   const isTop = ch === topChannel;
                   const isRecommended = ch === bestChannel;
@@ -1047,7 +1077,7 @@ function MTAIntelligencePanel({
                         </span>
                       </div>
 
-                      {/* Progress bar — striped when suppressed */}
+                      {/* Progress bar  -  striped when suppressed */}
                       <div className="px-3 pb-2">
                         <div className="w-full h-2.5 bg-slate-100 rounded-full overflow-hidden">
                           {isFatigued ? (
@@ -1088,9 +1118,9 @@ function MTAIntelligencePanel({
                         <div className="mx-3 mb-3 rounded-lg border border-amber-300 bg-amber-100 px-3 py-2 flex items-start gap-2">
                           <AlertTriangle className="w-3.5 h-3.5 text-amber-600 flex-shrink-0 mt-0.5" />
                           <div className="text-[10px] text-amber-800 leading-relaxed">
-                            <span className="font-semibold">Segment says {pct}%</span> — {MTA_CHANNEL_LABELS[ch]} is strong for {persona ?? 'this segment'} overall.
+                            <span className="font-semibold">Segment says {pct}%</span>  -  {MTA_CHANNEL_LABELS[ch]} is strong for {persona ?? 'this segment'} overall.
                             <span className="mx-1 text-amber-400">|</span>
-                            <span className="font-semibold">This customer: suppressed</span> — {fatigue?.sent ?? 0} sends, {fatigue?.opened ?? 0} opens. Not reaching them via this channel.
+                            <span className="font-semibold">This customer: suppressed</span>  -  {fatigue?.sent ?? 0} sends, {fatigue?.opened ?? 0} opens. Not reaching them via this channel.
                           </div>
                         </div>
                       )}
@@ -1122,7 +1152,7 @@ function MTAIntelligencePanel({
                   </div>
 
                   <div className="space-y-2 pl-5">
-                    {/* Row 1 — what Markov % actually measures */}
+                    {/* Row 1  -  what Markov % actually measures */}
                     <div className="flex gap-2 items-start">
                       <span className="text-[10px] font-bold text-violet-600 shrink-0 mt-0.5">①</span>
                       <p className="text-[10px] text-violet-700 leading-relaxed">
@@ -1132,35 +1162,35 @@ function MTAIntelligencePanel({
                       </p>
                     </div>
 
-                    {/* Row 2 — persona reach reality */}
+                    {/* Row 2  -  persona reach reality */}
                     <div className="flex gap-2 items-start">
                       <span className="text-[10px] font-bold text-violet-600 shrink-0 mt-0.5">②</span>
                       <p className="text-[10px] text-violet-700 leading-relaxed">
                         <span className="font-semibold">Persona reach matters more than attribution rank.</span>{' '}
-                        For the <span className="font-semibold">{persona ?? 'this'}</span> persona, {topLabel} has a low reach probability —
+                        For the <span className="font-semibold">{persona ?? 'this'}</span> persona, {topLabel} has a low reach probability  - 
                         most customers in this segment won't open or engage with it.
                         High attribution for {topLabel} is partly because other personas (e.g. Digital Native) dominate that channel's journey data, inflating its segment-wide score.
                       </p>
                     </div>
 
-                    {/* Row 3 — suppressed channels */}
+                    {/* Row 3  -  suppressed channels */}
                     {suppressed.length > 0 && (
                       <div className="flex gap-2 items-start">
                         <span className="text-[10px] font-bold text-amber-600 shrink-0 mt-0.5">③</span>
                         <p className="text-[10px] text-amber-800 leading-relaxed">
-                          <span className="font-semibold">{suppressed.join(', ')} suppressed due to fatigue</span> — too many sends with low engagement.
+                          <span className="font-semibold">{suppressed.join(', ')} suppressed due to fatigue</span>  -  too many sends with low engagement.
                           The system removed {suppressed.length > 1 ? 'these channels' : 'this channel'} from contention even if {suppressed.length > 1 ? 'their' : 'its'} attribution score would otherwise qualify.
                         </p>
                       </div>
                     )}
 
-                    {/* Row 4 — final decision logic */}
+                    {/* Row 4  -  final decision logic */}
                     <div className="flex gap-2 items-start">
                       <span className="text-[10px] font-bold text-violet-600 shrink-0 mt-0.5">{suppressed.length > 0 ? '④' : '③'}</span>
                       <p className="text-[10px] text-violet-700 leading-relaxed">
                         <span className="font-semibold">Final pick = best non-fatigued channel aligned to persona preference.</span>{' '}
                         {bestLabel} is the channel this persona is most likely to respond to in person.
-                        Its {bestPct}% attribution reflects fewer historical touchpoints in the data — not lower effectiveness when used.
+                        Its {bestPct}% attribution reflects fewer historical touchpoints in the data  -  not lower effectiveness when used.
                       </p>
                     </div>
                   </div>
@@ -1201,8 +1231,8 @@ function MTAIntelligencePanel({
               const numJourneys = Object.keys(journeyMap).length;
               const convJourneys = Object.values(journeyMap).filter(rows => rows.some(r => r.converted)).length;
               const summary = converted > 0
-                ? `Contacted ${total} time${total !== 1 ? 's' : ''} across ${numJourneys} campaign${numJourneys !== 1 ? 's' : ''} — ${convJourneys} resulted in a conversion.`
-                : `Contacted ${total} time${total !== 1 ? 's' : ''} across ${numJourneys} campaign${numJourneys !== 1 ? 's' : ''} — no conversions yet.`;
+                ? `Contacted ${total} time${total !== 1 ? 's' : ''} across ${numJourneys} campaign${numJourneys !== 1 ? 's' : ''}  -  ${convJourneys} resulted in a conversion.`
+                : `Contacted ${total} time${total !== 1 ? 's' : ''} across ${numJourneys} campaign${numJourneys !== 1 ? 's' : ''}  -  no conversions yet.`;
 
               return (
                 <div className="space-y-3">
@@ -1355,7 +1385,7 @@ function MTAIntelligencePanel({
                 <div className="flex items-center gap-0 border-t border-blue-200/60 divide-x divide-blue-200/60">
                   <div className="flex-1 px-3 py-2 text-center">
                     <p className="text-[9px] text-blue-400 uppercase tracking-wide">Persona</p>
-                    <p className="text-[11px] font-bold text-indigo-700">{persona ?? '—'}</p>
+                    <p className="text-[11px] font-bold text-indigo-700">{persona ?? ' - '}</p>
                   </div>
                   <div className="flex-1 px-3 py-2 text-center">
                     <p className="text-[9px] text-blue-400 uppercase tracking-wide">Attribution</p>
@@ -1363,7 +1393,7 @@ function MTAIntelligencePanel({
                   </div>
                   <div className="flex-1 px-3 py-2 text-center">
                     <p className="text-[9px] text-blue-400 uppercase tracking-wide">Confidence</p>
-                    <p className="text-[11px] font-bold text-indigo-700">{channelRecommendation?.confidence ?? '—'}</p>
+                    <p className="text-[11px] font-bold text-indigo-700">{channelRecommendation?.confidence ?? ' - '}</p>
                   </div>
                   {(aiInsight?.persona_conv_rate ?? 0) > 0 && (
                     <div className="flex-1 px-3 py-2 text-center">
@@ -1393,7 +1423,7 @@ function MTAIntelligencePanel({
                       {isPersonal ? (
                         <div className="space-y-2">
                           <p className="text-[11px] text-slate-600 leading-relaxed">
-                            {rec?.total_personal_sends ?? 0}+ sends recorded — this customer's own behaviour overrides segment averages.
+                            {rec?.total_personal_sends ?? 0}+ sends recorded  -  this customer's own behaviour overrides segment averages.
                             {' '}<span className="font-semibold text-slate-700">{bestLabel}</span> scored highest on personal engagement (clicks × 3 + opens × 1 ÷ sends).
                           </p>
                           {Object.keys(rec?.personal_scores ?? {}).length > 0 && (
@@ -1421,7 +1451,7 @@ function MTAIntelligencePanel({
                         </div>
                       ) : (
                         <p className="text-[11px] text-slate-600 leading-relaxed">
-                          Fewer than 3 personal sends recorded — using{' '}
+                          Fewer than 3 personal sends recorded  -  using{' '}
                           <span className="font-semibold text-indigo-700">{persona ?? 'segment'} Markov model</span> for attribution.
                           {' '}<span className="font-semibold text-slate-700">{bestLabel}</span> carries {bestAttrPct}% segment-level credit.
                           Personal history builds after ≥ 3 sends.
@@ -1453,7 +1483,7 @@ function MTAIntelligencePanel({
               <div className="rounded-xl border border-slate-200 overflow-hidden">
                 <div className="px-3.5 py-2.5 bg-slate-50 border-b border-slate-200 flex items-center gap-2">
                   <BarChart2 className="w-3.5 h-3.5 text-slate-400" />
-                  <span className="text-xs font-bold text-slate-700">Markov Attribution — {persona ?? 'Segment'}</span>
+                  <span className="text-xs font-bold text-slate-700">Markov Attribution  -  {persona ?? 'Segment'}</span>
                   <span className="ml-auto text-[9px] text-slate-400 font-mono">Markov model</span>
                 </div>
                 <div className="p-3 space-y-1.5">
@@ -1500,7 +1530,7 @@ function MTAIntelligencePanel({
                   <div className="flex items-start gap-2.5 rounded-xl border border-amber-200 bg-amber-50 px-3 py-2.5">
                     <AlertTriangle className="w-3.5 h-3.5 text-amber-500 shrink-0 mt-0.5" />
                     <div className="flex-1">
-                      <p className="text-[10px] font-bold text-amber-800 mb-1.5">{suppressed.length} channel{suppressed.length > 1 ? 's' : ''} suppressed — fatigue override</p>
+                      <p className="text-[10px] font-bold text-amber-800 mb-1.5">{suppressed.length} channel{suppressed.length > 1 ? 's' : ''} suppressed  -  fatigue override</p>
                       <div className="flex flex-wrap gap-1.5">
                         {suppressed.map(ch => {
                           const f = channelFatigue?.[ch];
@@ -1550,13 +1580,13 @@ function ExperimentLiftPanel({ expData }: {
   const pLabel = pVal < 0.001 ? 'p<0.001' : `p=${pVal.toFixed(3)}`;
   const decisionExplanation = winnerVariant
     ? `"${winnerName}" converted ${(winnerRate * 100).toFixed(1)}% of exposed customers vs ` +
-      `${(holdoutRate * 100).toFixed(1)}% in the holdout — ` +
+      `${(holdoutRate * 100).toFixed(1)}% in the holdout  -  ` +
       `an absolute lift of +${(liftAbs * 100).toFixed(1)}pp (${pLabel}). ` +
       (sigVariants > 1
         ? `${sigVariants} of ${variants.length} variants were significant; this had the highest lift.`
         : sigVariants === 1
           ? `It was the only variant to reach statistical significance out of ${variants.length} tested.`
-          : `No variants reached significance — this offer was selected as best available.`)
+          : `No variants reached significance  -  this offer was selected as best available.`)
     : null;
 
   const channelColors: Record<string, string> = {
@@ -1629,7 +1659,7 @@ function ExperimentLiftPanel({ expData }: {
                   </td>
                   <td className="px-3 py-2 text-right font-mono text-slate-700">{(v.conversion_rate * 100).toFixed(1)}%</td>
                   <td className={`px-3 py-2 text-right font-mono font-semibold ${v.lift_abs > 0 ? 'text-emerald-700' : 'text-slate-400'}`}>
-                    {v.lift_abs > 0 ? `+${(v.lift_abs * 100).toFixed(1)}pp` : '—'}
+                    {v.lift_abs > 0 ? `+${(v.lift_abs * 100).toFixed(1)}pp` : ' - '}
                   </td>
                   <td className="px-3 py-2 text-right font-mono text-slate-500">
                     {v.p_value < 0.001 ? '<0.001' : v.p_value.toFixed(4)}
@@ -1647,8 +1677,8 @@ function ExperimentLiftPanel({ expData }: {
             <tr className="bg-slate-50 border-t border-slate-200">
               <td className="px-3 py-2 text-slate-500 italic">Holdout (no offer)</td>
               <td className="px-3 py-2 text-right font-mono text-slate-500">{(holdoutRate * 100).toFixed(1)}%</td>
-              <td className="px-3 py-2 text-right text-slate-400">—</td>
-              <td className="px-3 py-2 text-right text-slate-400">—</td>
+              <td className="px-3 py-2 text-right text-slate-400"> - </td>
+              <td className="px-3 py-2 text-right text-slate-400"> - </td>
               <td className="px-3 py-2 text-center text-[10px] text-slate-400">baseline</td>
             </tr>
           </tbody>
@@ -1673,14 +1703,14 @@ function NoOfferExperimentPanel({ expData }: { expData?: ExperimentData }) {
           <FlaskConical className="w-5 h-5 text-amber-600" />
         </div>
         <div>
-          <p className="text-sm font-bold text-amber-800">No offer shown — experiment result</p>
+          <p className="text-sm font-bold text-amber-800">No offer shown  -  experiment result</p>
           <p className="text-sm text-amber-700 mt-1 leading-snug">
             No offer variant achieved statistically significant conversion lift over the holdout
             baseline ({(holdoutRate * 100).toFixed(1)}%) for this customer segment.
           </p>
           {bestLift > 0 && (
             <p className="text-xs text-amber-600 mt-1.5">
-              Best variant lift observed: +{(bestLift * 100).toFixed(1)}pp — not significant at p &lt; 0.05.
+              Best variant lift observed: +{(bestLift * 100).toFixed(1)}pp  -  not significant at p &lt; 0.05.
             </p>
           )}
           {expData?.experiment_id && (
@@ -1705,15 +1735,15 @@ function NoOfferExperimentPanel({ expData }: { expData?: ExperimentData }) {
                   <td className="px-3 py-2 text-slate-700">{v.offer_name}</td>
                   <td className="px-3 py-2 text-right font-mono text-slate-600">{(v.conversion_rate * 100).toFixed(1)}%</td>
                   <td className="px-3 py-2 text-right font-mono text-slate-600">
-                    {v.lift_abs > 0 ? `+${(v.lift_abs * 100).toFixed(1)}pp` : '—'}
+                    {v.lift_abs > 0 ? `+${(v.lift_abs * 100).toFixed(1)}pp` : ' - '}
                   </td>
-                  <td className="px-3 py-2 text-right font-mono text-amber-700">{v.p_value?.toFixed(4) ?? '—'}</td>
+                  <td className="px-3 py-2 text-right font-mono text-amber-700">{v.p_value?.toFixed(4) ?? ' - '}</td>
                 </tr>
               ))}
               <tr className="bg-amber-50 border-t border-amber-200">
                 <td className="px-3 py-2 text-amber-600 italic">Holdout (no offer)</td>
                 <td className="px-3 py-2 text-right font-mono text-amber-600">{(holdoutRate * 100).toFixed(1)}%</td>
-                <td className="px-3 py-2 text-right text-amber-400">—</td>
+                <td className="px-3 py-2 text-right text-amber-400"> - </td>
                 <td className="px-3 py-2 text-right text-amber-400">baseline</td>
               </tr>
             </tbody>
@@ -1879,13 +1909,13 @@ function OfferHeroCard({
       {/* ── A/B Experiment Results (always visible) or Formula Score Breakdown ── */}
       {isExperimentDriven && offerIntel.experiment_data ? (
         <div className="border-t border-slate-100">
-          {/* Explanation header — always visible */}
+          {/* Explanation header  -  always visible */}
           <div className="px-6 py-3.5 bg-gradient-to-r from-violet-50 to-indigo-50 border-b border-violet-100 flex items-center gap-2.5">
             <div className="w-7 h-7 rounded-lg bg-violet-600 flex items-center justify-center shrink-0">
               <FlaskConical className="w-3.5 h-3.5 text-white" />
             </div>
             <div className="flex-1 min-w-0">
-              <p className="text-xs font-bold text-violet-900">How this offer was selected — A/B Experiment</p>
+              <p className="text-xs font-bold text-violet-900">How this offer was selected  -  A/B Experiment</p>
               <p className="text-[10px] text-violet-500 mt-0.5">
                 Offer chosen because it outperformed the holdout group with statistical significance
               </p>
@@ -1905,7 +1935,7 @@ function OfferHeroCard({
               <CheckCircle2 className="w-3 h-3" /> Statistically significant (p &lt; 0.05)
             </span>
             <span className="inline-flex items-center gap-1.5 text-[10px] font-semibold px-2.5 py-1 rounded-full bg-slate-50 border border-slate-200 text-slate-600">
-              <Users className="w-3 h-3" /> {offerIntel.experiment_data.all_variants?.reduce((s, v) => s + v.n_exposed, 0).toLocaleString() ?? '—'} customers tested
+              <Users className="w-3 h-3" /> {offerIntel.experiment_data.all_variants?.reduce((s, v) => s + v.n_exposed, 0).toLocaleString() ?? ' - '} customers tested
             </span>
           </div>
           {/* Always-expanded experiment panel */}
@@ -2084,14 +2114,10 @@ function OfferIntelligencePanel({
       <div className="flex items-center gap-2 px-5 py-3 border-b border-emerald-100 bg-gradient-to-r from-emerald-100/60 to-teal-100/40">
         <Gift className="w-4 h-4 text-emerald-600 flex-shrink-0" />
         <span className="text-sm font-bold text-emerald-900">Offer Intelligence</span>
-        {isExperimentDriven ? (
+        {isExperimentDriven && (
           <span className="ml-auto inline-flex items-center gap-1 text-[10px] uppercase tracking-wide font-semibold text-violet-700 bg-violet-50 border border-violet-200 px-2 py-0.5 rounded-full">
             <FlaskConical className="w-3 h-3" />
             A/B Experiment
-          </span>
-        ) : (
-          <span className="ml-auto text-[10px] uppercase tracking-wide font-semibold text-emerald-700 bg-white/70 border border-emerald-200 px-2 py-0.5 rounded-full">
-            AI Selected
           </span>
         )}
       </div>
@@ -2188,7 +2214,7 @@ function OfferIntelligencePanel({
                 <FlaskConical className="w-3 h-3 text-white" />
               </div>
               <div className="flex-1 min-w-0">
-                <p className="text-xs font-bold text-violet-900">How this offer was selected — A/B Experiment</p>
+                <p className="text-xs font-bold text-violet-900">How this offer was selected  -  A/B Experiment</p>
                 <p className="text-[10px] text-violet-500 mt-0.5">Outperformed holdout group with statistical significance</p>
               </div>
             </div>
@@ -2324,7 +2350,7 @@ function OfferIntelligencePanel({
           </div>
         )}
 
-        {/* Secondary offer (different offer type — "Also Consider" stack) */}
+        {/* Secondary offer (different offer type  -  "Also Consider" stack) */}
         {offerIntel.secondary_offer && (
           <div className="mt-4 pt-3 border-t border-emerald-100">
             <p className="text-xs font-semibold text-slate-500 mb-2">Also consider</p>
@@ -2520,7 +2546,7 @@ function CommunicationPreviewPanel({
 }) {
   const [copied, setCopied] = React.useState(false);
 
-  // Editable content state — syncs when comm prop changes (new customer)
+  // Editable content state  -  syncs when comm prop changes (new customer)
   const [localSubject, setLocalSubject] = React.useState(comm.email_content?.subject ?? '');
   const [localBody, setLocalBody] = React.useState(comm.email_content?.body ?? '');
   const [localSms, setLocalSms] = React.useState(comm.sms_text ?? '');
@@ -2600,7 +2626,7 @@ function CommunicationPreviewPanel({
         showToast('error', data.detail ?? 'Rephrase failed');
       }
     } catch {
-      showToast('error', 'Rephrase failed — check LLM connection');
+      showToast('error', 'Rephrase failed  -  check LLM connection');
     } finally {
       setRephrasing(false);
     }
@@ -2632,7 +2658,7 @@ function CommunicationPreviewPanel({
         showToast('error', data.detail ?? 'Failed to send email');
       }
     } catch {
-      showToast('error', 'Send failed — check SMTP settings');
+      showToast('error', 'Send failed  -  check SMTP settings');
     } finally {
       setSendingEmail(false);
     }
@@ -2661,7 +2687,7 @@ function CommunicationPreviewPanel({
         showToast('error', data.detail ?? 'Failed to send SMS');
       }
     } catch {
-      showToast('error', 'Send failed — check Twilio settings');
+      showToast('error', 'Send failed  -  check Twilio settings');
     } finally {
       setSendingSms(false);
     }
@@ -2918,9 +2944,16 @@ function CommunicationPreviewPanel({
 
 export default function BankingAgentC() {
   const [ui, setUi] = useSessionStorageState<BankingAgentCUiState>(AGENT_C_UI_KEY, DEFAULT_AGENT_C_UI);
-  const { offerScope, churnRiskView, selectedCustomerId, explainOpen, selectedPersonaId, activeCommTab, offerScoreOpen, personaCommTab } = ui;
+  const { offerScope, churnRiskView, selectedCustomerId, pendingCustomerId, lastResult, explainOpen, selectedPersonaId, activeCommTab, offerScoreOpen, personaCommTab } = ui;
   const offerCardRef = useRef<HTMLDivElement>(null);
   const queryClient = useQueryClient();
+  // Set immediately on Unpin click so PinnedOfferCard disappears right away instead
+  // of waiting on the DELETE + refetch round-trip. Holds the customer_id it applies
+  // to, cleared once the refetch confirming the clear actually lands.
+  const [optimisticallyUnpinnedOfferId, setOptimisticallyUnpinnedOfferId] = useState<string | null>(null);
+  useEffect(() => {
+    setOptimisticallyUnpinnedOfferId(null);
+  }, [selectedCustomerId]);
 
   // Deep link from other pages (e.g. Dashboard's "View in Offer & Ad Spend" button):
   // ?persona=<cluster_id> selects that persona in the offer scope and lets the
@@ -2938,7 +2971,7 @@ export default function BankingAgentC() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [searchParams]);
 
-  // Scroll to offer card once a best offer has actually been computed — for
+  // Scroll to offer card once a best offer has actually been computed  -  for
   // either mode, since persona mode's "Compute Best Offer" button (see the segment
   // picker below) sets selectedCustomerId to a `persona:` marker and shares this
   // same effect with Customer mode's search-driven selection.
@@ -2951,7 +2984,7 @@ export default function BankingAgentC() {
   const { data: customersData, isError: customersError, isSuccess: customersSuccess, isLoading: customersLoading } = useQuery({
     queryKey: ['banking-agent-a-customers', 5000],
     queryFn: async () => {
-      // Full table, not a capped page — the search box below does its own
+      // Full table, not a capped page  -  the search box below does its own
       // client-side name/ID matching, so a cap silently hides every same-name
       // customer past it (e.g. only 1 of 4 "Aaron Brown" rows would ever be
       // searchable). Matches the limit BankingAgentD already uses.
@@ -2974,55 +3007,96 @@ export default function BankingAgentC() {
     }>;
   }, [customersData]);
 
-  // Persona mode never picks a real customer — selectedCustomerId carries a
+  // Persona mode never picks a real customer  -  selectedCustomerId carries a
   // `persona:<id>` marker instead, set as soon as a segment is chosen. This branch
   // is what actually swaps in the segment-wide endpoint for that case.
   const personaMarkerId = selectedCustomerId?.startsWith('persona:') ? selectedCustomerId.slice('persona:'.length) : null;
+
+  // Director's Pin/Unpin buttons always operate on a real customer_id under the
+  // hood, even when Director itself is in "By persona" mode (it auto-selects a
+  // representative customer from the segment, same as here). The persona-best-
+  // offer computation itself stays purely segment-aggregate (no representative-
+  // customer input) - this is only used to show/unpin an informational "Director
+  // pinned this" card when it happens to match. Mirrors Recommender's identical
+  // personaRepQuery.
+  const personaRepQuery = useQuery({
+    queryKey: ['banking-agent-c-persona-rep', personaMarkerId],
+    queryFn: async () => {
+      const res = await fetch(
+        `${API_BASE}/api/banking/agent_a/customers?cluster_id=${encodeURIComponent(personaMarkerId ?? '')}&limit=1&skip=0`
+      );
+      if (!res.ok) return { data: { customers: [] } };
+      return res.json();
+    },
+    enabled: !!personaMarkerId,
+    staleTime: 60_000,
+  });
+  const personaRepCustomerId = String(
+    (personaRepQuery.data?.data?.customers?.[0] as { customer_id?: string } | undefined)?.customer_id ?? ''
+  ).trim();
+  // The real customer_id Director's Pin/Unpin buttons actually operate on for
+  // this selection - the persona: marker in persona mode, a real id in customer
+  // mode. Anything that needs to read or invalidate this customer's pin status
+  // (the query below, and unpinOfferMutation further down) must use THIS, never
+  // selectedCustomerId directly - using selectedCustomerId in persona mode would
+  // target a `banking-agent-d-pins` cache entry keyed by the persona: marker
+  // string, which nothing else (including Director's own pinsQuery) ever reads.
+  const offerPinsTargetId = personaMarkerId ? personaRepCustomerId : selectedCustomerId;
 
   const {
     data: offerData,
     isLoading: offerLoading,
     isFetching: offerFetching,
+    isSuccess: offerIsSuccess,
+    dataUpdatedAt: offerDataUpdatedAt,
+    refetch: refetchOffer,
   } = useQuery({
     queryKey: ['banking-one-best-offer', selectedCustomerId],
-    queryFn: async () => {
-      const url = personaMarkerId
-        ? `${API_BASE}/api/banking/agent_c/persona-best-offer?persona_id=${encodeURIComponent(personaMarkerId)}`
-        : `${API_BASE}/api/banking/agent_c/one-best-offer/${selectedCustomerId}`;
-      const res = await fetch(url);
-      if (!res.ok) {
-        const err = await res.json().catch(() => ({}));
-        throw new Error(err.detail || 'Failed to load offer');
-      }
-      return res.json();
-    },
+    queryFn: () => fetchOneBestOffer(API_BASE, selectedCustomerId),
+    // selectedCustomerId is only ever set by an explicit "Get Best Offer"/"Compute
+    // Best Offer" click (see the customer- and persona-mode buttons below), or by a
+    // deep link from another tab that wants an immediate compute  -  never just from
+    // picking a customer/persona in this tab's own pickers. So `enabled` here is
+    // already the on-demand trigger; no separate Recompute control is needed
+    // elsewhere, since clicking the same button again re-fires this query (either
+    // because selectedCustomerId changes, or via the buttons' explicit refetch()
+    // call when it doesn't).
     enabled: !!selectedCustomerId,
-    // The app-wide QueryClient default (App.tsx) is staleTime: Infinity /
-    // refetchOnMount: false — without overriding those here, this query caches
-    // a customer's offer FOREVER in memory and never re-checks it, so factor
-    // weight changes, a re-run segmentation, or an Agent D directive applied
-    // later in the same session would keep showing the original, now-stale
-    // offer instead of what Agent C would compute right now.
-    staleTime: 0,
-    refetchOnMount: 'always',
+    // Inherit the app-wide QueryClient default (App.tsx: staleTime: Infinity,
+    // refetchOnMount: false)  -  navigating to this tab, or away and back, must show
+    // whatever was last computed, not trigger a fresh (LLM-backed, several-second)
+    // computation every time.
+    //
+    // Seeded from the sessionStorage-mirrored last result (see the "on new
+    // success" effect below) so a plain reload shows it immediately with no
+    // network call  -  selectedCustomerId survives a reload via sessionStorage,
+    // but the in-memory QueryClient cache does not, so without this seed
+    // `enabled: !!selectedCustomerId` would fire a fresh fetch the instant the
+    // component mounts. An in-flight-at-the-exact-moment-of-reload request is
+    // not resumed  -  the JS execution context was destroyed by the reload.
+    initialData: () =>
+      lastResult?.customerId === selectedCustomerId && selectedCustomerId ? lastResult.response : undefined,
   });
 
-  // Pin/unpin are scoped to Offer only — independent of Recommender's own
-  // pin (each reads its own field server-side; see api/main_unified_chromadb.py).
-  // Either way, refetch the offer so it reflects the new pin state immediately.
-  const pinOfferMutation = useMutation({
-    mutationFn: async (vars: { targetCustomerId: string; productId: string }) => {
-      const res = await fetch(
-        `${API_BASE}/api/banking/agent_d/pin/offer/${encodeURIComponent(vars.targetCustomerId)}`,
-        { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ product_id: vars.productId }) }
-      );
-      if (!res.ok) throw new Error('Failed to pin');
-      return res.json();
-    },
-    onSuccess: () => {
-      void queryClient.invalidateQueries({ queryKey: ['banking-one-best-offer', selectedCustomerId] });
-    },
-  });
+  // Runs once per newly-landed successful result (dataUpdatedAt changes exactly
+  // then)  -  useQuery has no onSuccess callback in this TanStack Query version.
+  // Seeded from the query's OWN dataUpdatedAt at mount (not 0), so resuming an
+  // already-cached/initialData-seeded result on a fresh mount doesn't look like
+  // a "new" result and doesn't re-fire the sessionStorage write below.
+  const lastHandledOfferAtRef = useRef(offerDataUpdatedAt);
+  useEffect(() => {
+    if (!offerIsSuccess || offerDataUpdatedAt === lastHandledOfferAtRef.current) return;
+    lastHandledOfferAtRef.current = offerDataUpdatedAt;
+    if (selectedCustomerId) {
+      setUi((prev) => ({ ...prev, lastResult: { customerId: selectedCustomerId, response: offerData } }));
+    }
+  }, [offerIsSuccess, offerDataUpdatedAt, offerData, selectedCustomerId]);
+
+  // Pinning can only be originated from the Director tab now  -  this tab only offers
+  // Unpin (via PinnedOfferCard below), scoped to Offer only, independent of
+  // Recommender's own pin (each reads its own field server-side; see
+  // api/main_unified_chromadb.py). Refetch the offer on success so it reflects the
+  // cleared pin immediately.
   const unpinOfferMutation = useMutation({
     mutationFn: async (targetCustomerId: string) => {
       const res = await fetch(
@@ -3033,7 +3107,16 @@ export default function BankingAgentC() {
       return res.json();
     },
     onSuccess: () => {
-      void queryClient.invalidateQueries({ queryKey: ['banking-one-best-offer', selectedCustomerId] });
+      // offerPinsTargetId, NOT selectedCustomerId - in persona mode selectedCustomerId
+      // is the `persona:<id>` marker, not the real customer_id Director's own pinsQuery
+      // (and this tab's own offerPinsStatusQuery) are actually keyed by. Invalidating
+      // the wrong key here was why Director's toggle never flipped back to "Pin" after
+      // unpinning from this tab in persona mode.
+      void queryClient.invalidateQueries({ queryKey: ['banking-agent-d-pins', offerPinsTargetId] });
+      // Wait for the refetch to actually land before clearing the optimistic hide,
+      // so the card doesn't flash back to "pinned" between clearing the flag and
+      // the fresh (unpinned) data arriving.
+      void refetchOffer().finally(() => setOptimisticallyUnpinnedOfferId(null));
     },
   });
 
@@ -3100,6 +3183,46 @@ export default function BankingAgentC() {
   const personas = (personasData?.personas ?? []) as Array<{ id: string; name: string; size: number; percentage?: number }>;
 
   const offer = offerData?.data as OneBestOfferPayload | undefined;
+
+  // Manual pin toggled from Director  -  this tab's own offer query deliberately
+  // inherits the app-wide staleTime: Infinity/refetchOnMount: false (see offerData's
+  // useQuery comment above), so a Director-originated pin wouldn't otherwise show up
+  // here until the user explicitly recomputes. Poll/refetch aggressively (same
+  // options as Director's own pinsQuery) purely to DETECT a mismatch  -  never to
+  // auto-trigger a fetch (that's a background auto-compute, which is never
+  // allowed here); a passive banner below "Get Best Offer" tells the user a
+  // refresh is available instead.
+  const offerPinsStatusQuery = useQuery({
+    queryKey: ['banking-agent-d-pins', offerPinsTargetId],
+    queryFn: async () => {
+      const res = await fetch(`${API_BASE}/api/banking/agent_d/pins/${encodeURIComponent(String(offerPinsTargetId).trim())}`);
+      if (!res.ok) return { recommender_pin_product_id: null as string | null, offer_pin_product_id: null as string | null };
+      return res.json();
+    },
+    enabled: !!offerPinsTargetId,
+    staleTime: 0,
+    refetchOnMount: 'always',
+    refetchOnWindowFocus: true,
+    refetchInterval: 5000,
+  });
+  // Persona-mode manual pin, checked directly against offerPinsStatusQuery (there's
+  // no backend-computed supervisor_pinned field for the segment-aggregate offer -
+  // see get_banking_persona_best_offer's docstring: it never takes a customer_id).
+  const personaManuallyPinned = Boolean(
+    personaMarkerId &&
+    offer?.offer?.product_id &&
+    offerPinsStatusQuery.data?.offer_pin_product_id === offer.offer.product_id &&
+    selectedCustomerId !== optimisticallyUnpinnedOfferId,
+  );
+  const offerPinChangedSinceCompute = useMemo(() => {
+    if (personaMarkerId || !selectedCustomerId) return false;
+    if (!offerPinsStatusQuery.isSuccess) return false;
+    if (!offer?.offer) return false; // nothing computed yet  -  the next compute picks up the pin naturally
+    const pin = String(offerPinsStatusQuery.data?.offer_pin_product_id || '').trim();
+    const currentPinnedId = offer.offer.supervisor_pinned ? String(offer.offer.product_id ?? '').trim() : '';
+    return currentPinnedId !== pin;
+  }, [personaMarkerId, selectedCustomerId, offerPinsStatusQuery.isSuccess, offerPinsStatusQuery.data, offer]);
+
   const cohortHighRisk = useMemo(
     () => (churnHighData?.cohort ?? []) as ChurnCohortCustomerRow[],
     [churnHighData]
@@ -3128,7 +3251,7 @@ export default function BankingAgentC() {
     const raw = (c.churn_risk_reason || c.reason || '').trim();
     if (raw) return raw;
     const cat = c.churn_risk_category || 'Elevated';
-    const sc = c.churn_risk_score != null ? c.churn_risk_score.toFixed(0) : '—';
+    const sc = c.churn_risk_score != null ? c.churn_risk_score.toFixed(0) : ' - ';
     return `${cat} risk (${sc}/100): transaction recency, volume trend, balances vs income, product breadth, and digital engagement.`;
   }
 
@@ -3137,7 +3260,7 @@ export default function BankingAgentC() {
     [customers, selectedCustomerId]
   );
 
-  // Persona mode has no real customer to display or pin against — show the
+  // Persona mode has no real customer to display or pin against  -  show the
   // segment's name instead, and pin/unpin (which write to Agent D's per-customer
   // ledger) are hidden entirely rather than acting on a synthetic id.
   const displayCustomerLabel = personaMarkerId
@@ -3200,23 +3323,61 @@ export default function BankingAgentC() {
                 <label className="block text-sm font-semibold text-slate-700 mb-2">Select customer</label>
                 <CustomerSearchSelect
                   customers={customers}
-                  value={selectedCustomerId ?? ''}
-                  onChange={(id) => setUi((p) => ({ ...p, selectedCustomerId: id }))}
+                  value={pendingCustomerId ?? selectedCustomerId ?? ''}
+                  onChange={(id) => setUi((p) => ({ ...p, pendingCustomerId: id }))}
                   loading={customersLoading}
                   emptyListLabel="Run Segmentation and load data first to use Best Offer."
                   placeholder="Search by name or ID..."
                 />
+                {offerPinChangedSinceCompute && !offerFetching && (
+                  <div className="mt-4 flex items-center gap-2 rounded-lg border border-amber-200 bg-amber-50 px-4 py-2.5 text-sm text-amber-800">
+                    <AlertTriangle className="w-4 h-4 flex-shrink-0" />
+                    Pin changed in Director since this was last computed - click Get Best Offer to refresh.
+                  </div>
+                )}
+                <button
+                  type="button"
+                  onClick={() => {
+                    // Falls back to selectedCustomerId so a customer landed on via a
+                    // deep link from another tab (which sets selectedCustomerId
+                    // directly, bypassing this picker) can still be recomputed by
+                    // clicking this button again, without first reselecting them.
+                    // Always forces a genuine fresh computation (staleTime: 0 on this
+                    // one call) regardless of whether this customer already has
+                    // cached data from earlier this session - only switching tabs
+                    // shows cached/resumed results; clicking this button never should.
+                    const target = pendingCustomerId ?? selectedCustomerId;
+                    if (!target) return;
+                    setUi((p) => ({ ...p, selectedCustomerId: target, pendingCustomerId: target }));
+                    void queryClient.fetchQuery({
+                      queryKey: ['banking-one-best-offer', target],
+                      queryFn: () => fetchOneBestOffer(API_BASE, target),
+                      staleTime: 0,
+                    });
+                  }}
+                  disabled={!(pendingCustomerId ?? selectedCustomerId) || offerFetching}
+                  className="mt-4 w-full max-w-xl rounded-xl bg-violet-600 text-white font-semibold px-4 py-3 shadow-sm hover:bg-violet-700 disabled:bg-slate-200 disabled:text-slate-400 disabled:cursor-not-allowed transition-colors inline-flex items-center justify-center gap-2"
+                >
+                  {offerFetching ? (
+                    <>
+                      <RefreshCw className="w-4 h-4 animate-spin" />
+                      Computing...
+                    </>
+                  ) : (
+                    'Get Best Offer'
+                  )}
+                </button>
                 {!selectedCustomerId && (
                   <div className="mt-6 rounded-2xl border-2 border-dashed border-slate-200 bg-slate-50/50 p-12 text-center">
                     <Target className="w-14 h-14 text-slate-300 mx-auto mb-4" />
-                    <p className="text-slate-500 font-medium">Select a customer to see their one best offer</p>
+                    <p className="text-slate-500 font-medium">Select a customer, then click Get Best Offer</p>
                     <p className="text-slate-400 text-sm mt-1">Recommendation, score, reason, and channel plan</p>
                   </div>
                 )}
               </>
             )}
 
-            {/* Persona mode: no customer selection step — that's what Customer mode
+            {/* Persona mode: no customer selection step  -  that's what Customer mode
                 above is for. Persona mode is segment-wide (aggregate profile + the
                 segment's #1 recommended product from Agent B, matching the
                 Dashboard's Best Offer card), computed on demand via the button below
@@ -3247,11 +3408,29 @@ export default function BankingAgentC() {
                 </div>
 
                 <button
-                  onClick={() => setUi((p) => (p.selectedPersonaId ? { ...p, selectedCustomerId: `persona:${p.selectedPersonaId}` } : p))}
-                  disabled={!selectedPersonaId}
-                  className="w-full max-w-xl rounded-xl bg-indigo-600 text-white font-semibold px-4 py-3 shadow-sm hover:bg-indigo-700 disabled:bg-slate-200 disabled:text-slate-400 disabled:cursor-not-allowed transition-colors"
+                  onClick={() => {
+                    // Always forces a genuine fresh computation - see the customer-
+                    // mode button above for why.
+                    if (!selectedPersonaId) return;
+                    const marker = `persona:${selectedPersonaId}`;
+                    setUi((p) => ({ ...p, selectedCustomerId: marker }));
+                    void queryClient.fetchQuery({
+                      queryKey: ['banking-one-best-offer', marker],
+                      queryFn: () => fetchOneBestOffer(API_BASE, marker),
+                      staleTime: 0,
+                    });
+                  }}
+                  disabled={!selectedPersonaId || offerFetching}
+                  className="w-full max-w-xl rounded-xl bg-indigo-600 text-white font-semibold px-4 py-3 shadow-sm hover:bg-indigo-700 disabled:bg-slate-200 disabled:text-slate-400 disabled:cursor-not-allowed transition-colors inline-flex items-center justify-center gap-2"
                 >
-                  Compute Best Offer
+                  {offerFetching ? (
+                    <>
+                      <RefreshCw className="w-4 h-4 animate-spin" />
+                      Computing...
+                    </>
+                  ) : (
+                    'Compute Best Offer'
+                  )}
                 </button>
               </div>
             )}
@@ -3260,7 +3439,7 @@ export default function BankingAgentC() {
               <p className="text-sm text-slate-500">Load customers from Segmentation to use persona mode.</p>
             )}
 
-            {/* Shared result card — populated once selectedCustomerId is set, whether a
+            {/* Shared result card  -  populated once selectedCustomerId is set, whether a
                 real customer_id from Customer mode's search above, or a `persona:` marker
                 set by persona mode's "Compute Best Offer" button above. Kept as a single
                 render path so persona mode reuses the exact same computation/markup
@@ -3292,16 +3471,41 @@ export default function BankingAgentC() {
                         transition={{ duration: 0.35 }}
                         className="space-y-6"
                       >
-                        {/* Pin/unpin write to Agent D's per-customer ledger — meaningless
-                            for a segment-wide aggregate result, so hidden in persona mode. */}
-                        {!personaMarkerId && offer.offer.supervisor_pinned && (
+                        {/* Customer mode: offer.offer.supervisor_pinned is backend-computed fresh
+                            per compute, straight from the manual pin (this endpoint always applies
+                            offer_pin_product_id unconditionally). Persona mode: the segment-aggregate
+                            endpoint never takes a customer_id, so there's no supervisor_pinned field -
+                            personaManuallyPinned checks the same manual-pin field directly against the
+                            segment's representative customer instead (informational only, doesn't
+                            rerank which offer is computed for the segment). */}
+                        {(personaMarkerId
+                          ? personaManuallyPinned
+                          : offer.offer.supervisor_pinned && selectedCustomerId !== optimisticallyUnpinnedOfferId) && (
                           <PinnedOfferCard
                             card={{
                               product_id: offer.offer.product_id,
                               product_name: offer.offer.product_name,
+                              // Encompass the whole offer, not just the product identity -
+                              // same rich source (offer_intelligence.selected_offer) the
+                              // OfferHeroCard below already renders from, so the pinned
+                              // banner shows the full headline/benefits/terms instead of
+                              // a bare title strip.
+                              offer_name: offer.offer_intelligence?.selected_offer?.offer_name,
+                              headline_value:
+                                offer.offer_intelligence?.selected_offer?.content_hero_stat ??
+                                offer.offer_intelligence?.selected_offer?.headline_value,
+                              content_benefit_1: offer.offer_intelligence?.selected_offer?.content_benefit_1,
+                              content_benefit_2: offer.offer_intelligence?.selected_offer?.content_benefit_2,
+                              content_benefit_3: offer.offer_intelligence?.selected_offer?.content_benefit_3,
+                              terms_summary: offer.offer_intelligence?.selected_offer?.terms_summary,
+                              days_remaining: offer.offer_intelligence?.selected_offer?.days_remaining,
                               reason: offer.offer.priority_pin_reason,
                             }}
-                            onUnpin={() => selectedCustomerId && unpinOfferMutation.mutate(selectedCustomerId)}
+                            onUnpin={() => {
+                              if (!offerPinsTargetId) return;
+                              setOptimisticallyUnpinnedOfferId(selectedCustomerId);
+                              unpinOfferMutation.mutate(offerPinsTargetId);
+                            }}
                             unpinning={unpinOfferMutation.isPending}
                           />
                         )}
@@ -3317,22 +3521,6 @@ export default function BankingAgentC() {
                                 <p className="text-sm text-slate-500 mt-0.5">{offer.persona}</p>
                               </div>
                               <div className="flex flex-wrap gap-2 mt-1 items-start">
-                                {!personaMarkerId && !offer.offer.supervisor_pinned && (
-                                  <button
-                                    type="button"
-                                    onClick={() =>
-                                      selectedCustomerId &&
-                                      offer.offer?.product_id &&
-                                      pinOfferMutation.mutate({ targetCustomerId: selectedCustomerId, productId: offer.offer.product_id })
-                                    }
-                                    disabled={pinOfferMutation.isPending}
-                                    title="Pin this offer"
-                                    className="inline-flex items-center gap-1 px-2.5 py-1 rounded-full border border-slate-200 bg-white text-slate-500 text-xs font-semibold hover:bg-slate-50 disabled:opacity-50"
-                                  >
-                                    <Pin className="w-3 h-3" />
-                                    Pin
-                                  </button>
-                                )}
                                 {selectedCustomer?.channel_preference && (
                                   <span className="inline-flex items-center gap-1 text-xs font-semibold px-2.5 py-1 rounded-full bg-indigo-50 border border-indigo-200 text-indigo-700">
                                     <Smartphone className="w-3 h-3" />
@@ -3377,7 +3565,7 @@ export default function BankingAgentC() {
                                 onToggleScore={() => setUi((p) => ({ ...p, offerScoreOpen: !p.offerScoreOpen }))}
                               />
                             ) : (
-                              /* Product spotlight — when no active promo exists, show the product big */
+                              /* Product spotlight  -  when no active promo exists, show the product big */
                               <div className="rounded-2xl overflow-hidden">
                                 <div className={`bg-gradient-to-br ${getSubcategoryGradient(offer.offer.subcategory ?? offer.offer.category)} p-7 relative overflow-hidden`}>
                                   <div className="absolute top-0 right-0 w-48 h-48 rounded-full bg-white/5 -translate-y-12 translate-x-12" />
@@ -3441,7 +3629,7 @@ export default function BankingAgentC() {
                                 </div>
                                 <p className="text-xs text-slate-600 mb-2">
                                   Recommender ranks products by segment fit; Best Offer picks one best offer for retention and
-                                  purchase—shown when they differ.
+                                  purchase - shown when they differ.
                                 </p>
                                 {offer.agent_b_top_products && offer.agent_b_top_products.length > 0 && (
                                   <p className="text-xs text-slate-500 mb-3">
@@ -3506,7 +3694,7 @@ export default function BankingAgentC() {
                           </div>
                         </div>
                         <div className="p-6 space-y-4">
-                          {/* Best channel — still shown so ops knows how to reach the customer */}
+                          {/* Best channel  -  still shown so ops knows how to reach the customer */}
                           {offer?.best_channel && (
                             <ChannelDeliveryCard
                               bestChannel={offer.best_channel}
@@ -3542,10 +3730,10 @@ export default function BankingAgentC() {
                   Churn risk intelligence
                 </h2>
                 <p className="text-slate-600 text-sm mt-1 max-w-2xl">
-                  <strong className="text-slate-800">Customer</strong>: Two tables — up to 10 highest-risk (High/Critical) and up
+                  <strong className="text-slate-800">Customer</strong>: Two tables  -  up to 10 highest-risk (High/Critical) and up
                   to 10 lowest-risk (Low band), with 1:1 actions.{' '}
                   <strong className="text-slate-800">Persona</strong>: Segment-level churn rollup aligned with the persona list
-                  above—use <span className="font-semibold text-indigo-700">Open segment</span> to load that persona in{' '}
+                  above - use <span className="font-semibold text-indigo-700">Open segment</span> to load that persona in{' '}
                   <strong className="text-slate-800">One best offer</strong>.
                 </p>
               </div>
@@ -3604,7 +3792,7 @@ export default function BankingAgentC() {
                         <ChurnCohortCustomerTable
                           rows={cohortHighRisk}
                           title="High / Critical risk"
-                          description="Highest churn scores — prioritize retention and outreach."
+                          description="Highest churn scores  -  prioritize retention and outreach."
                           headerClassName="bg-amber-50/95 border-amber-100"
                           getReasonText={churnReasonText}
                           onGetOffer={(customerId) =>
@@ -3619,7 +3807,7 @@ export default function BankingAgentC() {
                         <ChurnCohortCustomerTable
                           rows={cohortLowRisk}
                           title="Low risk"
-                          description="Lowest churn scores in the Low band — relationship growth and standard care."
+                          description="Lowest churn scores in the Low band  -  relationship growth and standard care."
                           headerClassName="bg-emerald-50/95 border-emerald-100"
                           getReasonText={churnReasonText}
                           onGetOffer={(customerId) =>
@@ -3684,14 +3872,14 @@ export default function BankingAgentC() {
                                 ) : null}
                               </td>
                               <td className="py-3 px-4 text-slate-600 text-xs">
-                                {(row.top_retention_action || '—').replace(/_/g, ' ')}
+                                {(row.top_retention_action || ' - ').replace(/_/g, ' ')}
                               </td>
                               <td className="py-3 px-4 text-slate-600 align-top max-w-md">
                                 <CollapsibleChurnText text={formatRetentionStrategy(row.retention_strategy)} />
                                 {row.persona_metrics && (
                                   <p className="mt-2 text-[11px] text-slate-500">
-                                    avg 90d txns {row.persona_metrics.avg_txn_count_90d ?? '—'} | mobile {pct(row.persona_metrics.avg_mobile_share_90d)} |
-                                    avg active products {row.persona_metrics.avg_active_products_180d ?? '—'}
+                                    avg 90d txns {row.persona_metrics.avg_txn_count_90d ?? ' - '} | mobile {pct(row.persona_metrics.avg_mobile_share_90d)} |
+                                    avg active products {row.persona_metrics.avg_active_products_180d ?? ' - '}
                                   </p>
                                 )}
                               </td>
@@ -3736,7 +3924,7 @@ export default function BankingAgentC() {
         </motion.section>}
       </div>
 
-      {/* Ad Spend ROI — embedded below Best Offer content */}
+      {/* Ad Spend ROI  -  embedded below Best Offer content */}
       <div className="mt-12">
         <BankingAdSpend />
       </div>

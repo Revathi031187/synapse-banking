@@ -5,11 +5,11 @@ reuses the same name for the same logical segment, instead of asking the LLM
 to re-name something that's still the same archetype it was an hour ago.
 
 Keyed by a stable identity (archetype type for macro, (macro_segment_id,
-micro_id) for micro) — NOT by cluster label or display name, both of which
+micro_id) for micro)  -  NOT by cluster label or display name, both of which
 can vary run to run even when the underlying segment concept hasn't changed.
 
 On-disk (not in-memory-only): this app commonly runs under `uvicorn --reload`,
-which restarts the whole process — and wipes in-memory state — on every
+which restarts the whole process  -  and wipes in-memory state  -  on every
 backend file edit, so an in-memory cache alone couldn't honor a real
 multi-hour window.
 """
@@ -25,7 +25,7 @@ logger = logging.getLogger(__name__)
 
 # The one value to edit to change how long a generated name stays locked in
 # before segmentation is allowed to generate a new one for that same segment.
-# Deliberately a plain backend constant — not read from any config file, not
+# Deliberately a plain backend constant  -  not read from any config file, not
 # exposed via any endpoint or UI control.
 CACHE_TTL_HOURS = 24
 
@@ -38,7 +38,7 @@ _cache: Optional[Dict[str, Dict[str, Any]]] = None  # lazy-loaded, in-memory mir
 
 def _resolve_path() -> Path:
     """Local dev/most deployments: project_root/data/. Databricks Apps bundles
-    can be read-only there, so fall back to /tmp — same shape as the existing
+    can be read-only there, so fall back to /tmp  -  same shape as the existing
     Agent A results cache's path resolution."""
     if _CACHE_PATH.parent.is_dir():
         return _CACHE_PATH
@@ -65,7 +65,7 @@ def _save_locked() -> None:
         path.parent.mkdir(parents=True, exist_ok=True)
         with open(tmp, "w", encoding="utf-8") as f:
             json.dump(_cache, f, indent=2)
-        os.replace(tmp, path)  # atomic — safe if the process is killed mid-write
+        os.replace(tmp, path)  # atomic  -  safe if the process is killed mid-write
     except Exception as e:
         logger.warning("segment_name_cache: failed to persist %s: %s", path, e)
 

@@ -451,11 +451,11 @@ def add_essential_churn_features(customers_df, transactions_df):
             lambda r: _safe_div(r.get('inflow_90d', 0.0), r.get('outflow_90d', 0.0), 0.0), axis=1
         )
     else:
-        # Transaction data unavailable — churn scores will use estimated defaults.
+        # Transaction data unavailable  -  churn scores will use estimated defaults.
         # Real transaction data is required for accurate churn predictions.
         import logging as _logging
         _logging.getLogger(__name__).warning(
-            "[ChurnFeatureGenerator] No transaction data — churn risk scores are "
+            "[ChurnFeatureGenerator] No transaction data  -  churn risk scores are "
             "estimated defaults, not computed from real activity."
         )
         df['days_since_last_txn'] = 30  # Assume average activity

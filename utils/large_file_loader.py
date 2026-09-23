@@ -3,11 +3,11 @@ Utility for loading large CSV files that are excluded from Databricks App deploy
 (> 10 MB per-file limit).
 
 Access priority for each file:
-  1. local_path  — dev Repos path (always wins when present)
-  2. /tmp/meridian_bank/<file>  — cached from a previous download this App instance
-  3. Direct UC Volume filesystem path (/Volumes/...) — works when the App's service
+  1. local_path   -  dev Repos path (always wins when present)
+  2. /tmp/meridian_bank/<file>   -  cached from a previous download this App instance
+  3. Direct UC Volume filesystem path (/Volumes/...)  -  works when the App's service
      principal has been granted READ FILES on the volume (no REST call needed)
-  4. Databricks Files REST API  — fallback download via DATABRICKS_HOST + DATABRICKS_TOKEN
+  4. Databricks Files REST API   -  fallback download via DATABRICKS_HOST + DATABRICKS_TOKEN
 
 For option 4 to work the App's service principal needs:
   GRANT READ FILES ON VOLUME dev.banking.meridian_preloaded
@@ -25,13 +25,13 @@ from typing import Callable, Optional
 
 # Called with (bytes_so_far, total_bytes_or_None) as a download/copy progresses.
 # total is None when the source doesn't report a size (e.g. no Content-Length
-# header) — callers should render an indeterminate indicator in that case
+# header)  -  callers should render an indeterminate indicator in that case
 # rather than inventing a fake percentage.
 ProgressCallback = Callable[[int, Optional[int]], None]
 
 # Importing utils.logger (rather than a bare logging.getLogger) guarantees the
 # app's UTF-8-safe console sink is installed before any message below is
-# logged — messages here previously used raw print() with unicode arrows
+# logged  -  messages here previously used raw print() with unicode arrows
 # (→), which crashed with UnicodeEncodeError on Windows' cp1252 console the
 # moment this code path actually ran (e.g. a REST-download success/failure),
 # silently breaking the whole fallback chain instead of reporting its result.
@@ -51,7 +51,7 @@ _LARGE_FILES = {
 
 # Fallback source for anyone without READ FILES on the UC Volume above, but
 # who DOES have SELECT on the equivalent table (a separate, often easier-to-
-# grant permission) — same data, uploaded by scripts/upload_meridian_to_databricks.py
+# grant permission)  -  same data, uploaded by scripts/upload_meridian_to_databricks.py
 # via `CREATE TABLE ... AS SELECT * FROM read_files(..., header=>true)`, so its
 # column names are an exact match for the CSV's header.
 _SQL_TABLE_SOURCES = {
@@ -61,7 +61,7 @@ _SQL_TABLE_SOURCES = {
         'table': 'meridian_transactions',
     },
 }
-_SQL_EXPORT_BATCH_SIZE = 20_000  # rows per SELECT — comfortably inside inline result
+_SQL_EXPORT_BATCH_SIZE = 20_000  # rows per SELECT  -  comfortably inside inline result
                                  # limits; the one value to tune if a warehouse ever
                                  # needs a smaller batch.
 
@@ -70,7 +70,7 @@ def _sql_exec(host: str, token: str, warehouse_id: str, statement: str, timeout_
     """
     Execute one SQL statement via the Databricks SQL Statement Execution REST
     API and poll until it finishes. Raises RuntimeError/TimeoutError on
-    failure — mirrors the exact pattern already proven in
+    failure  -  mirrors the exact pattern already proven in
     scripts/upload_meridian_to_databricks.py::_sql and
     utils/databricks_genie.py::_sync_via_sql_warehouse (ported in rather than
     imported, to keep this module free of a dependency on the scripts folder).
@@ -123,13 +123,13 @@ def _download_via_sql_warehouse(
     READ FILES on the UC Volume (a separate, often easier-to-grant permission).
     Pages through the table in _SQL_EXPORT_BATCH_SIZE-row batches and writes
     a CSV to tmp_path with the same name/shape ensure_csv()'s other paths
-    produce — nothing downstream needs to know this method was used.
+    produce  -  nothing downstream needs to know this method was used.
     """
     import csv as _csv
 
     source = _SQL_TABLE_SOURCES.get(fname)
     if not source:
-        return False  # no table configured for this file — not this method's job
+        return False  # no table configured for this file  -  not this method's job
 
     host = os.environ.get('DATABRICKS_HOST', '').rstrip('/')
     token = os.environ.get('TRANSACTIONS_TOKEN') or os.environ.get('DATABRICKS_TOKEN', '')
@@ -154,7 +154,7 @@ def _download_via_sql_warehouse(
     try:
         count_result = _sql_exec(host, token, warehouse_id, f"SELECT COUNT(*) FROM {fqn}")
         total_rows = int(count_result["result"]["data_array"][0][0])
-        logger.info(f"[large_file_loader] {fqn} has {total_rows:,} rows — exporting via SQL warehouse in "
+        logger.info(f"[large_file_loader] {fqn} has {total_rows:,} rows  -  exporting via SQL warehouse in "
                     f"batches of {_SQL_EXPORT_BATCH_SIZE:,}")
 
         _TMP_BASE.mkdir(parents=True, exist_ok=True)
@@ -189,7 +189,7 @@ def _download_via_sql_warehouse(
 
         logger.info(
             f"[large_file_loader] Exported {rows_written:,} rows from {fqn} -> {tmp_path} "
-            "via SQL warehouse — successfully loaded"
+            "via SQL warehouse  -  successfully loaded"
         )
         return True
     except Exception as exc:
@@ -216,19 +216,19 @@ def ensure_csv(
     Return a valid path to the requested CSV file.
 
     Priority order:
-      1. local_path            (dev Repos — fast, always correct in dev)
-      2. /tmp/meridian_bank/   (cached download — persists within an App instance)
-      3. Direct /Volumes/ path (UC Volume mounted in the App container — no REST call)
+      1. local_path            (dev Repos  -  fast, always correct in dev)
+      2. /tmp/meridian_bank/   (cached download  -  persists within an App instance)
+      3. Direct /Volumes/ path (UC Volume mounted in the App container  -  no REST call)
       4. Files REST API        (download via DATABRICKS_HOST + DATABRICKS_TOKEN)
       5. SQL warehouse export  (query the equivalent table instead of the volume)
 
     Steps 3-5 all reach out to Databricks and only run when allow_download=True
-    — the caller must explicitly opt in. This is what the Data Loader's
+     -  the caller must explicitly opt in. This is what the Data Loader's
     dedicated Download button does; every other caller (Agent A/B loading
     their input data, the chat engine, /datasets/load, the startup cache
     restore) calls this with the default False, so a missing file is simply
     reported as unavailable instead of silently kicking off a slow network
-    fetch the user never asked for — the download only ever happens when the
+    fetch the user never asked for  -  the download only ever happens when the
     user explicitly clicks Download in the Data Loader.
 
     Returns local_path on total failure (or when allow_download=False and the
@@ -236,12 +236,12 @@ def ensure_csv(
 
     on_progress, if given, is called as the file becomes available so a caller
     can drive a live progress indicator. Steps 1-3 are near-instant local disk
-    operations — on_progress fires once with (final_size, final_size). Step 4
+    operations  -  on_progress fires once with (final_size, final_size). Step 4
     is a real network download and fires incrementally as data streams in.
 
     on_error, if given, is called with a specific, human-readable reason on
     total failure (missing env vars, 403/permissions, or the raw exception
-    text) — this is the only way to learn WHY beyond the return value, since
+    text)  -  this is the only way to learn WHY beyond the return value, since
     ensure_csv() always returns a Path and never raises (every caller checks
     .exists() on the result rather than handling an exception).
     """
@@ -270,16 +270,16 @@ def ensure_csv(
 
     # ── 2. Already cached from a previous download this App instance ─────────
     if tmp_path.exists():
-        logger.info(f"[large_file_loader] Using cached {fname} from {tmp_path} — successfully loaded")
+        logger.info(f"[large_file_loader] Using cached {fname} from {tmp_path}  -  successfully loaded")
         _report_done(tmp_path)
         return tmp_path
 
     if not allow_download:
         # Not present locally or cached, and this caller didn't explicitly ask
-        # to fetch it — report "not available" rather than reaching out to
+        # to fetch it  -  report "not available" rather than reaching out to
         # Databricks. Not an error: this is the expected, quiet outcome for
         # every caller except the Data Loader's own Download action.
-        logger.info(f"[large_file_loader] {fname} not available locally and allow_download=False — skipping fetch")
+        logger.info(f"[large_file_loader] {fname} not available locally and allow_download=False  -  skipping fetch")
         return local_path
 
     # Resolve the UC Volume path for this file
@@ -292,7 +292,7 @@ def ensure_csv(
 
     # ── 3. Direct filesystem access (UC Volume mounted in App container) ──────
     # Databricks Apps can read /Volumes/... directly when the App's service
-    # principal has been granted READ FILES on the volume — no HTTP call needed.
+    # principal has been granted READ FILES on the volume  -  no HTTP call needed.
     vol_direct = Path(resolved_vol)
     if vol_direct.exists():
         try:
@@ -301,7 +301,7 @@ def ensure_csv(
             size_mb = tmp_path.stat().st_size / 1_048_576
             logger.info(
                 f"[large_file_loader] Copied {fname} from UC Volume -> {tmp_path} "
-                f"({size_mb:.1f} MB) — successfully loaded"
+                f"({size_mb:.1f} MB)  -  successfully loaded"
             )
             _report_done(tmp_path)
             return tmp_path
@@ -318,7 +318,7 @@ def ensure_csv(
 
     if not host or not token:
         reason = (
-            f"DATABRICKS_HOST / DATABRICKS_TOKEN not set — cannot download {fname}. "
+            f"DATABRICKS_HOST / DATABRICKS_TOKEN not set  -  cannot download {fname}. "
             f"Place the file at {local_path} or set env vars."
         )
         logger.warning(f"[large_file_loader] {reason}")
@@ -355,12 +355,12 @@ def ensure_csv(
         size_mb = tmp_path.stat().st_size / 1_048_576
         logger.info(
             f"[large_file_loader] Downloaded {fname} -> {tmp_path} "
-            f"({size_mb:.1f} MB) via Databricks Files REST API — successfully loaded"
+            f"({size_mb:.1f} MB) via Databricks Files REST API  -  successfully loaded"
         )
         return tmp_path
     except Exception as exc:
         # Never let a download failure (network, auth, or even a logging encoding
-        # issue) escape this function — every caller expects ensure_csv() to always
+        # issue) escape this function  -  every caller expects ensure_csv() to always
         # return a Path, falling back to local_path on total failure so its own
         # .exists() check can surface the gap, rather than crashing the whole
         # dataset-load/Agent-A/chatbot request that triggered this fallback.
@@ -373,9 +373,9 @@ def ensure_csv(
             except (IndexError, ValueError):
                 grant_hint = "GRANT READ FILES ON VOLUME <catalog>.<schema>.<volume> TO `<principal>`;"
             volume_error_reason = (
-                f"403 Forbidden — the token in DATABRICKS_TOKEN/TRANSACTIONS_TOKEN lacks READ FILES "
+                f"403 Forbidden  -  the token in DATABRICKS_TOKEN/TRANSACTIONS_TOKEN lacks READ FILES "
                 f"on the UC Volume {resolved_vol}. Run in Databricks (as a user/admin who can grant "
-                f"volume access): {grant_hint} — where <principal> is whichever identity that token "
+                f"volume access): {grant_hint}  -  where <principal> is whichever identity that token "
                 f"belongs to (a user email for a personal access token, or the app's service principal "
                 f"name if deployed, found under Databricks -> Apps -> <this app> -> Permissions)."
             )
@@ -387,7 +387,7 @@ def ensure_csv(
 
         # ── 5. SQL warehouse export (table SELECT permission, not volume file access) ──
         # Tried only after the volume/REST path above has already failed, so
-        # this is purely additive — anyone with volume access is unaffected.
+        # this is purely additive  -  anyone with volume access is unaffected.
         # It reports its own on_error on failure; only fall back to the volume
         # error above when this method isn't even applicable to this file.
         if fname in _SQL_TABLE_SOURCES:

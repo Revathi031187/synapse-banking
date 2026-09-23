@@ -67,7 +67,7 @@ const AEP_SECTIONS: SectionDef[] = [
   },
 ];
 
-// Pre-filled defaults for the demo AEP sandbox — never stored server-side, only used for this session.
+// Pre-filled defaults for the demo AEP sandbox  -  never stored server-side, only used for this session.
 const AEP_DEFAULT_VALUES: Record<string, string> = {
   clientId: 'c98c75d80dfc48d7bf209265bc1d441e',
   clientSecret: 'p8e-VZ5SpYW7WadWFMkx-R0a9mgQkaZPg6JR',
@@ -187,7 +187,7 @@ function fieldsComplete(fields: FieldDef[], values: Record<string, string>): boo
   return fields.every(f => !f.required || (values[f.key] || '').trim() !== '');
 }
 
-// ─── Adobe Experience Platform — real activation ───────────────────────────
+// ─── Adobe Experience Platform  -  real activation ───────────────────────────
 interface AEPErrorDetail {
   step: string;
   status: number | null;
@@ -527,7 +527,7 @@ export default function BankingActivation() {
       }
 
       // All entries in this attempt are considered handled (pushed, or permanently
-      // skipped as malformed) — advance the watermark past the newest one so a
+      // skipped as malformed)  -  advance the watermark past the newest one so a
       // retry only ever picks up entries generated after this click.
       const newestTimestamp = unpushedEntries.reduce(
         (max, e) => (e.timestamp > max ? e.timestamp : max),
@@ -793,7 +793,7 @@ export default function BankingActivation() {
                   <div className="flex items-start gap-2 bg-amber-50 border border-amber-200 rounded-lg px-3 py-2.5">
                     <AlertTriangle className="w-4 h-4 text-amber-600 mt-0.5 flex-shrink-0" />
                     <p className="text-xs text-amber-800">
-                      Run Agent D for a customer first — there's no orchestration result to ingest yet.
+                      Run Agent D for a customer first  -  there's no orchestration result to ingest yet.
                     </p>
                   </div>
                 ) : datasetResult ? (
@@ -815,7 +815,7 @@ export default function BankingActivation() {
                           <span className="text-gray-400"> · </span>
                           <span className="font-mono text-gray-500">{r.recommendedProductId}</span>
                           <span className="text-gray-400"> · </span>
-                          <span className="text-gray-700">{r.offerName || '—'}</span>
+                          <span className="text-gray-700">{r.offerName || ' - '}</span>
                           <span className="text-gray-400"> · </span>
                           <span className="text-gray-500">{new Date(r.lastActivationDate).toLocaleString()}</span>
                         </div>

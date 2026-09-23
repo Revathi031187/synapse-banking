@@ -31,7 +31,7 @@ class FMBProductsGenerator:
                 'product_name': 'Worry-FREE Checking®',
                 'category': 'Personal',
                 'subcategory': 'Checking',
-                'description': 'Banking is best when it\'s simple — and free',
+                'description': 'Banking is best when it\'s simple  -  and free',
                 'annual_fee': 0,
                 'min_balance': 0,
                 'interest_rate': 0.0,

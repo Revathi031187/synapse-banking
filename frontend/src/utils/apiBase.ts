@@ -2,7 +2,7 @@
  * API base URL for banking (and academy) requests.
  *
  * FastAPI registers routes at /api/... on the app root. Do NOT prefix with the
- * Vite SPA base (e.g. /banking-platform/v1) — that produces URLs like
+ * Vite SPA base (e.g. /banking-platform/v1)  -  that produces URLs like
  * /banking-platform/v1/api/... which only match the SPA catch-all GET route,
  * so POST returns 405 Method Not Allowed.
  *

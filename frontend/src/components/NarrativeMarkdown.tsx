@@ -2,7 +2,7 @@ import React from 'react';
 
 // ── Markdown renderer ─────────────────────────────────────────────────────────
 // Shared by SegmentAIPanel and BankingAskGenie (both render the same chatbot
-// response shape) — hand-rolled rather than a markdown library so the exact
+// response shape)  -  hand-rolled rather than a markdown library so the exact
 // visual language (violet accents, compact spacing) stays consistent with the
 // rest of the chat UI.
 

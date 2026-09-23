@@ -3,14 +3,14 @@ Multi-source routing layer for the Segment AI chatbot.
 
 Decides whether a question needs the existing text-to-SQL pipeline
 (utils/chat_sql_engine.py), one or more of Agents A/B/C/D, or more
-information from the user — possibly more than one of these at once
+information from the user  -  possibly more than one of these at once
 (e.g. "how's the Premium segment doing, and what should we offer its top
 customer?" needs sql, then agent_b). Fetches condensed data from each
 resolved source and produces one structured Claude-written answer.
 
 Cheap-by-construction: an ordinary analytics question that resolves to a
 single "sql" need with nothing missing is routed straight back through
-ask_chatbot() unmodified — zero added LLM cost over today's behavior. Only
+ask_chatbot() unmodified  -  zero added LLM cost over today's behavior. Only
 questions that actually touch an agent (or need more than one source) pay
 for the small planner call and the narration/synthesis call.
 """
@@ -24,12 +24,12 @@ from typing import Any, Awaitable, Callable, Dict, List, Optional
 
 logger = logging.getLogger(__name__)
 
-# Used only for routing, never for the detailed answer itself — kept on
+# Used only for routing, never for the detailed answer itself  -  kept on
 # Together AI so planner traffic never competes with the Claude answer budget.
 # The smaller models in config/llm_priority.json's Together list
 # (Meta-Llama-3-8B-Instruct-Lite, Qwen2.5-7B-Instruct-Turbo) returned
 # "non-serverless model" 400s when probed live against this account's
-# TOGETHER_API_KEY — only the larger *-Turbo flagship models are enabled as
+# TOGETHER_API_KEY  -  only the larger *-Turbo flagship models are enabled as
 # serverless here. If a genuinely smaller model is enabled later, swap it in;
 # until then this doesn't change the token COUNT budget (the planner prompt
 # is still capped small below), only which model answers it.
@@ -43,7 +43,7 @@ _MISSING_CUSTOMER_QUESTION = {
     "agent_d": "Which customer (ID or name) would you like next-visit recommendations for?",
 }
 _NO_SEGMENTATION_MESSAGE = (
-    "I don't have a customer segmentation to work from yet — please run Agent A "
+    "I don't have a customer segmentation to work from yet  -  please run Agent A "
     "on the Data Loader tab first, then ask me again."
 )
 
@@ -52,18 +52,18 @@ question (and a little recent conversation), decide which data source(s) can ans
 
 Sources:
 - "sql": general data/analytics questions over customers, products, transactions, deposits, ad spend, \
-segments — counts, averages, breakdowns, trends, comparisons of METRICS (income, churn, deposits, etc).
+segments  -  counts, averages, breakdowns, trends, comparisons of METRICS (income, churn, deposits, etc).
 - "agent_a": which customer personas/segments exist and their stats.
 - "agent_b": product recommendations for ONE customer or persona.
 - "agent_c": the single best offer for ONE customer.
 - "agent_d": what to show a customer on their NEXT VISIT / behavioral next-best-action.
 
 CRITICAL: recommendations, best offers, and next-visit guidance ONLY ever come from agent_b/agent_c/agent_d \
-— NEVER from "sql", even when the question compares several customers/personas or uses the word "compare". \
+ -  NEVER from "sql", even when the question compares several customers/personas or uses the word "compare". \
 SQL has no idea what Agent B/C/D would actually recommend; guessing it from raw tables gives WRONG numbers \
 that won't match what those agents really produce. If a question asks "compare the recommendation/offer for \
 X and Y", emit ONE need per entity (X and Y each get their own agent_b/agent_c need, same source, each with \
-its own customer_id/customer_name/persona) — never collapse it into a single "sql" need.
+its own customer_id/customer_name/persona)  -  never collapse it into a single "sql" need.
 
 Example: "Compare the offers for Wealth Saver vs At-Risk Saver" ->
 {"needs": [
@@ -71,15 +71,15 @@ Example: "Compare the offers for Wealth Saver vs At-Risk Saver" ->
   {"source": "agent_c", "purpose": "best offer for At-Risk Saver", "customer_id": null, "customer_name": null, "persona": "At-Risk Saver"}
 ]}
 
-A question can need more than one source too — e.g. "how's the Premium segment doing and what would you \
+A question can need more than one source too  -  e.g. "how's the Premium segment doing and what would you \
 recommend for its top customer" needs "sql" then "agent_b". Extract any customer_id, customer_name, or \
-persona name the question or recent conversation already gives you for each need — use null if none given, \
+persona name the question or recent conversation already gives you for each need  -  use null if none given, \
 never guess one, and never shorten/paraphrase a persona name (copy it exactly as given, e.g. "Wealth Saver" \
 not "Saver" or "Wealth").
 
 IMPORTANT: if the question asks for recommendations, an offer, or next-visit guidance but does NOT name a \
 customer or segment, still answer with the matching source ("agent_b"/"agent_c"/"agent_d") and leave \
-customer_id/customer_name/persona null — do NOT fall back to "sql" just because no customer was given. \
+customer_id/customer_name/persona null  -  do NOT fall back to "sql" just because no customer was given. \
 Leaving those null is expected; the app will ask the user who they mean.
 
 Respond with ONLY this JSON, nothing else, no markdown fences:
@@ -89,10 +89,10 @@ Respond with ONLY this JSON, nothing else, no markdown fences:
 At most 3 needs. If the question is general analytics, small talk, or you are unsure, use a single "sql" need."""
 
 _ANSWER_SYSTEM = """You are Segment AI, a banking analytics assistant. You have been given structured data \
-already fetched from the bank's systems for this question — never invent numbers, names, or products that \
+already fetched from the bank's systems for this question  -  never invent numbers, names, or products that \
 aren't in it.
 
-Formatting rules — the answer must NOT be a single paragraph:
+Formatting rules  -  the answer must NOT be a single paragraph:
 - Use "## " or "### " headers when the answer covers more than one part.
 - Bold every number, dollar amount, product name, and customer/segment name using **text**.
 - Use "- " bullet points for 3 or more items.
@@ -100,7 +100,7 @@ Formatting rules — the answer must NOT be a single paragraph:
 - Keep paragraphs short.
 
 If a "STILL NEED" section is provided, answer everything you CAN from the data first, then end your \
-answer with a direct, specific question for whatever is still missing — never skip the parts you can \
+answer with a direct, specific question for whatever is still missing  -  never skip the parts you can \
 answer just because something else is missing."""
 
 
@@ -135,7 +135,7 @@ def _format_history(history: Optional[List[Dict[str, Any]]], limit: int, max_cha
 
 def plan_needs(question: str, history: Optional[List[Dict[str, Any]]]) -> Dict[str, Any]:
     """Small, cheap Together-AI call that decides which source(s) a question needs.
-    Never raises — falls back to a single "sql" need (today's behavior) on any
+    Never raises  -  falls back to a single "sql" need (today's behavior) on any
     failure or malformed output."""
     default = {"needs": [{"source": "sql", "purpose": question, "customer_id": None,
                            "customer_name": None, "persona": None}]}
@@ -193,7 +193,7 @@ def _lookup_customers_by_name(name: str) -> List[Dict[str, str]]:
 def _guess_persona_from_table(table: Optional[Dict[str, Any]]) -> Optional[str]:
     """Cross-need dependency support: if an earlier sql need's result has a
     segment/persona-like column, its top row is a reasonable guess for "the top
-    segment" a later need (e.g. agent_b) refers to — no extra LLM call needed."""
+    segment" a later need (e.g. agent_b) refers to  -  no extra LLM call needed."""
     if not table or not table.get("columns") or not table.get("rows"):
         return None
     cols = [str(c).lower() for c in table["columns"]]
@@ -228,7 +228,7 @@ def _condense_agent_a(personas: Dict[str, Any], wanted: Optional[str]) -> Dict[s
         if wanted and wanted.strip().lower() not in str(row["persona_name"]).lower():
             continue
         items.append(row)
-    if wanted and not items:  # requested name didn't match anything — show everything instead
+    if wanted and not items:  # requested name didn't match anything  -  show everything instead
         items = [_row(cid, p) for cid, p in (personas or {}).items() if isinstance(p, dict)]
     return {"personas": items[:8]}
 
@@ -343,7 +343,7 @@ async def _resolve_and_fetch(need: Dict[str, Any], ctx: _RouterContext) -> "tupl
             return None, None
     except Exception as e:
         logger.warning("agent_chat_router: %s fetch failed for %s: %s", source, cid, e)
-        return None, f"I ran into a problem getting that ({source}) — could you try again?"
+        return None, f"I ran into a problem getting that ({source})  -  could you try again?"
 
     if condensed.get("error"):
         return None, f"I couldn't get that: {condensed['error']}"
@@ -392,7 +392,7 @@ def answer(
         logger.warning("agent_chat_router: answer generation failed", exc_info=True)
 
     if not text:
-        text = ("I found the relevant data but couldn't put together a written answer just now — "
+        text = ("I found the relevant data but couldn't put together a written answer just now  -  "
                 "please try asking again.")
     return {"success": True, "narrative": text, "sql": None, "table": None, "chart": None, "follow_ups": []}
 
@@ -413,13 +413,13 @@ async def route_and_answer(
 
     reset_scope()
     plan = plan_needs(question, history)
-    planner_usage = get_scope_usage()  # snapshot now — ask_chatbot() below resets this scope internally
+    planner_usage = get_scope_usage()  # snapshot now  -  ask_chatbot() below resets this scope internally
     needs = plan.get("needs") or [{"source": "sql", "purpose": question}]
 
     ctx = _RouterContext(has_agent_a_results, personas, resolve_persona_customer_id,
                           run_agent_b, run_agent_c, run_agent_d)
 
-    # A "sql" need is executed once, up front, via the existing full pipeline —
+    # A "sql" need is executed once, up front, via the existing full pipeline  - 
     # its table also feeds the cross-need persona-resolution heuristic below.
     sql_result: Optional[Dict[str, Any]] = None
     ran_sql = False
@@ -429,7 +429,7 @@ async def route_and_answer(
             sql_result = ask_chatbot(sub_question, history=history or [])
             ctx.sql_top_persona_guess = _guess_persona_from_table(sql_result.get("table"))
             ran_sql = True
-            break  # a second "sql" need would just repeat the same pipeline — one is enough
+            break  # a second "sql" need would just repeat the same pipeline  -  one is enough
 
     resolved: List[Dict[str, Any]] = []
     unresolved: List[str] = []
@@ -457,7 +457,7 @@ async def route_and_answer(
 
     only_sql = ran_sql and len(resolved) == 1 and not unresolved
     if only_sql:
-        # Ordinary analytics question — return ask_chatbot()'s own result exactly
+        # Ordinary analytics question  -  return ask_chatbot()'s own result exactly
         # as today, at exactly today's cost. No agent/synthesis call spent.
         sql_result["token_usage"] = final_usage
         return sql_result
@@ -477,7 +477,7 @@ async def route_and_answer(
         reply["chart"] = sql_result.get("chart")
     reply["follow_ups"] = list(dict.fromkeys((reply.get("follow_ups") or []) + name_ambiguity_chips))[:6]
     # ask_chatbot() resets the token scope internally (if it ran), wiping the
-    # planner's already-recorded usage — add it back in; otherwise the scope
+    # planner's already-recorded usage  -  add it back in; otherwise the scope
     # opened by reset_scope() above already covers planner + narration together.
     reply["token_usage"] = _sum_usage(planner_usage, get_scope_usage()) if ran_sql else get_scope_usage()
     return reply

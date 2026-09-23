@@ -1,4 +1,4 @@
-import { useRef, useEffect, useCallback, useState } from 'react';
+import { useRef, useEffect, useCallback, useState, useMemo } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { TrendingUp, DollarSign, BarChart2, Zap, AlertTriangle, CheckCircle2, ArrowUp, ArrowDown, BarChart, LineChart, ChevronDown } from 'lucide-react';
 import { getBankingApiBase } from '../../utils/apiBase';
@@ -29,7 +29,7 @@ interface PaidChannelMetrics extends ChannelMetricsBase {
   risk_adjusted_revenue_usd: number | null;
 }
 
-// Owned channel (e.g. email): $0 media spend — funnel + revenue only, nothing
+// Owned channel (e.g. email): $0 media spend  -  funnel + revenue only, nothing
 // to optimize, so no curve/status fields exist on this shape at all.
 interface OwnedChannelMetrics extends ChannelMetricsBase {
   owned_channel: true;
@@ -65,12 +65,12 @@ interface MonthlyData {
 
 // ── Constants ──────────────────────────────────────────────────────────────────
 
-// Full registry of every channel id known across v1 and v2 datasets — the
+// Full registry of every channel id known across v1 and v2 datasets  -  the
 // *active* set to render always comes from the backend's `data.channels`
 // (which reflects whichever dataset _resolve_ad_spend_dataset() picked), not
 // a hardcoded list here, so the page adapts to v1 (4) or v2 (8) automatically.
 // Funnel stage labels are channel-appropriate, not one generic set for every
-// channel — a video ad isn't "opened," a podcast spot isn't "clicked," and a
+// channel  -  a video ad isn't "opened," a podcast spot isn't "clicked," and a
 // branch conversation was never "sent." [stage1, stage2, stage3, stage4].
 type FunnelLabels = readonly [string, string, string, string];
 const DEFAULT_FUNNEL_LABELS: FunnelLabels = ['Sent', 'Opened', 'Clicked', 'Converted'];
@@ -96,7 +96,7 @@ function channelMeta(id: string): ChannelMeta {
   };
 }
 
-// In-App and Branch are no longer shown anywhere on this tab — charts, the
+// In-App and Branch are no longer shown anywhere on this tab  -  charts, the
 // Seasonality strip, and every spend/revenue total below all exclude them.
 const HIDDEN_CHANNEL_IDS = new Set(['in_app', 'branch']);
 
@@ -108,13 +108,10 @@ function byChannelOrder(a: string, b: string): number {
   return (ia === -1 ? CHANNEL_ORDER.length : ia) - (ib === -1 ? CHANNEL_ORDER.length : ib);
 }
 
-const PERSONAS = [
-  { id: 'Digital Native',    color: '#5b5fc7' },
-  { id: 'Wealth Builder',    color: '#0284c7' },
-  { id: 'Everyday Essential',color: '#059669' },
-  { id: 'Retiree Anchor',    color: '#b45309' },
-  { id: 'At-Risk Saver',     color: '#dc2626' },
-];
+// Segment names come from the live Agent A run (persona_list in the API response),
+// never hardcoded here  -  colors are assigned by position so they stay stable even
+// though the actual segment names change on every re-segmentation.
+const PERSONA_COLORS = ['#5b5fc7', '#0284c7', '#059669', '#b45309', '#dc2626'];
 
 // ── Helpers ────────────────────────────────────────────────────────────────────
 
@@ -148,7 +145,7 @@ function chInsight(ch: ChannelMeta, m: PaidChannelMetrics, persona: string, all:
     const src    = overId ? channelMeta(overId).label : undefined;
     const satPct = m.saturation_pct;
     return (
-      `${ch.label} is only ${satPct}% saturated for ${persona} — the S-curve is still rising steeply. ` +
+      `${ch.label} is only ${satPct}% saturated for ${persona}  -  the S-curve is still rising steeply. ` +
       `Current marginal return is $${m.marginal_roas.toFixed(2)} per $1 spent, meaning each extra dollar has outsized impact. ` +
       `At ${fmtK(m.spend_usd)}/mo you're generating ${fmtRoas(m.roas)} ROAS with a ${convRate}% conversion rate and ${cpa} CPA. ` +
       `Adding ${fmtK(delta)} to reach the optimal ${fmtK(m.optimal_spend_usd)}` +
@@ -161,7 +158,7 @@ function chInsight(ch: ChannelMeta, m: PaidChannelMetrics, persona: string, all:
     const waste   = Math.abs(delta);
     const satPct  = m.saturation_pct;
     return (
-      `${ch.label} is ${satPct}% saturated — the S-curve has flattened. ` +
+      `${ch.label} is ${satPct}% saturated  -  the S-curve has flattened. ` +
       `Marginal return has dropped to $${m.marginal_roas.toFixed(2)} per $1 spent, below the break-even threshold of $1.00. ` +
       `You're spending ${fmtK(m.spend_usd)}/mo but the last ${fmtK(waste)} is generating near-zero incremental revenue. ` +
       `Cutting back to ${fmtK(m.optimal_spend_usd)}/mo frees ${fmtK(waste)} that would earn ${m.marginal_roas.toFixed(1)}–4× more if redeployed to under-invested channels.` +
@@ -170,7 +167,7 @@ function chInsight(ch: ChannelMeta, m: PaidChannelMetrics, persona: string, all:
   }
   return (
     `${ch.label} is optimally positioned for ${persona}. ` +
-    `At ${fmtRoas(m.roas)} ROAS with ${m.marginal_roas.toFixed(2)}× marginal return, spend is right at the curve's inflection point — ` +
+    `At ${fmtRoas(m.roas)} ROAS with ${m.marginal_roas.toFixed(2)}× marginal return, spend is right at the curve's inflection point  -  ` +
     `where each dollar is maximally efficient. Conversion rate is ${convRate}% with ${cpa} CPA. ` +
     `Shifts of ±${fmtK(m.spend_usd * 0.1)} either way move revenue by less than 5%. Hold and monitor.` +
     bizRoi
@@ -178,7 +175,7 @@ function chInsight(ch: ChannelMeta, m: PaidChannelMetrics, persona: string, all:
 }
 
 function segInsight(persona: string, d: Record<string, ChannelMetrics>) {
-  // Owned channels (email) have nothing to reallocate — this insight is
+  // Owned channels (email) have nothing to reallocate  -  this insight is
   // paid-channel budget analysis only.
   const paid = Object.entries(d).filter((e): e is [string, PaidChannelMetrics] => !e[1].owned_channel);
   const active = paid.map(([id]) => channelMeta(id));
@@ -204,14 +201,14 @@ function segInsight(persona: string, d: Record<string, ChannelMetrics>) {
   if (bestUnder) {
     const m = byId[bestUnder.id];
     parts.push(
-      `${bestUnder.label} is only ${m.saturation_pct}% saturated — delivering ${fmtRoas(m.roas)} ROAS with ` +
+      `${bestUnder.label} is only ${m.saturation_pct}% saturated  -  delivering ${fmtRoas(m.roas)} ROAS with ` +
       `$${m.marginal_roas.toFixed(2)} marginal return per $1 added.`
     );
   }
   if (worstOver) {
     const m = byId[worstOver.id];
     parts.push(
-      `${worstOver.label} has plateaued at ${fmtRoas(m.roas)} ROAS — ` +
+      `${worstOver.label} has plateaued at ${fmtRoas(m.roas)} ROAS  -  ` +
       `${fmtK(Math.abs(m.optimal_spend_usd - m.spend_usd))} of monthly spend is past the curve's inflection point.`
     );
   }
@@ -222,7 +219,7 @@ function segInsight(persona: string, d: Record<string, ChannelMetrics>) {
     );
   } else if (!underChs.length) {
     const avgRoas = active.reduce((s, c) => s + byId[c.id].roas, 0) / (active.length || 1);
-    parts.push(`All channels near-optimal for ${persona} — blended ${fmtRoas(avgRoas)} ROAS. Consider expanding total budget to grow.`);
+    parts.push(`All channels near-optimal for ${persona}  -  blended ${fmtRoas(avgRoas)} ROAS. Consider expanding total budget to grow.`);
   } else if (totalUplift > 100) {
     parts.push(`Adding spend to ${underChs.map(c => c.label).join(' & ')} could unlock ~${fmtK(totalUplift)}/mo.`);
   }
@@ -235,7 +232,7 @@ function segInsight(persona: string, d: Record<string, ChannelMetrics>) {
 interface DrawCurveOpts {
   hoverSpend?: number | null;
   simSpend?: number | null;
-  maxX?: number; // single source of truth for the chart's x-axis extent — also drives the what-if slider's range
+  maxX?: number; // single source of truth for the chart's x-axis extent  -  also drives the what-if slider's range
 }
 
 function canvasDims(el: HTMLCanvasElement): [number, number] {
@@ -353,7 +350,7 @@ function drawCurve(canvas: HTMLCanvasElement, m: PaidChannelMetrics, color: stri
     if (bx + bw > PAD.left + pw) bx = hx - bw - 8;
     if (by < PAD.top) by = hy + 6;
     ctx.fillStyle = 'rgba(15,23,42,0.88)'; roundRect(ctx, bx, by, bw, bh, 5); ctx.fill();
-    ctx.textAlign = 'left'; // reset — inherited 'center' from the axis labels above would centre this text on its start x, overflowing the box on both sides
+    ctx.textAlign = 'left'; // reset  -  inherited 'center' from the axis labels above would centre this text on its start x, overflowing the box on both sides
     ctx.fillStyle = '#fff';
     ctx.fillText(line1, bx+8, by+14);
     ctx.fillStyle = '#94a3b8';
@@ -415,14 +412,14 @@ function drawTrend(canvas: HTMLCanvasElement, pts: MonthlyPoint[], color: string
     ctx.fillText(val >= 1000 ? '$'+(val/1000).toFixed(0)+'K' : '$'+val.toFixed(0), PAD.left-4, PAD.top+(ph*i/4)+3);
   }
 
-  // Revenue bars (light) — hover brightens
+  // Revenue bars (light)  -  hover brightens
   pts.forEach((p, i) => {
     const bh = (p.revenue_usd / maxRev) * ph;
     ctx.fillStyle = hoverIdx === i ? color + '45' : color + '28';
     ctx.fillRect(barX(i), PAD.top + ph - bh, barW, bh);
   });
 
-  // Spend bars (solid) — hover brightens
+  // Spend bars (solid)  -  hover brightens
   pts.forEach((p, i) => {
     const bh = (p.spend_usd / maxRev) * ph;
     ctx.fillStyle = hoverIdx === i ? color + 'cc' : color + 'aa';
@@ -457,7 +454,7 @@ function drawTrend(canvas: HTMLCanvasElement, pts: MonthlyPoint[], color: string
   ctx.strokeStyle = color + 'dd'; ctx.lineWidth = 1.8; ctx.setLineDash([4, 3]); ctx.stroke();
   ctx.restore();
 
-  // Dots on line — hover enlarges
+  // Dots on line  -  hover enlarges
   pts.forEach((p, i) => {
     const x = lcx(i), y = lcy(p);
     ctx.beginPath(); ctx.arc(x, y, hoverIdx === i ? 4.5 : 3, 0, Math.PI*2);
@@ -521,7 +518,7 @@ function synthMonthly(spend: number, L: number, k: number): MonthlyPoint[] {
 function trendInsight(ch: { label: string }, pts: MonthlyPoint[]): string {
   if (!pts || pts.length === 0) return '';
   const activePts = pts.filter(p => p.revenue_usd > 0);
-  if (activePts.length === 0) return `${ch.label} generated no attributed revenue across the 12-month window — the channel is inactive or unconverted for this segment.`;
+  if (activePts.length === 0) return `${ch.label} generated no attributed revenue across the 12-month window  -  the channel is inactive or unconverted for this segment.`;
 
   const best  = activePts.reduce((a, b) => b.roas > a.roas ? b : a);
   const worst = activePts.reduce((a, b) => b.roas < a.roas ? b : a);
@@ -589,7 +586,7 @@ function drawFunnel(canvas: HTMLCanvasElement, m: ChannelMetrics, color: string,
     ctx.fillStyle = '#f1f5f9';
     roundRect(ctx, barStart, barY, barAreaW, barH, 3); ctx.fill();
 
-    // Filled bar — opacity steps down per stage
+    // Filled bar  -  opacity steps down per stage
     const alpha = Math.round((1 - i * 0.10) * 255).toString(16).padStart(2, '0');
     ctx.fillStyle = color + alpha;
     if (barW > 2) { roundRect(ctx, barStart, barY, barW, barH, 3); ctx.fill(); }
@@ -644,7 +641,7 @@ function drawSparkline(canvas: HTMLCanvasElement, pts: MonthlyPoint[], color: st
   const x = (i: number) => PAD.left + (pw * i) / (n - 1);
   const y = (v: number) => PAD.top + ph - ((v - minV) / range) * ph;
 
-  // Month gridlines — light dashed vertical line at each of the 12 months
+  // Month gridlines  -  light dashed vertical line at each of the 12 months
   ctx.save();
   ctx.setLineDash([2, 2]); ctx.strokeStyle = '#e5e7eb'; ctx.lineWidth = 1;
   for (let i = 0; i < n; i++) {
@@ -697,9 +694,9 @@ function drawSparkline(canvas: HTMLCanvasElement, pts: MonthlyPoint[], color: st
 
 function SeasonalityStrip({ allMonthly, channels }: {
   allMonthly: Record<string, MonthlyPoint[]>;
-  channels: ChannelMeta[];  // paid channels only — email is always $0 spend, excluded here
+  channels: ChannelMeta[];  // paid channels only  -  email is always $0 spend, excluded here
 }) {
-  // Map-based, not fixed keys — the channel set varies by dataset (v1: 4, v2: 8).
+  // Map-based, not fixed keys  -  the channel set varies by dataset (v1: 4, v2: 8).
   const canvasRefs = useRef(new Map<string, HTMLCanvasElement | null>());
   const [hover, setHover] = useState<{ chId: string; idx: number } | null>(null);
 
@@ -711,7 +708,7 @@ function SeasonalityStrip({ allMonthly, channels }: {
     });
   }, [allMonthly, channels, hover]);
 
-  // Map mouse X to the nearest month index — mirrors the hit-testing pattern
+  // Map mouse X to the nearest month index  -  mirrors the hit-testing pattern
   // used for the main trend chart's hover (ChannelCard.handleMouseMove).
   const handleSparklineMouseMove = (chId: string, pts: MonthlyPoint[]) => (e: React.MouseEvent<HTMLCanvasElement>) => {
     if (pts.length === 0) return;
@@ -725,7 +722,7 @@ function SeasonalityStrip({ allMonthly, channels }: {
   const handleSparklineMouseLeave = () => setHover(null);
 
   const peakMonth = (pts: MonthlyPoint[]) => {
-    if (!pts.length) return '—';
+    if (!pts.length) return ' - ';
     return pts.reduce((a, b) => b.roas > a.roas ? b : a).month_name;
   };
   const avgRoas = (pts: MonthlyPoint[]) => {
@@ -748,7 +745,7 @@ function SeasonalityStrip({ allMonthly, channels }: {
                   <span className="w-2 h-2 rounded-full inline-block" style={{ background: ch.color }}/>
                   {ch.label}
                 </span>
-                <span className="text-[10px] text-gray-400">avg {avg > 0 ? avg.toFixed(1) + '×' : '—'}</span>
+                <span className="text-[10px] text-gray-400">avg {avg > 0 ? avg.toFixed(1) + '×' : ' - '}</span>
               </div>
               <canvas
                 ref={el => { canvasRefs.current.set(ch.id, el); }}
@@ -772,7 +769,7 @@ function SeasonalityStrip({ allMonthly, channels }: {
 // ── Channel Card ───────────────────────────────────────────────────────────────
 // Business ROI simulation constants (productValue/bizCost/riskRate) are passed
 // in as props, sourced from the API's product_value_benchmarks/biz_cost_benchmarks/
-// risk_rate_benchmarks — those mirror whichever generator script (v1 or v2) is
+// risk_rate_benchmarks  -  those mirror whichever generator script (v1 or v2) is
 // actually backing the active dataset, so this card never needs its own
 // hardcoded copy that could drift from what the server is using.
 
@@ -848,7 +845,7 @@ function ChannelCard({
   // ── Trend data: real CSV data or S-curve synthetic fallback ─────────────
   const trendPts = monthly.length > 0 ? monthly : synthMonthly(metrics.spend_usd, L, k);
 
-  // Single source of truth for the curve chart's x-axis extent — drives the
+  // Single source of truth for the curve chart's x-axis extent  -  drives the
   // canvas draw, the hover hit-testing, and the what-if slider's range, so
   // the slider can never disagree with what the chart actually shows.
   const chartMaxX = Math.max(metrics.spend_usd, metrics.optimal_spend_usd) * 2.8;
@@ -911,8 +908,8 @@ function ChannelCard({
     : metrics.clicked > 0 && metrics.converted / metrics.clicked < 0.10
       ? stage4Label.toLowerCase() : null;
   const funnelInsight =
-    `${ch.label} reached ${metrics.sent.toLocaleString()} contacts — ${openRate}% ${stage2Label.toLowerCase()}, ${clickRate}% ${stage3Label.toLowerCase()}, ${convRate}% ${stage4Label.toLowerCase()}. ` +
-    (bigDrop ? `Biggest drop-off is at the ${bigDrop} stage — creative or offer relevance is the likely lever.` : 'Funnel is healthy with no single dominant drop-off stage.');
+    `${ch.label} reached ${metrics.sent.toLocaleString()} contacts  -  ${openRate}% ${stage2Label.toLowerCase()}, ${clickRate}% ${stage3Label.toLowerCase()}, ${convRate}% ${stage4Label.toLowerCase()}. ` +
+    (bigDrop ? `Biggest drop-off is at the ${bigDrop} stage  -  creative or offer relevance is the likely lever.` : 'Funnel is healthy with no single dominant drop-off stage.');
   const displayInsight = view === 'trend'
     ? trendInsight(ch, trendPts)
     : view === 'funnel'
@@ -959,7 +956,7 @@ function ChannelCard({
         </div>
       </div>
 
-      {/* Single canvas — always display:block so offsetWidth is always valid */}
+      {/* Single canvas  -  always display:block so offsetWidth is always valid */}
       <div className="px-3 pt-2 pb-0" style={{ height: 160 }}>
         <canvas ref={chartRef}
           onMouseMove={handleMouseMove}
@@ -1036,7 +1033,7 @@ function ChannelCard({
         </div>
       )}
 
-      {/* AI insight — updates from backend 350ms after slider settles */}
+      {/* AI insight  -  updates from backend 350ms after slider settles */}
       <div className={`px-4 py-3 border-b border-gray-100 flex gap-2 items-start transition-colors ${isSimChanged ? 'bg-blue-50/30' : 'bg-gray-50'}`}>
         <span className="text-[13px] flex-shrink-0 mt-0.5">{isSimChanged ? '⚡' : '✦'}</span>
         {simInsightLoading ? (
@@ -1049,13 +1046,13 @@ function ChannelCard({
         )}
       </div>
 
-      {/* Status callout — reflects sim state when active (hidden on funnel view) */}
+      {/* Status callout  -  reflects sim state when active (hidden on funnel view) */}
       {view !== 'funnel' && (isSimChanged ? simStatus : metrics.status) === 'over' && (
         <div className="px-4 py-2.5 bg-red-50 flex items-center gap-2">
           <AlertTriangle className="w-3.5 h-3.5 text-red-500 flex-shrink-0"/>
           <p className="text-[11px] text-red-700 font-medium">
             {isSimChanged
-              ? `At this spend level, marginal return is ${simMroas.toFixed(1)}× — over-indexed. Reduce to optimal ${fmtK(metrics.optimal_spend_usd)}.`
+              ? `At this spend level, marginal return is ${simMroas.toFixed(1)}×  -  over-indexed. Reduce to optimal ${fmtK(metrics.optimal_spend_usd)}.`
               : `Reduce by ${fmtK(Math.abs(delta))}/mo → save ${fmtK(Math.abs(delta))} to redeploy at higher-ROAS channels`
             }
           </p>
@@ -1066,7 +1063,7 @@ function ChannelCard({
           <Zap className="w-3.5 h-3.5 text-emerald-600 flex-shrink-0"/>
           <p className="text-[11px] text-emerald-800 font-medium">
             {isSimChanged
-              ? `Still under-invested at ${fmtRoas(simRoas)} ROAS — marginal return ${simMroas.toFixed(1)}× suggests room to grow.`
+              ? `Still under-invested at ${fmtRoas(simRoas)} ROAS  -  marginal return ${simMroas.toFixed(1)}× suggests room to grow.`
               : `+${fmtK(delta)}/mo spend → est. +${fmtK(delta * metrics.marginal_roas)} incremental revenue`
             }
           </p>
@@ -1077,7 +1074,7 @@ function ChannelCard({
 }
 
 // ── Owned Channel Card (e.g. Email) ─────────────────────────────────────────────
-// No spend to optimize against — funnel + attributed revenue only, with an
+// No spend to optimize against  -  funnel + attributed revenue only, with an
 // explicit banner explaining why there's no S-curve/what-if slider here, so
 // the $0 spend reads as a deliberate accounting choice rather than missing data.
 
@@ -1133,9 +1130,9 @@ function OwnedChannelCard({ ch, metrics }: { ch: ChannelMeta; metrics: OwnedChan
       <div className="px-4 py-3 border-t border-gray-100 bg-gray-50 flex gap-2 items-start">
         <span className="text-[13px] flex-shrink-0 mt-0.5">✦</span>
         <p className="text-[11.5px] text-gray-700 leading-relaxed">
-          <span className="font-semibold">Owned Channel — No Ad Spend.</span> Cost here is a flat ESP platform subscription,
+          <span className="font-semibold">Owned Channel  -  No Ad Spend.</span> Cost here is a flat ESP platform subscription,
           not a per-message media buy, so it's excluded from ROAS/reallocation optimization. The {fmtK(metrics.attributed_revenue_usd)} in
-          revenue shown above is real attribution — it's tracked separately from paid-channel blended ROAS rather than blended into it.
+          revenue shown above is real attribution  -  it's tracked separately from paid-channel blended ROAS rather than blended into it.
         </p>
       </div>
     </div>
@@ -1148,7 +1145,7 @@ function ChannelCompare({ personaData, persona }: {
   personaData: Record<string, ChannelMetrics>;
   persona: string;
 }) {
-  // S-curve comparison only makes sense for paid channels — email (owned, $0
+  // S-curve comparison only makes sense for paid channels  -  email (owned, $0
   // spend) has no curve_params to plot and is naturally excluded here.
   const activeChannels = Object.keys(personaData)
     .filter(id => !personaData[id].owned_channel)
@@ -1291,8 +1288,9 @@ function ChannelCompare({ personaData, persona }: {
       {/* Stats comparison */}
       <div className="px-4 pb-4 grid grid-cols-2 gap-3">
         {[chA, chB].map(chId => {
-          const m = personaData[chId] as PaidChannelMetrics;
+          const m = personaData[chId] as PaidChannelMetrics | undefined;
           const ch = channelMeta(chId);
+          if (!m) return <div key={chId} />;
           const cfg = statusCfg(m.status);
           return (
             <div key={chId} className="rounded-lg border border-gray-200 p-3" style={{ borderLeftColor: ch.color, borderLeftWidth: 3 }}>
@@ -1345,7 +1343,7 @@ function exportPersonaCSV(persona: string, personaData: Record<string, ChannelMe
         m.true_roi_pct != null ? `Optimization,${ch.label},Business ROI %,${m.true_roi_pct.toFixed(1)}` : null,
       ].filter(Boolean) as string[];
     }),
-    // Owned channels — no ad spend, kept in their own section so a $0 row
+    // Owned channels  -  no ad spend, kept in their own section so a $0 row
     // never reads as "missing" data mixed into the optimization table above.
     '',
     'Section,Channel,Metric,Value',
@@ -1358,7 +1356,7 @@ function exportPersonaCSV(persona: string, personaData: Record<string, ChannelMe
         `Owned Channels (Not Ad Spend),${ch.label},Conversion Rate %,${(m.conversion_rate * 100).toFixed(2)}`,
       ];
     }),
-    // Monthly detail (paid channels — owned channels have no spend/ROAS trend)
+    // Monthly detail (paid channels  -  owned channels have no spend/ROAS trend)
     '',
     'Month,Channel,Spend ($),Revenue ($),ROAS,Converted',
     ...paidIds.flatMap(id => {
@@ -1379,7 +1377,7 @@ function exportPersonaCSV(persona: string, personaData: Record<string, ChannelMe
 // ── Main Page ──────────────────────────────────────────────────────────────────
 
 export default function BankingAdSpend() {
-  const [selectedPersona, setSelectedPersona] = useState('Digital Native');
+  const [selectedPersona, setSelectedPersona] = useState('');
   const [howOpen, setHowOpen] = useState(false);
 
   const { data, isLoading, isError, refetch } = useQuery<AdSpendData>({
@@ -1391,6 +1389,26 @@ export default function BankingAdSpend() {
     },
     staleTime: 5 * 60 * 1000,
   });
+
+  // Segment tabs always reflect the CURRENT Agent A run's real segment names
+  // (data.persona_list), never a hardcoded/saved list  -  colors assigned by
+  // position so they stay visually stable across re-segmentation. Named
+  // `personaTabs` (not `personas`) to avoid colliding with `data.personas`
+  // (the per-segment metrics map) destructured further below.
+  const personaTabs = useMemo(
+    () => (data?.persona_list ?? []).map((id, i) => ({ id, color: PERSONA_COLORS[i % PERSONA_COLORS.length] })),
+    [data?.persona_list]
+  );
+
+  // Keep the selected tab valid: default to the first segment once loaded, and
+  // re-pick if the previously-selected segment name no longer exists (e.g. after
+  // Agent A was re-run and produced different segment names).
+  useEffect(() => {
+    if (personaTabs.length === 0) return;
+    if (!personaTabs.some(p => p.id === selectedPersona)) {
+      setSelectedPersona(personaTabs[0].id);
+    }
+  }, [personaTabs, selectedPersona]);
 
   const { data: monthlyData } = useQuery<MonthlyData>({
     queryKey: ['banking-ad-spend-monthly'],
@@ -1422,8 +1440,19 @@ export default function BankingAdSpend() {
   );
 
   const { personas } = data;
-  const personaData = personas[selectedPersona] ?? {};
-  const monthly     = monthlyData?.data?.[selectedPersona] ?? {};
+  // Compute the effective selection synchronously from CURRENT data rather than
+  // relying solely on the `selectedPersona` state + effect round-trip  -  state
+  // updates from the useEffect above land one render late, so right after data
+  // first loads (or after Agent A produces new segment names) `selectedPersona`
+  // can briefly be '' or a name that no longer exists, which made personaData
+  // resolve to {} and crashed ChannelCompare reading `.status` off an undefined
+  // channel entry. Falling back to the first live segment here means every
+  // render  -  including that first one  -  always has real data to work with.
+  const effectivePersona = (selectedPersona && Object.prototype.hasOwnProperty.call(personas, selectedPersona))
+    ? selectedPersona
+    : (personaTabs[0]?.id ?? '');
+  const personaData = personas[effectivePersona] ?? {};
+  const monthly     = monthlyData?.data?.[effectivePersona] ?? {};
 
   const activeChannelIds = data.channels.filter(id => !HIDDEN_CHANNEL_IDS.has(id)).slice().sort(byChannelOrder);
   const allChannels    = activeChannelIds.map(channelMeta);
@@ -1436,7 +1465,7 @@ export default function BankingAdSpend() {
   }, 0);
 
   // The backend's `summary` totals are computed across every channel in the
-  // dataset, including the two now hidden from this tab — recompute the
+  // dataset, including the two now hidden from this tab  -  recompute the
   // headline totals across only the channels actually shown, so "Total Ad
   // Spend" always matches what the visible channel cards add up to.
   let visibleTotalSpend = 0, visibleTotalRevenue = 0;
@@ -1469,7 +1498,7 @@ export default function BankingAdSpend() {
       {/* Metrics bar */}
       <div className="grid grid-cols-3 divide-x divide-gray-200 border border-gray-200 rounded-xl overflow-hidden bg-white">
         {[
-          { label:'Total Ad Spend',      value:fmtK(visibleTotalSpend),                          sub:`across ${paidChannels.length} paid channels${ownedChannels.length ? ` (+${ownedChannels.length} owned)` : ''} · ${PERSONAS.length} segments`, Icon:DollarSign, color:'text-gray-800' },
+          { label:'Total Ad Spend',      value:fmtK(visibleTotalSpend),                          sub:`across ${paidChannels.length} paid channels${ownedChannels.length ? ` (+${ownedChannels.length} owned)` : ''} · ${personaTabs.length} segments`, Icon:DollarSign, color:'text-gray-800' },
           { label:'Attributed Revenue',  value:fmtK(visibleTotalRevenue),                        sub:'annual marketing attributed (paid channels)', Icon:BarChart2,  color:'text-gray-800' },
           { label:'Blended ROAS',        value:fmtRoas(visibleBlendedRoas),                      sub:'revenue per $ spent',            Icon:TrendingUp,  color:'text-blue-700' },
         ].map(m => (
@@ -1486,10 +1515,10 @@ export default function BankingAdSpend() {
 
       {/* Segment tabs */}
       <div className="border-b border-gray-200 flex overflow-x-auto">
-        {PERSONAS.map(p => (
+        {personaTabs.map(p => (
           <button key={p.id} onClick={() => setSelectedPersona(p.id)}
             className={`flex items-center gap-2 px-5 py-3 text-[13px] font-semibold border-b-2 transition-all whitespace-nowrap flex-shrink-0 ${
-              selectedPersona === p.id ? 'text-gray-900 border-gray-900' : 'text-gray-500 border-transparent hover:text-gray-700'}`}>
+              effectivePersona === p.id ? 'text-gray-900 border-gray-900' : 'text-gray-500 border-transparent hover:text-gray-700'}`}>
             <span className="w-2 h-2 rounded-full" style={{background:p.color}}/>
             {p.id}
           </button>
@@ -1498,12 +1527,12 @@ export default function BankingAdSpend() {
 
       {/* Segment AI */}
       <div className="border-l-4 border-gray-800 pl-4 py-1">
-        <p className="text-[10px] font-bold uppercase tracking-widest text-gray-400 mb-1">AI · {selectedPersona} Budget Analysis</p>
-        <p className="text-[13px] text-gray-700 leading-relaxed">{segInsight(selectedPersona, personaData)}</p>
+        <p className="text-[10px] font-bold uppercase tracking-widest text-gray-400 mb-1">AI · {effectivePersona} Budget Analysis</p>
+        <p className="text-[13px] text-gray-700 leading-relaxed">{segInsight(effectivePersona, personaData)}</p>
       </div>
 
       {/* Seasonality sparkline strip */}
-      {monthlyData?.data?.[selectedPersona] && (
+      {monthlyData?.data?.[effectivePersona] && (
         <SeasonalityStrip allMonthly={monthly} channels={paidChannels} />
       )}
 
@@ -1517,11 +1546,11 @@ export default function BankingAdSpend() {
             </div>
           );
           if (m.owned_channel) return (
-            <OwnedChannelCard key={`${selectedPersona}-${ch.id}`} ch={ch} metrics={m} />
+            <OwnedChannelCard key={`${effectivePersona}-${ch.id}`} ch={ch} metrics={m} />
           );
           return (
-            <ChannelCard key={`${selectedPersona}-${ch.id}`}
-              ch={ch} metrics={m as PaidChannelMetrics} personaName={selectedPersona}
+            <ChannelCard key={`${effectivePersona}-${ch.id}`}
+              ch={ch} metrics={m as PaidChannelMetrics} personaName={effectivePersona}
               allData={personaData} monthly={monthly[ch.id] ?? []}
               productValueBenchmarks={data.product_value_benchmarks}
               bizCostBenchmarks={data.biz_cost_benchmarks}
@@ -1531,7 +1560,7 @@ export default function BankingAdSpend() {
       </div>
 
       {/* Channel Comparison Overlay */}
-      <ChannelCompare personaData={personaData} persona={selectedPersona} />
+      <ChannelCompare personaData={personaData} persona={effectivePersona} />
 
       {/* Reallocation Reference Panel */}
       <div className="bg-white rounded-xl border border-gray-200 overflow-hidden">
@@ -1540,7 +1569,7 @@ export default function BankingAdSpend() {
         <div className="bg-gray-900 px-5 py-3.5 flex items-center justify-between flex-wrap gap-2">
           <div>
             <p className="text-[13px] font-bold text-white">Reallocation Rationale</p>
-            <p className="text-[11px] text-gray-400 mt-0.5">{selectedPersona} · why these moves are recommended</p>
+            <p className="text-[11px] text-gray-400 mt-0.5">{effectivePersona} · why these moves are recommended</p>
           </div>
           <div className="flex items-center gap-2">
             {segUplift > 0 && (
@@ -1549,14 +1578,14 @@ export default function BankingAdSpend() {
               </span>
             )}
             <button
-              onClick={() => exportPersonaCSV(selectedPersona, personaData, monthly)}
+              onClick={() => exportPersonaCSV(effectivePersona, personaData, monthly)}
               className="flex items-center gap-1.5 text-[11px] font-bold px-3 py-1.5 rounded-md bg-gray-700 text-gray-100 hover:bg-gray-600 transition-colors">
               ↓ Export CSV
             </button>
           </div>
         </div>
 
-        {/* How it works — 3-step explanation (collapsible) */}
+        {/* How it works  -  3-step explanation (collapsible) */}
         <div className="bg-slate-50 border-b border-slate-200">
           <button onClick={() => setHowOpen(o => !o)}
             className="w-full px-5 py-4 flex items-center justify-between hover:bg-slate-100/60 transition-colors">
@@ -1581,7 +1610,7 @@ export default function BankingAdSpend() {
               {
                 step: '03',
                 title: 'Rebalance budget',
-                body: "We move dollars from channels past the curve’s knee to channels still on the steep rise — same total spend, higher total revenue. The optimal point is where mROAS = 1: the last dollar spent returns exactly $1.",
+                body: "We move dollars from channels past the curve’s knee to channels still on the steep rise  -  same total spend, higher total revenue. The optimal point is where mROAS = 1: the last dollar spent returns exactly $1.",
                 color: 'bg-emerald-100 text-emerald-700',
               },
             ].map(s => (
@@ -1600,7 +1629,7 @@ export default function BankingAdSpend() {
         {/* Channel rows */}
         <div className="divide-y divide-gray-100">
 
-          {/* Over-invested — reduce these */}
+          {/* Over-invested  -  reduce these */}
           {paidChannels.filter(ch => (personaData[ch.id] as PaidChannelMetrics | undefined)?.status === 'over').map(ch => {
             const m   = personaData[ch.id] as PaidChannelMetrics;
             const cut = m.spend_usd - m.optimal_spend_usd;
@@ -1617,7 +1646,7 @@ export default function BankingAdSpend() {
                 </div>
                 <div className="ml-27 pl-1 space-y-1">
                   <p className="text-[10.5px] text-gray-600 leading-snug">
-                    <span className="font-semibold text-red-600">Why reduce?</span> The S-curve has flattened here — marginal return is only <span className="font-bold">${m.marginal_roas.toFixed(2)}</span> per $1 spent ({m.saturation_pct}% saturated). The last {fmtK(cut)} of budget is generating only ~{fmtK(lostRev)} in incremental revenue, well below break-even. Cutting to optimal <span className="font-semibold">{fmtK(m.optimal_spend_usd)}/mo</span> preserves most of the revenue while freeing capital for higher-return channels.
+                    <span className="font-semibold text-red-600">Why reduce?</span> The S-curve has flattened here  -  marginal return is only <span className="font-bold">${m.marginal_roas.toFixed(2)}</span> per $1 spent ({m.saturation_pct}% saturated). The last {fmtK(cut)} of budget is generating only ~{fmtK(lostRev)} in incremental revenue, well below break-even. Cutting to optimal <span className="font-semibold">{fmtK(m.optimal_spend_usd)}/mo</span> preserves most of the revenue while freeing capital for higher-return channels.
                   </p>
                   <div className="flex gap-4 text-[10px] text-gray-400">
                     <span>ROAS: <span className="font-semibold text-gray-600">{fmtRoas(m.roas)}</span></span>
@@ -1631,7 +1660,7 @@ export default function BankingAdSpend() {
             );
           })}
 
-          {/* Under-invested — increase these */}
+          {/* Under-invested  -  increase these */}
           {paidChannels.filter(ch => (personaData[ch.id] as PaidChannelMetrics | undefined)?.status === 'under').map(ch => {
             const m      = personaData[ch.id] as PaidChannelMetrics;
             const add    = m.optimal_spend_usd - m.spend_usd;
@@ -1648,7 +1677,7 @@ export default function BankingAdSpend() {
                 </div>
                 <div className="space-y-1">
                   <p className="text-[10.5px] text-gray-600 leading-snug">
-                    <span className="font-semibold text-emerald-700">Why increase?</span> The S-curve is still steep here — marginal return is <span className="font-bold">${m.marginal_roas.toFixed(2)}</span> per $1 spent, meaning the channel is only <span className="font-semibold">{m.saturation_pct}% saturated</span>. Every additional dollar has high leverage. Adding {fmtK(add)} to reach optimal <span className="font-semibold">{fmtK(m.optimal_spend_usd)}/mo</span> is predicted to generate <span className="font-bold text-emerald-700">+{fmtK(revGain)} in attributed revenue</span> — a {((revGain / add)).toFixed(1)}× return on the incremental spend.
+                    <span className="font-semibold text-emerald-700">Why increase?</span> The S-curve is still steep here  -  marginal return is <span className="font-bold">${m.marginal_roas.toFixed(2)}</span> per $1 spent, meaning the channel is only <span className="font-semibold">{m.saturation_pct}% saturated</span>. Every additional dollar has high leverage. Adding {fmtK(add)} to reach optimal <span className="font-semibold">{fmtK(m.optimal_spend_usd)}/mo</span> is predicted to generate <span className="font-bold text-emerald-700">+{fmtK(revGain)} in attributed revenue</span>  -  a {((revGain / add)).toFixed(1)}× return on the incremental spend.
                   </p>
                   <div className="flex gap-4 text-[10px] text-gray-400">
                     <span>ROAS: <span className="font-semibold text-gray-600">{fmtRoas(m.roas)}</span></span>
@@ -1662,7 +1691,7 @@ export default function BankingAdSpend() {
             );
           })}
 
-          {/* Optimal — hold */}
+          {/* Optimal  -  hold */}
           {paidChannels.filter(ch => (personaData[ch.id] as PaidChannelMetrics | undefined)?.status === 'optimal').map(ch => {
             const m = personaData[ch.id] as PaidChannelMetrics;
             return (
@@ -1675,14 +1704,14 @@ export default function BankingAdSpend() {
                     <span className="ml-auto text-[12px] text-gray-400">Hold</span>
                   </div>
                   <p className="text-[10.5px] text-gray-500">
-                    mROAS {m.marginal_roas.toFixed(2)}× — at the curve's knee. Revenue is maximally efficient here; shifts either way yield diminishing impact. No action needed.
+                    mROAS {m.marginal_roas.toFixed(2)}×  -  at the curve's knee. Revenue is maximally efficient here; shifts either way yield diminishing impact. No action needed.
                   </p>
                 </div>
               </div>
             );
           })}
 
-          {/* Owned channels — not part of reallocation, shown for transparency */}
+          {/* Owned channels  -  not part of reallocation, shown for transparency */}
           {ownedChannels.filter(ch => personaData[ch.id]).length > 0 && (
             <div className="px-5 py-3.5 flex items-start gap-3 flex-wrap bg-gray-50/60">
               <span className="text-[13px] font-bold w-24 mt-0.5 text-gray-500">Owned</span>
@@ -1690,7 +1719,7 @@ export default function BankingAdSpend() {
                 <p className="text-[10.5px] text-gray-500">
                   {ownedChannels.filter(ch => personaData[ch.id]).map(ch =>
                     `${ch.label}: ${fmtK(personaData[ch.id].attributed_revenue_usd)} attributed revenue, $0 spend`
-                  ).join(' · ')} — not included in reallocation (no spend to optimize).
+                  ).join(' · ')}  -  not included in reallocation (no spend to optimize).
                 </p>
               </div>
             </div>

@@ -1,5 +1,5 @@
 """
-Shared banking constants — single source of truth for thresholds used across
+Shared banking constants  -  single source of truth for thresholds used across
 Agent C, 12-factor scorer, churn generator, and MTA engine.
 
 Import pattern:

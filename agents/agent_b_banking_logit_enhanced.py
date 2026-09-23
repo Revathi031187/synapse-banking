@@ -62,7 +62,7 @@ class AgentB_Banking_LogitEnhanced:
             logger.info(f"✅ Loaded cached banking hybrid model from {logit_model_path} in {_load_ms}ms")
         except FileNotFoundError:
             print("⚠️ No trained banking model found. Training new model...")
-            logger.warning("⚠️ No cached banking model found at %s — training a new one now", logit_model_path)
+            logger.warning("⚠️ No cached banking model found at %s  -  training a new one now", logit_model_path)
             try:
                 self.train_logit_model()
                 _train_ms = int((_time.monotonic() - _init_start) * 1000)
@@ -83,7 +83,7 @@ class AgentB_Banking_LogitEnhanced:
         print("="*80)
         logger.info("="*60)
         logger.info(
-            f"🎓 TRAINING BANKING ML MODEL — customers={len(self.customers_df)}, "
+            f"🎓 TRAINING BANKING ML MODEL  -  customers={len(self.customers_df)}, "
             f"products={len(self.products_df)}, transactions={len(self.transactions_df)}"
         )
         logger.info("="*60)

@@ -1,5 +1,5 @@
 """
-Meridian Bank anonymous visitor tracking — SQLite-backed, cookie-based.
+Meridian Bank anonymous visitor tracking  -  SQLite-backed, cookie-based.
 Three tables: visitor_sessions, visitor_interactions, visitor_personas.
 Auto-creates data/visitor_tracking.db on first import.
 """
@@ -263,7 +263,7 @@ def infer_persona(visitor_id: str) -> Tuple[Optional[str], float, Optional[str]]
         return None, 0.0, None
 
     total_dwell_all = sum(r["total_dwell"] for r in rows)
-    if total_dwell_all < 500:  # less than 0.5 s total — not enough signal
+    if total_dwell_all < 500:  # less than 0.5 s total  -  not enough signal
         return "At-Risk Saver", 0.2, None
 
     top = rows[0]
@@ -439,7 +439,7 @@ def signin_visitor(email: str, password: str) -> Dict:
     pw_salt = row["password_salt"]
 
     if not pw_hash or not pw_salt:
-        # Account was registered before password support — accept any password
+        # Account was registered before password support  -  accept any password
         # and store the new hash now
         new_hash, new_salt = _hash_password(password)
         with _connect() as conn:

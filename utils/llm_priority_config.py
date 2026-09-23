@@ -1,9 +1,9 @@
 """
-Loads config/llm_priority.json — lets a human reorder which LLM provider
+Loads config/llm_priority.json  -  lets a human reorder which LLM provider
 (and which specific Together AI model) this app tries first, separately for
 Agent A/B/C/D generation calls vs. the Segment AI chatbot, without touching
 any Python code. Re-read on every call (the file is tiny) so edits apply
-immediately — no backend restart needed.
+immediately  -  no backend restart needed.
 
 Falls back to sane built-in defaults if the file is missing or malformed, so
 a broken edit degrades gracefully rather than breaking every LLM call.
@@ -40,10 +40,10 @@ def load_llm_priority() -> Dict[str, Any]:
         with open(_CONFIG_PATH, "r", encoding="utf-8") as f:
             data = json.load(f)
     except FileNotFoundError:
-        logger.warning(f"[llm_priority] {_CONFIG_PATH} not found — using built-in defaults")
+        logger.warning(f"[llm_priority] {_CONFIG_PATH} not found  -  using built-in defaults")
         return _DEFAULTS
     except Exception as e:
-        logger.warning(f"[llm_priority] Could not parse {_CONFIG_PATH} ({e}) — using built-in defaults")
+        logger.warning(f"[llm_priority] Could not parse {_CONFIG_PATH} ({e})  -  using built-in defaults")
         return _DEFAULTS
 
     merged = dict(_DEFAULTS)
@@ -59,13 +59,13 @@ def load_llm_priority() -> Dict[str, Any]:
 
 def get_provider_order(scope: str) -> List[str]:
     """scope: 'chatbot' or 'agent_functions'. Returns an ordered, validated
-    provider list — never empty, never containing an unrecognized provider."""
+    provider list  -  never empty, never containing an unrecognized provider."""
     cfg = load_llm_priority()
     section = cfg.get(scope) or _DEFAULTS.get(scope, {})
     order = section.get("providers") or _DEFAULTS[scope]["providers"]
     cleaned = [p for p in order if p in _VALID_PROVIDERS]
     if not cleaned:
-        logger.warning(f"[llm_priority] '{scope}.providers' has no valid entries — using default order")
+        logger.warning(f"[llm_priority] '{scope}.providers' has no valid entries  -  using default order")
         return list(_DEFAULTS[scope]["providers"])
     return cleaned
 

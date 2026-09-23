@@ -21,14 +21,12 @@ import {
   Gift,
   Tag,
   Clock,
-  Pin,
-  PinOff,
 } from 'lucide-react';
 import { getBankingApiBase } from '../../utils/apiBase';
 import { useSessionStorageState } from '../../hooks/useSessionStorageState';
 import CustomerSearchSelect from '../../components/CustomerSearchSelect';
 
-/** Banking 12-factor groups — mirrors Academy “Product fit / Persona / Social / Freshness” layout */
+/** Banking 12-factor groups  -  mirrors Academy “Product fit / Persona / Social / Freshness” layout */
 const FACTOR_WEIGHT_GROUPS: {
   id: string;
   label: string;
@@ -39,7 +37,7 @@ const FACTOR_WEIGHT_GROUPS: {
     id: 'product_value',
     label: 'Product & value fit',
     description:
-      'Fees, APY, minimums, and how well the product category matches life stage and financial needs — plus cross-sell pairing.',
+      'Fees, APY, minimums, and how well the product category matches life stage and financial needs  -  plus cross-sell pairing.',
     keys: ['product_value', 'financial_need_match', 'product_pairing'],
   },
   {
@@ -65,7 +63,7 @@ const FACTOR_WEIGHT_GROUPS: {
 
 const ALL_BANKING_FACTOR_KEYS = FACTOR_WEIGHT_GROUPS.flatMap((g) => g.keys);
 
-/** Defaults match backend Banking12FactorScorer (sum 100%) — always show factors even if API is slow */
+/** Defaults match backend Banking12FactorScorer (sum 100%)  -  always show factors even if API is slow */
 const BANKING_DEFAULTS_PERCENT: Record<string, number> = {
   eligibility_score: 22,
   financial_need_match: 18,
@@ -101,7 +99,7 @@ function tierWeightPct(currentPercent: Record<string, number>, tier: keyof typeo
  * Recomputes a factor's displayed weight/contribution/calculation string from the *current*
  * config instead of trusting the weight baked into `detailed_calculation` at generation time.
  * Safe because `raw_score` (how well this factor matches, e.g. "Credit: 776 vs 660 required")
- * is independent of weight — only the weighted contribution changes when weights change. This
+ * is independent of weight  -  only the weighted contribution changes when weights change. This
  * guarantees the explanation panel can never show a different weight than the config screen,
  * regardless of what weights were active when the recommendation was actually run.
  */
@@ -147,7 +145,7 @@ const MATCH_LEVEL_COLORS = {
 };
 
 type BankingAgentBUiState = {
-  // Locked to 'rules' — the Hybrid ML toggle was removed since rule-based
+  // Locked to 'rules'  -  the Hybrid ML toggle was removed since rule-based
   // scoring is the only method actually in use; narrowing the type (rather
   // than just no longer rendering a way to change it) means TypeScript itself
   // guarantees nothing can set this to 'logit' again by accident.
@@ -164,9 +162,21 @@ type BankingAgentBUiState = {
   factorLabels: Record<string, string>;
   weightsAccordionOpen: boolean;
   lastAiFactorRationales: Record<string, string>;
-  lastRunFactorWeights: Record<string, number> | null;
   runWeightsAccordionOpen: boolean;
-  executeData: unknown | null;
+  // Snapshot of the run inputs (JSON-stringified) at the moment "Run" was last
+  // explicitly clicked. The run query is only `enabled` when the CURRENT inputs
+  // still serialize to this exact value  -  so changing any input (customer, top
+  // N, a weight slider, ...) without re-clicking Run structurally cannot trigger
+  // a computation. Persists across both SPA navigation and a reload (see
+  // mergeAgentBUi), so a resumed/finished run keeps showing without a re-click.
+  lastRequestedKey: string | null;
+  // Mirror of the last successful run's response, keyed by lastRequestedKey.
+  // Seeds executeQuery's initialData so a genuine browser reload shows the last
+  // result immediately with no network call  -  without this, lastRequestedKey
+  // persisting across a reload (unlike before) would otherwise auto-fire a
+  // fresh fetch the instant the component mounts, since the in-memory
+  // QueryClient cache (unlike sessionStorage) does not survive a reload.
+  lastResult: { key: string; response: unknown } | null;
 };
 
 type PriorityPinStory = {
@@ -221,13 +231,25 @@ function mergeAgentBUi(saved: Partial<BankingAgentBUiState>, def: BankingAgentBU
   return {
     ...def,
     ...saved,
-    // Never restore stale results or run-state from session storage
-    executeData: null,
-    lastRunFactorWeights: null,
-    // Always reset to the mode-appropriate default — ignore any old value in session storage
-    topN: topNForMode(saved.mode ?? def.mode),
+    // lastRequestedKey/lastResult are deliberately NOT reset here (unlike the
+    // resets below). This merge function's initializer runs on every fresh
+    // mount of this component - including ordinary SPA navigation away from
+    // and back to this tab, not just a genuine browser reload (a mounting
+    // component instance can't tell the difference from inside this hook).
+    // Resetting lastRequestedKey here would wipe an in-progress or just-
+    // completed run's resumed state on every tab switch, which is exactly the
+    // "show what I left" behavior this tab needs to provide. A genuine reload
+    // is handled instead by lastResult seeding executeQuery's initialData
+    // (see below), so reload shows the last result with no extra fetch rather
+    // than losing it outright.
+    // topN is intentionally NOT forced to the mode-appropriate default here -
+    // that would silently change it (and therefore recommenderRequestKey) on
+    // every plain remount, breaking resumability for anyone who set a
+    // non-default Top N before navigating away. The Persona/Customer mode
+    // toggle buttons already set topN: topNForMode(mode) explicitly at the
+    // point of an actual mode switch, which is the only time it should change.
     weightsAccordionOpen: def.weightsAccordionOpen,
-    // Always 'rules' — a session-storage value of 'logit' saved before the
+    // Always 'rules'  -  a session-storage value of 'logit' saved before the
     // Hybrid ML toggle was removed would otherwise survive this merge and
     // re-enable dead 'logit'-only branches at runtime despite the narrowed type.
     scoringMethod: 'rules',
@@ -252,15 +274,96 @@ const DEFAULT_BANKING_AGENT_B_UI: BankingAgentBUiState = {
   factorLabels: {},
   weightsAccordionOpen: false,
   lastAiFactorRationales: {},
-  lastRunFactorWeights: null,
   runWeightsAccordionOpen: false,
-  executeData: null,
+  lastRequestedKey: null,
+  lastResult: null,
 };
 
 const AGENT_B_UI_KEY = 'banking-agent-b-v1';
 
-// PinnedOfferCard moved to frontend/src/components/PinnedOfferCard.tsx — shared
+// PinnedOfferCard moved to frontend/src/components/PinnedOfferCard.tsx  -  shared
 // with the Offer tab so a Director pin looks identical wherever it surfaces.
+
+/** Every input that affects a Recommender run's result  -  the run query's key is
+ * derived from a JSON.stringify of exactly this shape (see recommenderRequestKey
+ * below), so any change to any of these fields is structurally a different query. */
+type RecommenderRunInputs = {
+  scoringMethod: 'rules';
+  mode: 'persona' | 'customer';
+  customerId: string;
+  persona: string;
+  category: string;
+  searchQuery: string;
+  topN: number;
+  factorWeights: Record<string, number>;
+};
+
+/** Standalone fetch for a Recommender run, given an explicit inputs snapshot
+ * (rather than closing over live component state)  -  used both by the main
+ * run query and by the persona deep-link effect, which needs to await a specific
+ * one-off run before it can safely strip its URL params. */
+async function fetchRecommenderRun(apiBase: string, inputs: RecommenderRunInputs) {
+  let endpoint;
+  if (inputs.scoringMethod === 'rules') {
+    endpoint = `${apiBase}/api/banking/agent_b/execute`;
+  } else {
+    // logit  -  scoringMethod is narrowed to 'rules' only, so this is unreachable
+    // today, kept only to mirror the shape this replaced.
+    endpoint = `${apiBase}/api/banking/agent_b/logit`;
+  }
+
+  const requestBody: Record<string, unknown> = {
+    search_query: inputs.searchQuery,
+    category: inputs.category || null,
+    top_n: inputs.topN,
+  };
+
+  if (inputs.mode === 'customer') {
+    requestBody.customer_id = inputs.customerId;
+  } else {
+    requestBody.persona = inputs.persona;
+  }
+
+  let fwSnapshot: Record<string, number> | undefined;
+  if (inputs.scoringMethod === 'rules') {
+    requestBody.explain = true;
+    fwSnapshot = {};
+    ALL_BANKING_FACTOR_KEYS.forEach((k) => {
+      const n = Number(inputs.factorWeights[k]);
+      fwSnapshot![k] = Number.isFinite(n) ? n : BANKING_DEFAULTS_PERCENT[k] ?? 0;
+    });
+    requestBody.factor_weights = fwSnapshot;
+  }
+  // Always request director directives in customer mode  -  the backend silently skips
+  // when none exist. Avoids a race where the directives query hasn't resolved yet
+  // but the user already clicks Run, causing the tag to be missing intermittently.
+  if (inputs.mode === 'customer' && inputs.customerId) {
+    requestBody.use_agent_d_directives = true;
+  }
+
+  const response = await fetch(endpoint, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(requestBody),
+  });
+  if (!response.ok) {
+    const errBody = await response.json().catch(() => ({}));
+    const detail =
+      typeof errBody.detail === 'string'
+        ? errBody.detail
+        : Array.isArray(errBody.detail)
+          ? errBody.detail.map((x: { msg?: string }) => x.msg).join('; ')
+          : '';
+    throw new Error(
+      detail || `Failed to execute Agent B (${inputs.scoringMethod})  -  HTTP ${response.status}`
+    );
+  }
+  const data = await response.json();
+  if (inputs.scoringMethod === 'rules') {
+    return { ...data, _factorWeightsUsed: fwSnapshot };
+  }
+  return data;
+}
 
 export default function BankingAgentB() {
   const queryClient = useQueryClient();
@@ -280,9 +383,9 @@ export default function BankingAgentB() {
     factorLabels,
     weightsAccordionOpen,
     lastAiFactorRationales,
-    lastRunFactorWeights,
     runWeightsAccordionOpen,
-    executeData,
+    lastRequestedKey,
+    lastResult,
   } = ui;
 
   const setFactorWeights = (updater: React.SetStateAction<Record<string, number>>) => {
@@ -299,9 +402,11 @@ export default function BankingAgentB() {
   };
 
   const [weightsSavedOk, setWeightsSavedOk] = useState<string | null>(null);
+  // Set immediately on Unpin click so the button disappears right away instead of
+  // waiting on the DELETE + recompute round-trip (which can take several seconds
+  // for an LLM-backed rationale run). Cleared once a fresh computation lands.
+  const [optimisticallyUnpinnedProductId, setOptimisticallyUnpinnedProductId] = useState<string | null>(null);
   const agentDAutoAppliedRef = React.useRef<string>('');
-  /** Avoid duplicate auto-runs (React Strict Mode) while aligning list to supervisor pin */
-  const supervisorPinAlignSigRef = React.useRef<string | null>(null);
 
   const agentDDirectivesQuery = useQuery({
     queryKey: ['banking-agent-d-directives-b', customerId],
@@ -321,7 +426,6 @@ export default function BankingAgentB() {
 
   React.useEffect(() => {
     agentDAutoAppliedRef.current = '';
-    supervisorPinAlignSigRef.current = null;
   }, [customerId]);
 
   React.useEffect(() => {
@@ -364,7 +468,7 @@ export default function BankingAgentB() {
   const customersQuery = useQuery({
     queryKey: ['banking-customers'],
     queryFn: async () => {
-      // Fetch the full customer table (not a capped page) — CustomerSearchSelect
+      // Fetch the full customer table (not a capped page)  -  CustomerSearchSelect
       // does its own client-side name/ID matching over whatever it's given, so a
       // capped ?limit here silently hides every same-name customer past the cap
       // (e.g. only 1 of 4 "Aaron Brown" rows would ever be searchable). Matches
@@ -376,7 +480,21 @@ export default function BankingAgentB() {
     staleTime: 60_000,
   });
 
-  // Fetch representative customer for the selected persona — used to read Director directives in persona mode.
+  // Human-readable subject for the "Calculating personalized banking scores
+  // for ..." loading message  -  previously interpolated the raw `persona`
+  // state (a numeric cluster id, e.g. "0") or just the literal word
+  // "customer", giving no indication of who/what was actually being scored.
+  const loadingSubjectLabel = useMemo(() => {
+    if (mode === 'persona') {
+      const p = personas.find((x: { id: string; name?: string }) => x.id === persona);
+      return p?.name ?? (persona || 'segment');
+    }
+    const customersList = customersQuery.data?.data?.customers ?? [];
+    const c = customersList.find((x: { customer_id: string; customer_name?: string }) => String(x.customer_id) === String(customerId));
+    return c?.customer_name ? `${c.customer_name} (Customer ID: ${customerId})` : `Customer ID: ${customerId}`;
+  }, [mode, persona, personas, customerId, customersQuery.data]);
+
+  // Fetch representative customer for the selected persona  -  used to read Director directives in persona mode.
   // Mirrors how Director auto-selects the first customer in a segment.
   const personaRepQuery = useQuery({
     queryKey: ['banking-agent-b-persona-rep', persona],
@@ -394,7 +512,35 @@ export default function BankingAgentB() {
     (personaRepQuery.data?.data?.customers?.[0] as { customer_id?: string } | undefined)?.customer_id ?? ''
   ).trim();
 
-  // Directives for persona mode — fetched for the representative customer so the Director's offer card
+  // Manual pin toggled from Director  -  separate from agentDDirectivesQuery's/
+  // personaDirectivesQuery's auto-computed priority_pin_product_id (see
+  // api/main_unified_chromadb.py: banking_agent_b's use_agent_d_directives
+  // merge). Polled/refetched aggressively (same options as Director's own
+  // pinsQuery) since Director, not this tab, is the only place a pin can now
+  // be set. Covers BOTH modes: Director's Pin/Unpin buttons always operate on
+  // a real customer_id under the hood, even when Director itself is in "By
+  // persona" mode (it auto-selects the same kind of representative customer
+  // this query resolves here via personaRepCustomerId) - so persona mode needs
+  // this exact same manual-pin signal, not a different one, to correctly
+  // reflect a Director pin/unpin.
+  const pinsStatusTargetId = mode === 'persona' ? personaRepCustomerId : customerId;
+  const pinsStatusQuery = useQuery({
+    queryKey: ['banking-agent-d-pins', pinsStatusTargetId],
+    queryFn: async () => {
+      const res = await fetch(`${API_BASE_URL}/api/banking/agent_d/pins/${encodeURIComponent(pinsStatusTargetId)}`);
+      if (!res.ok) return { recommender_pin_product_id: null as string | null, offer_pin_product_id: null as string | null };
+      return res.json();
+    },
+    enabled: !!pinsStatusTargetId,
+    staleTime: 0,
+    refetchOnMount: 'always',
+    refetchOnWindowFocus: true,
+    refetchInterval: 5000,
+  });
+  const isManuallyPinned = (productId: string | undefined) =>
+    !!productId && pinsStatusQuery.data?.recommender_pin_product_id === productId;
+
+  // Directives for persona mode  -  fetched for the representative customer so the Director's offer card
   // can be shown for the matching product in the persona recommendation list.
   const personaDirectivesQuery = useQuery({
     queryKey: ['banking-agent-d-directives-persona', personaRepCustomerId],
@@ -453,10 +599,6 @@ export default function BankingAgentB() {
     [factorLabels]
   );
 
-  const lastRunWeightsSum = useMemo(() => {
-    if (!lastRunFactorWeights) return 0;
-    return ALL_BANKING_FACTOR_KEYS.reduce((s, k) => s + (Number(lastRunFactorWeights[k]) || 0), 0);
-  }, [lastRunFactorWeights]);
   const hasAiRunRationales = useMemo(
     () => Object.values(lastAiFactorRationales).some((v) => !!String(v || '').trim()),
     [lastAiFactorRationales]
@@ -552,106 +694,91 @@ export default function BankingAgentB() {
     });
   };
 
-  // Mutation to execute Agent B (supports rule-based and hybrid ML)
-  const executeMutation = useMutation({
-    mutationFn: async () => {
-      let endpoint;
-      if (scoringMethod === 'rules') {
-        endpoint = `${API_BASE_URL}/api/banking/agent_b/execute`;
-      } else {
-        // logit
-        endpoint = `${API_BASE_URL}/api/banking/agent_b/logit`;
-      }
+  // Every input that affects a Recommender run, snapshotted together so the run
+  // query's key changes exactly when the result would change.
+  const recommenderInputs = useMemo<RecommenderRunInputs>(() => ({
+    scoringMethod,
+    mode,
+    customerId,
+    persona,
+    category,
+    searchQuery,
+    topN,
+    factorWeights,
+  }), [scoringMethod, mode, customerId, persona, category, searchQuery, topN, factorWeights]);
+  const recommenderRequestKey = useMemo(() => JSON.stringify(recommenderInputs), [recommenderInputs]);
 
-      const requestBody: Record<string, unknown> = {
-        search_query: searchQuery,
-        category: category || null,
-        top_n: topN,
-      };
-
-      // Add either customer_id or persona based on mode
-      if (mode === 'customer') {
-        requestBody.customer_id = customerId;
-      } else {
-        requestBody.persona = persona;
-      }
-
-      // Add explain for rules
-      if (scoringMethod === 'rules') {
-        requestBody.explain = true;
-        const fw: Record<string, number> = {};
-        ALL_BANKING_FACTOR_KEYS.forEach((k) => {
-          const n = Number(factorWeights[k]);
-          fw[k] = Number.isFinite(n) ? n : BANKING_DEFAULTS_PERCENT[k] ?? 0;
-        });
-        requestBody.factor_weights = fw;
-      }
-      // Always request director directives in customer mode — the backend silently skips
-      // when none exist. Avoids a race where the directives query hasn't resolved yet
-      // but the user already clicks Run, causing the tag to be missing intermittently.
-      if (mode === 'customer' && customerId) {
-        requestBody.use_agent_d_directives = true;
-      }
-
-      const response = await fetch(endpoint, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(requestBody),
-      });
-      if (!response.ok) {
-        const errBody = await response.json().catch(() => ({}));
-        const detail =
-          typeof errBody.detail === 'string'
-            ? errBody.detail
-            : Array.isArray(errBody.detail)
-              ? errBody.detail.map((x: { msg?: string }) => x.msg).join('; ')
-              : '';
-        throw new Error(
-          detail || `Failed to execute Agent B (${scoringMethod}) — HTTP ${response.status}`
-        );
-      }
-      const data = await response.json();
-      if (scoringMethod === 'rules') {
-        const fwSnapshot: Record<string, number> = {};
-        ALL_BANKING_FACTOR_KEYS.forEach((k) => {
-          const n = Number(factorWeights[k]);
-          fwSnapshot[k] = Number.isFinite(n) ? n : BANKING_DEFAULTS_PERCENT[k] ?? 0;
-        });
-        return { ...data, _factorWeightsUsed: fwSnapshot };
-      }
-      return data;
-    },
-    onSuccess: (data: { _factorWeightsUsed?: Record<string, number> }) => {
-      if (mode === 'customer' && customerId) {
-        void queryClient.invalidateQueries({ queryKey: ['banking-agent-d-directives-b', customerId] });
-      }
-      setUi((prev) => ({
-        ...prev,
-        executeData: data,
-        lastRunFactorWeights: data?._factorWeightsUsed ?? prev.lastRunFactorWeights,
-      }));
-    },
+  // Query, not mutation, for the run itself  -  a `useMutation`'s state lives only
+  // in this one component instance and is silently dropped if the user navigates
+  // away before it resolves (the fetch keeps running server-side, but the result
+  // never reaches the UI). A `useQuery` with a stable key is tracked by the
+  // shared QueryClient (App.tsx: gcTime: Infinity) regardless of which component
+  // is currently mounted, so switching tabs mid-run and coming back shows the
+  // finished result (or still-loading state) correctly, and switching back to an
+  // already-computed combination shows it instantly with no network call.
+  // `enabled` only matches when the CURRENT inputs equal what "Run" was last
+  // explicitly clicked for (lastRequestedKey)  -  so this never fires just from
+  // changing an input or from remounting with old inputs restored from
+  // sessionStorage; only an explicit Run/Recompute click can set that flag.
+  const executeQuery = useQuery({
+    queryKey: ['banking-agent-b-run', recommenderRequestKey],
+    queryFn: () => fetchRecommenderRun(API_BASE_URL, recommenderInputs),
+    enabled: lastRequestedKey === recommenderRequestKey,
+    // Seeded from the sessionStorage-mirrored last result so a genuine browser
+    // reload shows it immediately with no network call, now that
+    // lastRequestedKey persists across a reload too (see mergeAgentBUi). An
+    // in-flight-at-the-exact-moment-of-reload request is not resumed  -  the JS
+    // execution context was destroyed by the reload.
+    initialData: () =>
+      lastResult?.key === recommenderRequestKey ? lastResult.response : undefined,
   });
 
-  // Pin/unpin are scoped to Recommender only — independent of Offer's own
+  // Runs once per newly-landed successful result (dataUpdatedAt changes exactly
+  // then)  -  useQuery has no onSuccess callback in this TanStack Query version.
+  // Seeded from the query's OWN dataUpdatedAt at mount (not 0), so resuming an
+  // already-cached/initialData-seeded result on a fresh mount doesn't look like
+  // a "new" result and doesn't re-fire the invalidate/write below.
+  const lastHandledRunAtRef = React.useRef(executeQuery.dataUpdatedAt);
+  React.useEffect(() => {
+    if (!executeQuery.isSuccess || executeQuery.dataUpdatedAt === lastHandledRunAtRef.current) return;
+    lastHandledRunAtRef.current = executeQuery.dataUpdatedAt;
+    if (mode === 'customer' && customerId) {
+      void queryClient.invalidateQueries({ queryKey: ['banking-agent-d-directives-b', customerId] });
+    }
+    setOptimisticallyUnpinnedProductId(null);
+    setUi((prev) => ({ ...prev, lastResult: { key: recommenderRequestKey, response: executeQuery.data } }));
+  }, [executeQuery.isSuccess, executeQuery.dataUpdatedAt, executeQuery.data, mode, customerId, recommenderRequestKey]);
+
+  const lastRunFactorWeights = (executeQuery.data as { _factorWeightsUsed?: Record<string, number> } | undefined)
+    ?._factorWeightsUsed ?? null;
+  const lastRunWeightsSum = useMemo(() => {
+    if (!lastRunFactorWeights) return 0;
+    return ALL_BANKING_FACTOR_KEYS.reduce((s, k) => s + (Number(lastRunFactorWeights[k]) || 0), 0);
+  }, [lastRunFactorWeights]);
+
+  /** Submits the CURRENT inputs as a run. Always forces a genuine fresh network
+   * computation, regardless of whether this exact input combination already has
+   * cached data from earlier this session - only switching tabs (enabled/
+   * initialData below) shows cached/resumed results; clicking this button never
+   * should. staleTime: 0 on this one imperative call overrides the app-wide
+   * staleTime: Infinity default, guaranteeing a real fetch every time; it still
+   * writes into the same cache entry the reactive executeQuery observes, so the
+   * displayed result updates normally once it resolves. */
+  const submitRecommenderRun = () => {
+    setUi((prev) => ({ ...prev, lastRequestedKey: recommenderRequestKey }));
+    void queryClient.fetchQuery({
+      queryKey: ['banking-agent-b-run', recommenderRequestKey],
+      queryFn: () => fetchRecommenderRun(API_BASE_URL, recommenderInputs),
+      staleTime: 0,
+    });
+  };
+
+  // Pin/unpin are scoped to Recommender only  -  independent of Offer's own
   // pin (each reads its own field server-side; see api/main_unified_chromadb.py).
-  // Either way, re-run the recommendation query so the list reflects the new
-  // pin state immediately.
-  const pinMutation = useMutation({
-    mutationFn: async (vars: { targetCustomerId: string; productId: string }) => {
-      const res = await fetch(
-        `${API_BASE_URL}/api/banking/agent_d/pin/recommender/${encodeURIComponent(vars.targetCustomerId)}`,
-        { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ product_id: vars.productId }) }
-      );
-      if (!res.ok) throw new Error('Failed to pin');
-      return res.json();
-    },
-    onSuccess: (_data, vars) => {
-      void queryClient.invalidateQueries({ queryKey: ['banking-agent-d-directives-b', vars.targetCustomerId] });
-      void queryClient.invalidateQueries({ queryKey: ['banking-agent-d-directives-persona'] });
-      executeMutation.mutate();
-    },
-  });
+  // Pinning can only be originated from the Director tab now  -  this tab only offers
+  // Unpin (see pinsStatusQuery/manualPinMismatch above for how a Director pin's
+  // arrival is surfaced here, and the row button below for why there's no pin half
+  // of this anymore).
   const unpinMutation = useMutation({
     mutationFn: async (targetCustomerId: string) => {
       const res = await fetch(
@@ -664,7 +791,11 @@ export default function BankingAgentB() {
     onSuccess: (_data, targetCustomerId) => {
       void queryClient.invalidateQueries({ queryKey: ['banking-agent-d-directives-b', targetCustomerId] });
       void queryClient.invalidateQueries({ queryKey: ['banking-agent-d-directives-persona'] });
-      executeMutation.mutate();
+      void queryClient.invalidateQueries({ queryKey: ['banking-agent-d-pins', targetCustomerId] });
+      // A direct user action on this tab (not a background auto-trigger), so
+      // refreshing the run is still allowed  -  the query is already active
+      // (this button only shows once a run exists), so this refetches instantly.
+      void queryClient.invalidateQueries({ queryKey: ['banking-agent-b-run', recommenderRequestKey] });
     },
   });
 
@@ -678,7 +809,7 @@ export default function BankingAgentB() {
   // route can genuinely mount twice in a row on this navigation (observed via
   // logging: a first instance starts the request, unmounts before it
   // resolves, and a second instance is what the user actually keeps looking
-  // at) — stripping the URL eagerly would let that first, doomed attempt
+  // at)  -  stripping the URL eagerly would let that first, doomed attempt
   // "consume" the deep link and leave the surviving instance with nothing.
   // Leaving the URL alone until success means whichever instance is still
   // mounted when a request finally resolves is the one that gets to react to
@@ -687,17 +818,31 @@ export default function BankingAgentB() {
   const [searchParams, setSearchParams] = useSearchParams();
   useEffect(() => {
     const personaParam = searchParams.get('persona');
-    if (personaParam === null || executeMutation.isPending) return;
+    if (personaParam === null) return;
     const categoryParam = searchParams.get('category') || '';
-    setUi((p) => ({ ...p, mode: 'persona', persona: personaParam, category: categoryParam, topN: topNForMode('persona') }));
-    executeMutation
-      .mutateAsync()
-      .then((data: { _factorWeightsUsed?: Record<string, number> }) => {
-        setUi((p) => ({
-          ...p,
-          executeData: data,
-          lastRunFactorWeights: data?._factorWeightsUsed ?? p.lastRunFactorWeights,
-        }));
+    const newTopN = topNForMode('persona');
+    setUi((p) => ({ ...p, mode: 'persona', persona: personaParam, category: categoryParam, topN: newTopN }));
+    const inputs: RecommenderRunInputs = {
+      scoringMethod: 'rules',
+      mode: 'persona',
+      customerId: '',
+      persona: personaParam,
+      category: categoryParam,
+      searchQuery,
+      topN: newTopN,
+      factorWeights,
+    };
+    const key = JSON.stringify(inputs);
+    setUi((p) => ({ ...p, lastRequestedKey: key }));
+    // fetchQuery dedupes against an already-in-flight fetch for this exact key,
+    // which is what protects against this route genuinely mounting twice in a
+    // row (observed via logging: a first instance starts the request, unmounts
+    // before it resolves, and a second instance is what the user actually keeps
+    // looking at)  -  both instances' fetchQuery calls resolve from the SAME
+    // underlying request instead of firing a duplicate.
+    void queryClient
+      .fetchQuery({ queryKey: ['banking-agent-b-run', key], queryFn: () => fetchRecommenderRun(API_BASE_URL, inputs) })
+      .then(() => {
         setSearchParams((current) => {
           const next = new URLSearchParams(current);
           next.delete('persona');
@@ -706,50 +851,46 @@ export default function BankingAgentB() {
         }, { replace: true });
       })
       .catch(() => {
-        // Leave the URL params in place — a genuine backend error will fail
+        // Leave the URL params in place  -  a genuine backend error will fail
         // the same way on retry, but an orphaned-by-remount attempt gets a
         // real chance to succeed on whichever mount survives.
       });
-    // eslint-disable-next-line react-hooks/exhaustive-deps -- fires once per deep link, not on every mutation identity change
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- fires once per deep link, not on every dependency identity change
   }, [searchParams]);
 
-  // On mount, if a customer/persona was already selected in a prior session
-  // (restored from sessionStorage) and its recommendations are showing from
-  // cached `executeData`, silently re-run once to confirm those numbers still
-  // match the CURRENT backend — factor weights, Agent A's segmentation, or the
-  // loaded dataset can all change between sessions (e.g. after a backend
-  // restart resets factor weights to default) while the cached executeData
-  // would otherwise keep displaying the old, now-inconsistent scores
-  // indefinitely until the user happens to click Run again themselves.
-  const didAutoRefreshStaleResults = useRef(false);
-  useEffect(() => {
-    if (didAutoRefreshStaleResults.current) return;
-    didAutoRefreshStaleResults.current = true;
-    if (searchParams.get('persona') !== null) return; // deep-link effect above already owns this mount
-    const hasSelection = (mode === 'customer' && !!customerId) || (mode === 'persona' && !!persona);
-    if (hasSelection && executeData) {
-      executeMutation.mutate();
-    }
-    // eslint-disable-next-line react-hooks/exhaustive-deps -- fire once on mount only, not on every field change
-  }, []);
-
+  // The Recommender never auto-computes. Selecting a customer/persona for the
+  // first time, or clicking Run/Recompute, are the only things that trigger a
+  // real computation  -  navigating to this tab (or away and back) must show
+  // whatever was last computed, exactly as it was left, with no network call.
+  //
+  // What this effect does is narrower: only CLEAR the stale display when the
+  // user actively switches to a *different* customer/persona/mode, so the
+  // old selection's numbers don't linger mislabeled under the new selection.
+  // It must skip the very first render (mount)  -  otherwise a customer/persona
+  // restored from sessionStorage on page load would have its cached results
+  // wiped immediately, defeating the "return to the exact state you left"
+  // requirement. (An earlier version of this effect also auto-re-ran the
+  // computation on every mount/change to guard against a stale-looking
+  // mismatch with Agent C's Offer tab  -  that mismatch turned out to be a real
+  // scoring bug in banking_12_factor_scorer.py's weight merging, now fixed at
+  // the source, so re-running defensively here is no longer needed.)
   const isFirstContextEffect = useRef(true);
-  // Only clear when customer/persona/mode changes — do NOT depend on `executeMutation`:
-  // its object identity updates after each mutate (success/pending), which would run
-  // this effect right after a successful run and call reset(), wiping the new results.
   React.useEffect(() => {
     if (isFirstContextEffect.current) {
       isFirstContextEffect.current = false;
       return;
     }
-    executeMutation.reset();
+    // No need to explicitly clear the run display here anymore: switching to a
+    // different customer/persona/mode changes recommenderRequestKey, which no
+    // longer matches lastRequestedKey, so the query's `enabled` gate goes false
+    // on its own and nothing from the old selection shows. Only the unrelated
+    // per-customer UI bits below need an explicit reset.
+    setOptimisticallyUnpinnedProductId(null);
     setUi((prev) => ({
       ...prev,
       lastAiFactorRationales: {},
-      lastRunFactorWeights: null,
-      executeData: null,
     }));
-    // eslint-disable-next-line react-hooks/exhaustive-deps -- intentional: avoid tying to mutation object identity
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- intentional: only fire on these three
   }, [customerId, persona, mode]);
 
   const handleSearch = () => {
@@ -762,54 +903,50 @@ export default function BankingAgentB() {
       alert('Please select a persona');
       return;
     }
-    executeMutation.mutate();
+    submitRecommenderRun();
   };
 
-  /** Avoid showing a previous customer's results when sessionStorage still holds stale executeData */
-  const executePayload = useMemo(() => {
-    const raw = executeMutation.data ?? (executeData as typeof executeMutation.data | undefined);
-    if (!raw) return undefined;
-    if (mode === 'customer' && customerId) {
-      const rid = String((raw as { customer_id?: string }).customer_id ?? '').trim();
-      if (rid && rid !== String(customerId).trim()) return undefined;
-    }
-    return raw;
-  }, [executeMutation.data, executeData, mode, customerId]);
+  // The query's key already encodes customerId, so data returned for it can
+  // only ever be for the current customer  -  no separate mismatch guard needed.
+  const executePayload = executeQuery.data;
 
   const results = executePayload?.results;
   const recommendations = results?.recommendations || [];
-  // Re-run execute when supervisor pin exists but the visible list top SKU is not pinned yet (stale session or post–Agent D orchestrate).
-  React.useEffect(() => {
-    if (mode !== 'customer' || !customerId) return;
-    if (!useAgentDDirectives || !agentDDirectivesQuery.isSuccess) return;
+
+  // Neither of these auto-recomputes anymore  -  only an explicit Run/Recompute
+  // click may trigger a computation. Instead they derive a plain boolean each
+  // render, surfaced as a passive "pin changed - click Run to refresh" banner
+  // near the Run button (see JSX below) so the user finds out a refresh is
+  // available without one being forced on them.
+  //
+  // narrativePinMismatch: the auto-computed priority_pin_product_id (from
+  // Director's click-tracking / orchestrate) no longer matches the displayed #1.
+  const narrativePinMismatch = useMemo(() => {
+    if (mode !== 'customer' || !customerId) return false;
+    if (!useAgentDDirectives || !agentDDirectivesQuery.isSuccess) return false;
     const pin = String(
       (agentDDirectivesQuery.data?.next_visit_directives as { priority_pin_product_id?: string } | null)
         ?.priority_pin_product_id || '',
     ).trim();
-    if (!pin) {
-      supervisorPinAlignSigRef.current = null;
-      return;
-    }
-    const sig = `${customerId}|${pin}`;
+    if (!pin) return false;
     const topId = String(recommendations[0]?.product_id ?? '').trim();
-    if (topId === pin) {
-      supervisorPinAlignSigRef.current = sig;
-      return;
-    }
-    if (executeMutation.isPending) return;
-    if (supervisorPinAlignSigRef.current === sig) return;
-    supervisorPinAlignSigRef.current = sig;
-    executeMutation.mutate();
-  }, [
-    mode,
-    customerId,
-    useAgentDDirectives,
-    agentDDirectivesQuery.isSuccess,
-    agentDDirectivesQuery.data,
-    recommendations,
-    executeMutation,
-    executeMutation.isPending,
-  ]);
+    return topId !== pin;
+  }, [mode, customerId, useAgentDDirectives, agentDDirectivesQuery.isSuccess, agentDDirectivesQuery.data, recommendations]);
+
+  // manualPinMismatch: the manual Recommender pin toggled in Director (independent
+  // of the auto-computed field above  -  see api/main_unified_chromadb.py's
+  // recommender_pin_product_id merge in agent_b/execute) no longer matches.
+  const manualPinMismatch = useMemo(() => {
+    if (mode !== 'customer' || !customerId) return false;
+    if (!pinsStatusQuery.isSuccess) return false;
+    if (!executePayload) return false; // nothing computed yet  -  the next Run picks up the pin naturally
+    const pin = String(pinsStatusQuery.data?.recommender_pin_product_id || '').trim();
+    const pinnedRec = recommendations.find((r: any) => r.supervisor_pinned);
+    const currentPinnedId = String(pinnedRec?.product_id ?? '').trim();
+    return currentPinnedId !== pin;
+  }, [mode, customerId, pinsStatusQuery.isSuccess, pinsStatusQuery.data, executePayload, recommendations]);
+
+  const pinChangedSinceRun = narrativePinMismatch || manualPinMismatch;
 
   const directivePinReasonUi = String(
     (agentDDirectivesQuery.data as { priority_pin_reason_ui?: string } | undefined)?.priority_pin_reason_ui || '',
@@ -853,7 +990,7 @@ export default function BankingAgentB() {
   return (
     <div className="space-y-6 animate-fadeIn">
       <div className="bg-white rounded-2xl shadow-sm border border-gray-100 overflow-hidden">
-        {/* Header — Academy-style */}
+        {/* Header  -  Academy-style */}
         <div className="px-6 pt-6 pb-4 flex flex-col lg:flex-row lg:items-start lg:justify-between gap-4 border-b border-gray-100">
           <div className="flex gap-3">
             <div className="shrink-0 p-2.5 rounded-xl bg-blue-50 text-blue-600">
@@ -876,7 +1013,7 @@ export default function BankingAgentB() {
         </div>
 
         <div className="p-6 space-y-6">
-          {/* Operational mode — pill toggle */}
+          {/* Operational mode  -  pill toggle */}
           <div>
             <p className="text-xs font-semibold text-gray-500 uppercase tracking-wider mb-2">Mode</p>
             <div className="inline-flex rounded-full border border-gray-200 p-1 bg-gray-50 shadow-inner">
@@ -948,7 +1085,7 @@ export default function BankingAgentB() {
                   value={customerId}
                   onChange={(id) => setUi((p) => ({ ...p, customerId: id }))}
                   loading={customersQuery.isLoading}
-                  emptyListLabel="No customers — run Segmentation first"
+                  emptyListLabel="No customers  -  run Segmentation first"
                   placeholder="Search by name or customer ID…"
                 />
                 {customersQuery.isError && (
@@ -1000,7 +1137,7 @@ export default function BankingAgentB() {
             </div>
           </div>
 
-          {/* Accordion: factor weights — rule-based only */}
+          {/* Accordion: factor weights  -  rule-based only */}
           {scoringMethod === 'rules' && (
             <div className="rounded-xl border border-gray-200 bg-gray-50/50 overflow-hidden">
               <button
@@ -1180,51 +1317,42 @@ export default function BankingAgentB() {
             </div>
           )}
 
+          {pinChangedSinceRun && !executeQuery.isFetching && (
+            <div className="mb-3 flex items-center gap-2 rounded-lg border border-amber-200 bg-amber-50 px-4 py-2.5 text-sm text-amber-800">
+              <AlertCircle className="w-4 h-4 flex-shrink-0" />
+              Pin changed in Director since this was last run - click Run to refresh.
+            </div>
+          )}
           <button
             type="button"
             onClick={handleSearch}
-            disabled={executeMutation.isPending}
+            disabled={executeQuery.isFetching}
             className="w-full px-6 py-3.5 bg-emerald-600 text-white rounded-xl hover:bg-emerald-700 disabled:bg-gray-400 flex items-center justify-center gap-2 font-semibold shadow-md transition-colors"
           >
             <Search className="w-5 h-5" />
-            {executeMutation.isPending ? 'Running…' : 'Get personalized banking recommendations'}
+            {executeQuery.isFetching ? 'Running…' : 'Get personalized banking recommendations'}
           </button>
         </div>
       </div>
 
       {/* Loading State */}
-      {executeMutation.isPending && (
-        <div className={`border rounded-lg p-6 text-center ${
-          false
-            ? 'bg-purple-50 border-purple-200'
-            : 'bg-blue-50 border-blue-200'
-        }`}>
-          <div className={`animate-spin rounded-full h-12 w-12 border-b-2 mx-auto mb-4 ${
-            false ? 'border-purple-600' : 'border-blue-600'
-          }`}></div>
-          <p className={`font-medium ${
-            false ? 'text-purple-700' : 'text-blue-700'
-          }`}>
-            {false
-              ? `Running Banking Hybrid ML model for ${mode === 'persona' ? persona : 'customer'}...`
-              : `Calculating personalized banking scores for ${mode === 'persona' ? persona : 'customer'}...`}
+      {executeQuery.isFetching && (
+        <div className="border rounded-lg p-6 text-center bg-blue-50 border-blue-200">
+          <div className="animate-spin rounded-full h-12 w-12 border-b-2 mx-auto mb-4 border-blue-600"></div>
+          <p className="font-medium text-blue-700">
+            Calculating personalized banking scores for {loadingSubjectLabel}...
           </p>
-          {false && (
-            <p className="text-sm text-purple-600 mt-2">
-              AI learning from banking transaction patterns
-            </p>
-          )}
         </div>
       )}
 
       {/* Error State */}
-      {executeMutation.isError && (
+      {executeQuery.isError && (
         <div className="bg-red-50 border border-red-200 rounded-lg p-6">
           <div className="flex items-center gap-3 text-red-700">
             <AlertCircle className="w-6 h-6" />
             <div>
               <p className="font-medium">Error getting recommendations</p>
-              <p className="text-sm">{executeMutation.error?.message}</p>
+              <p className="text-sm">{executeQuery.error instanceof Error ? executeQuery.error.message : String(executeQuery.error)}</p>
             </div>
           </div>
         </div>
@@ -1381,7 +1509,7 @@ export default function BankingAgentB() {
                     Factor weights used in this run
                   </h3>
                   <p className="text-sm text-gray-600 mt-1">
-                    Total: <strong className="tabular-nums">{lastRunWeightsSum.toFixed(1)}%</strong> — same weights as in the
+                    Total: <strong className="tabular-nums">{lastRunWeightsSum.toFixed(1)}%</strong>  -  same weights as in the
                     suitability breakdown for each product below.
                   </p>
                 </div>
@@ -1428,28 +1556,10 @@ export default function BankingAgentB() {
                     <div className="flex flex-wrap items-center gap-3 mb-2">
                       <span className="text-2xl font-bold text-gray-400">#{index + 1}</span>
                       <h3 className="text-xl font-bold text-gray-900">{rec.product_name}</h3>
-                      <button
-                        type="button"
-                        onClick={() => {
-                          const targetCustomerId = mode === 'persona' ? personaRepCustomerId : customerId;
-                          if (!targetCustomerId) return;
-                          if (rec.supervisor_pinned) {
-                            unpinMutation.mutate(targetCustomerId);
-                          } else {
-                            pinMutation.mutate({ targetCustomerId, productId: rec.product_id });
-                          }
-                        }}
-                        disabled={pinMutation.isPending || unpinMutation.isPending}
-                        title={rec.supervisor_pinned ? 'Unpin this recommendation' : 'Pin this recommendation'}
-                        className={`ml-auto inline-flex items-center gap-1 px-2.5 py-1 rounded-full border text-[11px] font-semibold disabled:opacity-50 transition-colors ${
-                          rec.supervisor_pinned
-                            ? 'border-indigo-300 bg-indigo-50 text-indigo-700 hover:bg-indigo-100'
-                            : 'border-gray-200 bg-white text-gray-500 hover:bg-gray-50'
-                        }`}
-                      >
-                        {rec.supervisor_pinned ? <PinOff className="w-3 h-3" /> : <Pin className="w-3 h-3" />}
-                        {rec.supervisor_pinned ? 'Unpin' : 'Pin'}
-                      </button>
+                      {/* The only Unpin control for a pinned row is the one inside the
+                          "Director's Pinned Offer" card below (PinnedOfferCard) - this row
+                          header used to have its own separate small Unpin pill too, which
+                          just duplicated that control. */}
                     </div>
                     <div className="flex items-center gap-4 text-sm text-gray-600">
                       <span className="flex items-center gap-1">
@@ -1462,7 +1572,7 @@ export default function BankingAgentB() {
                           <span>{rec.subcategory}</span>
                         </>
                       )}
-                      {rec.min_credit_score && (
+                      {rec.min_credit_score > 0 && (
                         <>
                           <span>•</span>
                           <span>Min Credit: {rec.min_credit_score}</span>
@@ -1494,9 +1604,6 @@ export default function BankingAgentB() {
                       {rec.fee_waiver_condition && rec.fee_waiver_condition !== 'none' && (
                         <span className="px-1.5 py-0.5 rounded text-xs font-medium bg-gray-100 text-gray-600">Fee Waivable</span>
                       )}
-                      {rec.llm_rationale && (
-                        <span className="px-1.5 py-0.5 rounded text-xs font-medium bg-violet-100 text-violet-700">AI</span>
-                      )}
                     </div>
                     {rec.interest_rate > 0 && (
                       <div className="text-sm text-green-600 font-semibold mt-1">
@@ -1517,31 +1624,49 @@ export default function BankingAgentB() {
                 {(() => {
                   const pinStory = rec.priority_pin_story as PriorityPinStory | undefined;
                   const pinFallback = bankingSupervisorPinReason(rec);
+                  // Optimistic Unpin drops the whole pinned presentation instantly, not just
+                  // the small badges  -  otherwise this panel keeps announcing "Supervisor
+                  // Priority" for several seconds until the real recompute lands.
+                  const effectivePinned = rec.supervisor_pinned && rec.product_id !== optimisticallyUnpinnedProductId;
                   const rankRaw = rec.rank_explanation as string | undefined;
-                  const rankBody = rec.supervisor_pinned ? stripStalePinnedRankIntro(rankRaw) : rankRaw;
-                  const showSpotlight = Boolean(rec.supervisor_pinned && (pinStory || pinFallback));
-                  // Pinned narrative lives only in the spotlight — skip green “Why” card to avoid repeating the same copy.
+                  const rankBody = effectivePinned ? stripStalePinnedRankIntro(rankRaw) : rankRaw;
+                  const showSpotlight = Boolean(effectivePinned && (pinStory || pinFallback));
+                  // Pinned narrative lives only in the spotlight  -  skip green “Why” card to avoid repeating the same copy.
                   const showEmerald = Boolean(
-                    !rec.supervisor_pinned &&
+                    !effectivePinned &&
                       (rankBody || rec.recommendation_text || pinFallback),
                   );
 
-                  // Customer mode: only show on the supervisor-pinned product.
-                  // Persona mode: show on whichever product matches the Director's pinned product_id
-                  // (supervisor_pinned is never set in persona mode because directives aren't applied to scoring).
-                  const showPinnedOffer = Boolean(
-                    directivePinnedOfferCard &&
-                    String(directivePinnedOfferCard.product_id || '') === String(rec.product_id || '') &&
-                    (mode === 'persona' || rec.supervisor_pinned),
-                  );
+                  // Is THIS row the one Director manually pinned (recommender_pin_product_id) -
+                  // customer mode gets this straight from the backend-computed rec.supervisor_pinned;
+                  // persona mode checks the same field directly since supervisor_pinned is never set
+                  // there (directives aren't applied to persona-mode scoring).
+                  const manuallyPinnedHere =
+                    (mode === 'persona' ? isManuallyPinned(rec.product_id) : rec.supervisor_pinned) &&
+                    rec.product_id !== optimisticallyUnpinnedProductId;
+                  // Card content: prefer directivePinnedOfferCard (orchestrate()'s richer Agent-C
+                  // offer snapshot - offer name, headline, benefits) when it happens to match this
+                  // exact product, but that's a DIFFERENT backend field from the manual pin (it's
+                  // populated by orchestrate()'s own best-offer computation, not by Pin/Unpin) so it
+                  // won't always match. Fall back to a minimal card built straight from this row's
+                  // own data, which is always correct for whichever product is actually pinned.
+                  const showPinnedOffer = manuallyPinnedHere;
+                  const pinnedOfferCardData: PinnedOfferCardData | null = showPinnedOffer
+                    ? (directivePinnedOfferCard && String(directivePinnedOfferCard.product_id || '') === String(rec.product_id || '')
+                        ? directivePinnedOfferCard
+                        : { product_id: rec.product_id, product_name: rec.product_name, reason: pinFallback })
+                    : null;
 
                   return (
                     <>
-                      {/* Director offer card — shown above spotlight for pinned product */}
-                      {showPinnedOffer && directivePinnedOfferCard && (
+                      {/* Director offer card  -  shown above spotlight for pinned product */}
+                      {showPinnedOffer && pinnedOfferCardData && (
                         <PinnedOfferCard
-                          card={directivePinnedOfferCard}
-                          onUnpin={() => unpinMutation.mutate(mode === 'persona' ? personaRepCustomerId : customerId)}
+                          card={pinnedOfferCardData}
+                          onUnpin={() => {
+                            setOptimisticallyUnpinnedProductId(rec.product_id);
+                            unpinMutation.mutate(mode === 'persona' ? personaRepCustomerId : customerId);
+                          }}
                           unpinning={unpinMutation.isPending}
                         />
                       )}
@@ -1706,9 +1831,6 @@ export default function BankingAgentB() {
                                 {rec.llm_rationale && (
                                   <div className="rounded-xl overflow-hidden border border-violet-200 shadow-sm">
                                     <div className="bg-gradient-to-r from-violet-700 to-indigo-700 px-4 py-2.5 flex items-center gap-2">
-                                      <div className="w-5 h-5 rounded-md bg-white/20 flex items-center justify-center shrink-0">
-                                        <span className="text-white text-[10px] font-extrabold">AI</span>
-                                      </div>
                                       <p className="text-[11px] font-bold uppercase tracking-widest text-violet-200">Why this product fits you</p>
                                     </div>
                                     <div className="bg-white px-4 py-3.5">
@@ -1790,7 +1912,7 @@ export default function BankingAgentB() {
                             </div>
                             <div className="flex-1">
                               {rec.detailed_calculation && rec.scoring_method === '12_factor' ? (() => {
-                                /* BANKING 12-FACTOR DETAILED CALCULATION — weight/contribution/calculation are
+                                /* BANKING 12-FACTOR DETAILED CALCULATION  -  weight/contribution/calculation are
                                    always recomputed from the *current* config (not the weight baked into this
                                    rec at generation time), so this panel can never disagree with the weight
                                    sliders below it. Only raw_score (weight-independent) comes from the backend. */
@@ -1887,7 +2009,7 @@ export default function BankingAgentB() {
                                           </summary>
                                           <div className="text-xs text-gray-600 mt-1 pl-3 border-l-2 border-blue-200 space-y-1">
                                             <p className="font-medium text-indigo-700">📐 {liveFactor(dc, 'relationship_depth', currentPercent)!.calculation}</p>
-                                            <p className="italic">🧮 Combines products already held (out of 8) with tenure with the bank (up to 5 years) — more products and longer tenure score higher.</p>
+                                            <p className="italic">🧮 Combines products already held (out of 8) with tenure with the bank (up to 5 years)  -  more products and longer tenure score higher.</p>
                                             <p>Customers with 3+ products have 92% retention vs 40% for single-product (Bain & Company). Loyalty drives long-term profitability.</p>
                                           </div>
                                         </details>
@@ -1986,7 +2108,7 @@ export default function BankingAgentB() {
                                         'intent_score': {
                                           name: 'Intent Score',
                                           why: 'Cross-sell receptivity varies widely. Targeting high-intent customers improves conversion 3-5x (Salesforce Banking Report).',
-                                          howCalculated: 'Uses the customer\'s cross-sell receptivity score as-is — no adjustment is applied.'
+                                          howCalculated: 'Uses the customer\'s cross-sell receptivity score as-is  -  no adjustment is applied.'
                                         },
                                         'segment_affinity': {
                                           name: 'Segment Affinity',
@@ -2039,7 +2161,7 @@ export default function BankingAgentB() {
                                         'popularity': {
                                           name: 'Popularity',
                                           why: 'Popular products within segments indicate proven value. Adoption rates signal market validation and reduce perceived risk for customers.',
-                                          howCalculated: 'Based on segment adoption count — over 100 holders scores highest, over 50 scores moderately, fewer scores lower.'
+                                          howCalculated: 'Based on segment adoption count  -  over 100 holders scores highest, over 50 scores moderately, fewer scores lower.'
                                         }
                                       };
 
@@ -2219,8 +2341,12 @@ export default function BankingAgentB() {
                   </div>
                 </div>
 
-                {/* Product Details Grid */}
-                {(rec.min_balance || rec.min_credit_score || rec.interest_rate) && (
+                {/* Product Details Grid  -  every condition here must compare with `> 0`,
+                    never just truthiness: a legitimately-0 value (no minimum balance, no
+                    minimum credit score) is falsy but not boolean `false`, so a bare
+                    `value && (<div>...)` renders the literal text "0" instead of nothing
+                    once `value` is the only thing left to evaluate. */}
+                {(rec.min_balance > 0 || rec.min_credit_score > 0 || rec.interest_rate > 0) && (
                   <div className="grid grid-cols-3 gap-2 mb-4">
                     {rec.min_balance > 0 && (
                       <div className="bg-gray-50 rounded px-3 py-2 text-center">
@@ -2228,7 +2354,7 @@ export default function BankingAgentB() {
                         <p className="text-sm font-medium text-gray-900">${rec.min_balance.toLocaleString()}</p>
                       </div>
                     )}
-                    {rec.min_credit_score && (
+                    {rec.min_credit_score > 0 && (
                       <div className="bg-gray-50 rounded px-3 py-2 text-center">
                         <p className="text-xs text-gray-500">Min Credit</p>
                         <p className="text-sm font-medium text-gray-900">{rec.min_credit_score}</p>

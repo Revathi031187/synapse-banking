@@ -2290,7 +2290,7 @@
       {
         "variant_id": "A",
         "offer_id": "MRD_OFF_050",
-        "offer_name": "0.25% Rate Discount — Business LOC",
+        "offer_name": "0.25% Rate Discount  -  Business LOC",
         "offer_type": "rate_discount",
         "channel": "email",
         "n_exposed": 400,
@@ -3044,7 +3044,7 @@
       {
         "variant_id": "B",
         "offer_id": "MRD_OFF_045",
-        "offer_name": "$0 HELOC Annual Fee — First Year",
+        "offer_name": "$0 HELOC Annual Fee  -  First Year",
         "offer_type": "fee_waiver",
         "channel": "branch",
         "n_exposed": 400,
@@ -3100,7 +3100,7 @@
       {
         "variant_id": "B",
         "offer_id": "MRD_OFF_045",
-        "offer_name": "$0 HELOC Annual Fee — First Year",
+        "offer_name": "$0 HELOC Annual Fee  -  First Year",
         "offer_type": "fee_waiver",
         "channel": "in_app",
         "n_exposed": 400,
@@ -3156,7 +3156,7 @@
       {
         "variant_id": "B",
         "offer_id": "MRD_OFF_045",
-        "offer_name": "$0 HELOC Annual Fee — First Year",
+        "offer_name": "$0 HELOC Annual Fee  -  First Year",
         "offer_type": "fee_waiver",
         "channel": "email",
         "n_exposed": 400,

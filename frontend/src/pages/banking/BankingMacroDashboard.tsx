@@ -145,7 +145,7 @@ export default function BankingMacroDashboard() {
       );
 
       if (!fetchResponse.ok) {
-        console.log(`No cached micro segments for cluster ${macroClusterId} — creating...`);
+        console.log(`No cached micro segments for cluster ${macroClusterId}  -  creating...`);
         const createResponse = await fetch(
           `${API_BASE_URL}/api/banking/micro-segments/${macroClusterId}`,
           { method: 'POST' }
@@ -168,7 +168,7 @@ export default function BankingMacroDashboard() {
       const microSegs = data.result?.micro_segments || data.micro_segments || [];
 
       if (microSegs.length === 0) {
-        throw new Error('No micro segments returned — backend may have failed silently');
+        throw new Error('No micro segments returned  -  backend may have failed silently');
       }
 
       console.log(`Loaded ${microSegs.length} micro segments for cluster ${macroClusterId}`);
@@ -179,7 +179,7 @@ export default function BankingMacroDashboard() {
       }));
     } catch (error) {
       console.error('Error loading micro segments:', error);
-      // Do NOT store [] here — that would make the guard treat it as "already loaded"
+      // Do NOT store [] here  -  that would make the guard treat it as "already loaded"
       // and permanently block retries. Remove the key so the next click retries cleanly.
       setUi((prev) => {
         const next = { ...prev.microSegments };
@@ -419,7 +419,7 @@ function MacroPersonaCard({ persona, isExpanded, onToggle }: any) {
             <div className="text-base font-bold text-blue-600">
               {persona.characteristics?.avg_digital_engagement != null
                 ? `${(Number(persona.characteristics.avg_digital_engagement) * 100).toFixed(0)}% online`
-                : '—'}
+                : ' - '}
             </div>
           </div>
 
@@ -481,7 +481,7 @@ function MacroPersonaCard({ persona, isExpanded, onToggle }: any) {
           {persona.segment_explanation ? (() => {
             const expl        = persona.segment_explanation;
             const description = expl.description || '';
-            // Digital engagement already shown in the macro card — remove from insights to avoid duplication
+            // Digital engagement already shown in the macro card  -  remove from insights to avoid duplication
             const stats       = (expl.key_stats || []).filter(
               (s: { label?: string }) => !/digital/i.test(s.label || '')
             );
@@ -490,7 +490,7 @@ function MacroPersonaCard({ persona, isExpanded, onToggle }: any) {
 
             return (
               <div className="bg-white">
-                {/* Description — accent bar + tinted background */}
+                {/* Description  -  accent bar + tinted background */}
                 {description && (
                   <div
                     className="px-4 py-3 border-b border-gray-100"
@@ -500,7 +500,7 @@ function MacroPersonaCard({ persona, isExpanded, onToggle }: any) {
                   </div>
                 )}
 
-                {/* Key stats — 2-line rows: label above, value + badge below. Fits any card width. */}
+                {/* Key stats  -  2-line rows: label above, value + badge below. Fits any card width. */}
                 {stats.length > 0 && (
                   <div className="border-b border-gray-100">
                     {stats.map((s, i) => {
@@ -518,7 +518,7 @@ function MacroPersonaCard({ persona, isExpanded, onToggle }: any) {
                           <div className="text-[9px] uppercase tracking-widest text-gray-400 font-semibold mb-1 leading-tight">
                             {s.label}
                           </div>
-                          {/* Row 2: value left, badge right — no fixed widths */}
+                          {/* Row 2: value left, badge right  -  no fixed widths */}
                           <div className="flex items-center justify-between gap-1">
                             <span className="text-sm font-extrabold text-gray-900 leading-tight">
                               {s.value}
@@ -635,7 +635,7 @@ function MicroSegmentCard({ micro }: { micro: MicroSegment }) {
           <span className="font-bold text-gray-800">
             {micro.characteristics?.avg_portfolio_depth != null
               ? `${Number(micro.characteristics.avg_portfolio_depth).toFixed(1)}`
-              : '—'}
+              : ' - '}
           </span>
         </div>
       </div>

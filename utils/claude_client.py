@@ -1,12 +1,12 @@
 """
 LLM client for the JPMorgan Chase banking personalization platform.
 
-Uses Together AI (Llama 3.3 70B) by default — no new credentials needed,
+Uses Together AI (Llama 3.3 70B) by default  -  no new credentials needed,
 the TOGETHER_API_KEY already in .env is sufficient.
 
 If ANTHROPIC_API_KEY is set, switches to Claude Haiku 4.5 automatically.
 
-All public methods return empty strings / empty lists / empty dicts on failure —
+All public methods return empty strings / empty lists / empty dicts on failure  - 
 never raise. Callers fall back to rule-based logic transparently.
 """
 
@@ -35,7 +35,7 @@ _ANTHROPIC_KEY   = (os.getenv("ANTHROPIC_API_KEY") or "").strip()
 _TOGETHER_KEY    = (os.getenv("TOGETHER_API_KEY") or "").strip()
 _TOGETHER_BASE   = "https://api.together.xyz/v1"
 
-# Which specific Together AI models to try, and in what order — now controlled
+# Which specific Together AI models to try, and in what order  -  now controlled
 # by config/llm_priority.json (see utils/llm_priority_config.py) so a human can
 # reorder/prune them without a code change. get_together_models() supplies the
 # same sane defaults if that file is missing or malformed.
@@ -61,7 +61,7 @@ class ClaudeClient:
     - "agent_functions" scope (Agent A/B/C/D generation calls) defaults to Together AI first.
     - "chatbot" scope (Segment AI) defaults to Anthropic Claude first.
     Either way, if the first choice fails (or its key isn't configured), the
-    other provider is tried automatically — see generate_text().
+    other provider is tried automatically  -  see generate_text().
     Circuit breaker: 3 consecutive failures (across either provider) -> 60s cooldown.
     """
 
@@ -78,9 +78,9 @@ class ClaudeClient:
                 import anthropic
                 self._anthropic_client = anthropic.Anthropic(api_key=self._anthropic_key)
             except ImportError:
-                logger.info("ClaudeClient: anthropic package not installed — Anthropic unavailable, Together AI only")
+                logger.info("ClaudeClient: anthropic package not installed  -  Anthropic unavailable, Together AI only")
             except Exception as e:
-                logger.warning("ClaudeClient: Anthropic init failed (%s) — Anthropic unavailable, Together AI only", e)
+                logger.warning("ClaudeClient: Anthropic init failed (%s)  -  Anthropic unavailable, Together AI only", e)
 
         available = [
             name for name, ok in (("together", bool(self._together_key)), ("anthropic", bool(self._anthropic_client)))
@@ -89,7 +89,7 @@ class ClaudeClient:
         if available:
             logger.info(f"ClaudeClient: providers available = {available} (order decided per-call by config/llm_priority.json)")
         else:
-            logger.warning("ClaudeClient: no API key found — LLM features will use rule-based fallbacks")
+            logger.warning("ClaudeClient: no API key found  -  LLM features will use rule-based fallbacks")
 
     # ── public ────────────────────────────────────────────────────────────────
 
@@ -117,7 +117,7 @@ class ClaudeClient:
         Which provider is tried first (and which is tried second as a fallback)
         is read fresh from config/llm_priority.json on every call, keyed by
         scope: agent_name == "chatbot" uses the "chatbot" order, everything
-        else uses "agent_functions" — so an edit to that file takes effect
+        else uses "agent_functions"  -  so an edit to that file takes effect
         immediately without a restart.
         """
         if not self.is_available():
@@ -148,6 +148,11 @@ class ClaudeClient:
                     result = (result or "").strip().split("\n")[0].strip()
                 else:
                     result = (result or "").strip()
+                # LLMs reach for em-dashes constantly  -  a stylistic tell that reads
+                # as obviously AI-written to a client. Sanitize centrally, here, so
+                # every caller of generate_text() (rationale, narrative, chat, segment
+                # naming, etc.) is covered without needing its own cleanup step.
+                result = result.replace("\u2014", " - ")
 
                 duration_ms = int((time.monotonic() - t0) * 1000)
                 self._consecutive_failures = 0
@@ -215,7 +220,7 @@ class ClaudeClient:
 
         prompt = (
             f"Name a retail banking customer persona. Describe WHO the customer IS, not just a metric.\n\n"
-            f"Defining trait: {trait_hint} — {percentile:.0f}th percentile among all segments\n"
+            f"Defining trait: {trait_hint}  -  {percentile:.0f}th percentile among all segments\n"
             f"Income: ${avg_income:,.0f}/yr  |  Products: {avg_products:.1f}  |  Digital: {avg_digital*100:.0f}%  |  Txns/mo: {avg_txn:.0f}\n\n"
             f"Already used names (must be DIFFERENT): {taken}\n\n"
             f"Good examples: 'Affluent Savers', 'Everyday Transactors', 'Digital-First Bankers', "
@@ -225,7 +230,7 @@ class ClaudeClient:
         )
         system = (
             "You are a bank marketing strategist naming customer personas. "
-            "Output ONLY the segment name — exactly 2 or 3 words, Title Case. "
+            "Output ONLY the segment name  -  exactly 2 or 3 words, Title Case. "
             "The name must describe the customer archetype (who they are), not just their metric rank. "
             "No punctuation, no explanation."
         )
@@ -273,7 +278,7 @@ class ClaudeClient:
         feature_profile = stats.get('feature_profile', {})
 
         if segment_type == "micro":
-            # Tight, simple prompt — models follow short clear instructions better than long ones
+            # Tight, simple prompt  -  models follow short clear instructions better than long ones
             diff = split_dims if split_dims else 'no strong differentiator'
 
             # Forbidden first words from sibling names already used
@@ -288,7 +293,7 @@ class ClaudeClient:
             else:
                 banned = "NEVER use: Borrower, Caution, Debt, Risky, Vulnerable.\n"
 
-            # Archetype-aware semantic forbidden words — derived from macro parent name
+            # Archetype-aware semantic forbidden words  -  derived from macro parent name
             macro_lower = (macro_parent or '').lower()
             if any(w in macro_lower for w in ('retiree', 'anchor', 'loyal depositor', 'legacy', 'branch loyal', 'branch guardian')):
                 banned += "ALSO NEVER use words that imply youth or early career: Young, Junior, New, Early, Entry, Student, Growing, Rising, Emerging.\n"
@@ -316,11 +321,11 @@ class ClaudeClient:
                 f"What makes them different: {diff}\n"
                 f"Age {age:.0f}, {products:.1f} products, {txn:.0f} transactions/month\n\n"
                 f"NAME RULE: Exactly 2 words. Second word MUST be '{parent_short}'.\n"
-                f"Names already used — yours must be DIFFERENT and NOT sound similar to these: {siblings_str}\n"
+                f"Names already used  -  yours must be DIFFERENT and NOT sound similar to these: {siblings_str}\n"
                 f"FORBIDDEN first words: {forbidden_str}\n"
                 f"{banned}"
                 f"Available options (choose one or invent a clearly different unique word): {available_str}\n\n"
-                f"DESCRIPTION: 2 plain-English sentences — what makes them different and what the bank can do.\n"
+                f"DESCRIPTION: 2 plain-English sentences  -  what makes them different and what the bank can do.\n"
                 f'Return ONLY: {{"name": "Word {parent_short}", "description": "2 sentences"}}'
             )
             max_tokens = 130
@@ -350,7 +355,7 @@ class ClaudeClient:
                 )
             else:
                 name_instruction = (
-                    f"NAME STYLE — follow this exact format (simple, self-explanatory, 2-3 plain English words):\n"
+                    f"NAME STYLE  -  follow this exact format (simple, self-explanatory, 2-3 plain English words):\n"
                     f"  'Wealth Builder'     → high-income, savings-focused customers\n"
                     f"  'Everyday Essential' → middle-income, everyday banking customers\n"
                     f"  'Digital Native'     → young, tech-first customers\n"
@@ -367,10 +372,10 @@ class ClaudeClient:
                 f"  Uses digital banking: {digital*100:.0f}%  |  Average age: {age:.0f}  |  Products held: {products:.1f}\n"
                 f"  Transactions per month: {txn:.0f}  |  Financial goal: {goal}  |  Risk of leaving: {churn*100:.0f}%\n\n"
                 f"Write 2-3 plain-English sentences explaining:\n"
-                f"  1. Who these customers are (income level, age, lifestyle — make it human)\n"
-                f"  2. Why the name fits — reference actual numbers\n"
+                f"  1. Who these customers are (income level, age, lifestyle  -  make it human)\n"
+                f"  2. Why the name fits  -  reference actual numbers\n"
                 f"  3. What this means for the bank\n\n"
-                f"LANGUAGE RULES — write for a bank manager presenting to executives:\n"
+                f"LANGUAGE RULES  -  write for a bank manager presenting to executives:\n"
                 f"  Say 'earns over $140,000 a year' NOT 'high income tier'\n"
                 f"  Say 'rarely switches banks' NOT 'low churn probability'\n"
                 f"  Say 'does most banking on their phone' NOT 'high digital engagement'\n"
@@ -379,7 +384,7 @@ class ClaudeClient:
                 f'EXAMPLES OF PERFECT OUTPUT:\n'
                 f'  {{"name": "Wealth Builder", "description": "These are the bank\'s most profitable customers, earning over $140K a year with excellent credit and large savings. They hold multiple banking products and almost never leave the bank. Primary goal: grow their wealth through smart investing."}}\n'
                 f'  {{"name": "Retiree Anchor", "description": "Older, long-standing customers who have been with the bank for decades and keep solid savings. They strongly prefer branch banking over apps and have very low risk of leaving. They are the bank\'s most stable and loyal customer group."}}\n'
-                f'  {{"name": "At-Risk Borrower", "description": "These customers face financial difficulty — lower incomes, stretched credit, and a higher chance of leaving the bank. They have near-zero savings and frequently overdraft. The bank\'s priority is retention and financial support, not upselling."}}'
+                f'  {{"name": "At-Risk Borrower", "description": "These customers face financial difficulty  -  lower incomes, stretched credit, and a higher chance of leaving the bank. They have near-zero savings and frequently overdraft. The bank\'s priority is retention and financial support, not upselling."}}'
             )
             max_tokens = 260
 
@@ -406,7 +411,7 @@ class ClaudeClient:
                 if name:
                     return {'name': name, 'description': desc}
         except Exception as e:
-            logger.warning("Segment profile JSON parse failed: %s — raw: %r", e, (raw or '')[:200])
+            logger.warning("Segment profile JSON parse failed: %s  -  raw: %r", e, (raw or '')[:200])
         return {}
 
     def generate_micro_segment_name(self, macro_name: str, ltv_tier: str, characteristics: dict, used_names: list = None) -> str:
@@ -498,7 +503,7 @@ class ClaudeClient:
         )
         system = (
             "You are a Meridian Bank relationship manager writing product recommendation rationales. "
-            "Be specific — mention one customer signal per rationale."
+            "Be specific  -  mention one customer signal per rationale."
         )
         raw = self.generate_text(
             prompt=prompt, system=system, max_tokens=120, temperature=0.6,
@@ -644,7 +649,7 @@ class ClaudeClient:
     # ── private backends ──────────────────────────────────────────────────────
 
     def _call_anthropic(self, prompt: str, system: str, max_tokens: int, temperature: float, model: str):
-        """Call Anthropic Claude API. Returns (text, usage_dict) — never raises silently."""
+        """Call Anthropic Claude API. Returns (text, usage_dict)  -  never raises silently."""
         import anthropic
         model_used = model or get_anthropic_model()
         kwargs = dict(

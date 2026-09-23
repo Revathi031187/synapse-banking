@@ -1,5 +1,5 @@
 """
-Banking Agent D — real-time next-best-product engine.
+Banking Agent D  -  real-time next-best-product engine.
 Wishlist + incomplete applications + Agent B + Agent C, with recommendation_impressions
 exclusion (no repeat until click). Banking analog of Academy Agent D.
 """
@@ -122,7 +122,7 @@ def execute_next_best_banking(
 
     # Tier 1: Incomplete applications (recovery)
     for pid in inc:
-        add_tier(1, pid, "incomplete_application", "You started this application — pick up where you left off.")
+        add_tier(1, pid, "incomplete_application", "You started this application  -  pick up where you left off.")
         sources_used.add("incomplete_application")
 
     # Tier 2: Wishlist / saved goals
@@ -206,7 +206,7 @@ def execute_next_best_banking(
         "sources_used": sorted(sources_used),
         "excluded_count": excluded_count,
         "no_repeat_message": (
-            "Products we showed you before — until you tap or open them — stay hidden so we don’t keep "
+            "Products we showed you before  -  until you tap or open them  -  stay hidden so we don’t keep "
             "pushing the same offer. Click a product below to engage; then it can appear again in future runs."
         ),
         "new_impression_rows": new_impressions,

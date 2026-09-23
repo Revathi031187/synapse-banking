@@ -20,9 +20,9 @@ __pycache__/
 *.py[cod]
 *.pyo
 
-# Node / frontend build artefacts
+# Node / frontend build artefacts — dist is NOT excluded: run_app.py serves the
+# app from frontend/dist at runtime, so a fresh build must be part of every deploy.
 frontend/node_modules/
-frontend/dist/
 frontend/build/
 node_modules/
 

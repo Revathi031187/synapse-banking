@@ -1,5 +1,5 @@
 """
-Meridian Bank notification sender — email (SMTP) and SMS (Twilio).
+Meridian Bank notification sender  -  email (SMTP) and SMS (Twilio).
 All credentials are read from environment variables; nothing is hardcoded.
 """
 import os
@@ -21,7 +21,7 @@ SMTP_FROM   = os.getenv("SMTP_FROM", "") or SMTP_USER
 # ── Twilio config (set in .env) ──────────────────────────────────────────────
 TWILIO_ACCOUNT_SID  = os.getenv("TWILIO_ACCOUNT_SID", "")
 TWILIO_AUTH_TOKEN   = os.getenv("TWILIO_AUTH_TOKEN", "")
-# Normalize FROM number at load time — strip spaces, dashes, parens
+# Normalize FROM number at load time  -  strip spaces, dashes, parens
 TWILIO_FROM_NUMBER  = "".join(
     c for c in os.getenv("TWILIO_FROM_NUMBER", "") if c in "0123456789+#*"
 )
@@ -323,26 +323,26 @@ def send_offer_sms(
         # Make error messages actionable for common Twilio issues
         if err_code == 21606 or "is not a Twilio phone number" in err_msg:
             err_msg = (
-                f"{err_msg} — TWILIO_FROM_NUMBER ({TWILIO_FROM_NUMBER}) must be a "
+                f"{err_msg}  -  TWILIO_FROM_NUMBER ({TWILIO_FROM_NUMBER}) must be a "
                 "Twilio-provisioned number. Check Twilio Console › Phone Numbers › Active Numbers."
             )
         elif "country mismatch" in err_msg.lower() or err_code == 21408:
             err_msg = (
-                f"{err_msg} — Enable SMS for the destination country in "
+                f"{err_msg}  -  Enable SMS for the destination country in "
                 "Twilio Console › Messaging › Settings › Geo Permissions."
             )
         elif err_code == 21610 or "unsubscribed recipient" in err_msg.lower():
-            err_msg = f"{err_msg} — Recipient has opted out of SMS from this number."
+            err_msg = f"{err_msg}  -  Recipient has opted out of SMS from this number."
         elif err_code in (21211, 21614):
             err_msg = (
-                f"{err_msg} — TO number ({phone}) is invalid or not SMS-capable. "
+                f"{err_msg}  -  TO number ({phone}) is invalid or not SMS-capable. "
                 "Verify number format and add country code (+91 for India, +1 for US)."
             )
         elif err_code == 20003 or "authenticate" in err_msg.lower():
-            err_msg = f"{err_msg} — Check TWILIO_ACCOUNT_SID and TWILIO_AUTH_TOKEN in .env."
+            err_msg = f"{err_msg}  -  Check TWILIO_ACCOUNT_SID and TWILIO_AUTH_TOKEN in .env."
         elif "trial" in err_msg.lower() or "verified" in err_msg.lower():
             err_msg = (
-                f"{err_msg} — Twilio trial accounts can only SMS to Verified Caller IDs. "
+                f"{err_msg}  -  Twilio trial accounts can only SMS to Verified Caller IDs. "
                 "Add the recipient number at Twilio Console › Verified Caller IDs."
             )
 

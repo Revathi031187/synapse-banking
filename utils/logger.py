@@ -4,7 +4,7 @@ import logging
 import sys
 import io
 
-# On Windows PowerShell 5.1 sys.stderr uses cp1252 — wrap with UTF-8 so emoji in log
+# On Windows PowerShell 5.1 sys.stderr uses cp1252  -  wrap with UTF-8 so emoji in log
 # messages don't silently drop or crash the logger.
 if hasattr(sys.stderr, 'buffer'):
     _stderr_sink = io.TextIOWrapper(

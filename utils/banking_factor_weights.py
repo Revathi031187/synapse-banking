@@ -1,5 +1,5 @@
 """
-Banking Agent B — 12-factor weight defaults, validation, and AI/heuristic persona weights.
+Banking Agent B  -  12-factor weight defaults, validation, and AI/heuristic persona weights.
 """
 
 from __future__ import annotations
@@ -127,7 +127,7 @@ def heuristic_rationales_from_customer_data(
     summary = build_customer_feature_summary(customer_context).strip()
     if not summary:
         summary = (
-            "persona-only context — select Customer mode and a customer for row-level metrics "
+            "persona-only context  -  select Customer mode and a customer for row-level metrics "
             "(deposits, credit, engagement) in these explanations."
         )
     raw: Dict[str, str] = {}
@@ -136,7 +136,7 @@ def heuristic_rationales_from_customer_data(
         raw[k] = (
             f"Heuristic allocation for “{persona_name}”. "
             f"Data snapshot: {summary}. "
-            f"This factor reflects {label.lower()} — adjust the slider if underwriting or channel fit should weigh differently."
+            f"This factor reflects {label.lower()}  -  adjust the slider if underwriting or channel fit should weigh differently."
         )[:450]
     return _finalize_rationales_for_weights(keys, weights_percent, raw)
 
@@ -255,7 +255,7 @@ def ai_recommended_weights_for_persona(
     desc = (persona_description or "")[:800]
     summary = build_customer_feature_summary(customer_context)
     summary_block = (
-        f"\nCustomer data (cite ONLY these fields; if a field is absent, say unknown — do not invent):\n{summary}\n"
+        f"\nCustomer data (cite ONLY these fields; if a field is absent, say unknown  -  do not invent):\n{summary}\n"
         if summary
         else "\n(No per-customer row: use persona name + description only.)\n"
     )
@@ -290,7 +290,7 @@ Hard rules for "rationales" (max 280 characters each):
 2. Second clause MUST explain why that **share of the 100 points** is justified **for this customer/persona** using 1–2 concrete numbers or facts from the data line above (credit_score, income, num_products, deposits, digital_engagement, cross_sell_receptivity, cluster_id, persona name). Explain the **trade-off**: why this factor earns more or fewer points than a minor factor (e.g. eligibility vs popularity).
 3. Do NOT invent segment nicknames, job titles, or "leader/builder" labels unless they appear verbatim in the segment description.
 4. Do NOT mention the customer_id more than once in a single rationale.
-5. Make each factor’s wording distinct — no copy-paste across keys.
+5. Make each factor’s wording distinct  -  no copy-paste across keys.
 6. If the model must down-weight a factor (low points), say explicitly it is a weaker signal for this profile."""
 
         raw = together_ai.generate_text(

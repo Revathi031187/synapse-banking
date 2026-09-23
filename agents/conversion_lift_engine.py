@@ -1,5 +1,5 @@
 """
-ConversionLiftEngine — looks up pre-computed A/B experiment results for a
+ConversionLiftEngine  -  looks up pre-computed A/B experiment results for a
 given (product_id, persona) pair and returns the winning offer with its
 statistical metadata.
 

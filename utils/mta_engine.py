@@ -1,5 +1,5 @@
 """
-MTAEngine — Markov chain Multi-Touch Attribution engine.
+MTAEngine  -  Markov chain Multi-Touch Attribution engine.
 
 Uses mta_touchpoint_history.csv (journey_id, customer_id, persona, channel,
 offer_id, product_id, timestamp, opened, clicked, converted, position).
@@ -51,12 +51,12 @@ class MTAEngine:
 
     def _data(self):  # returns pd.DataFrame
         if self._df is None:
-            import pandas as pd  # deferred — avoids segfault on Python 3.14 alpha at import time
+            import pandas as pd  # deferred  -  avoids segfault on Python 3.14 alpha at import time
             try:
                 self._df = pd.read_csv(self._path, parse_dates=["timestamp"])
             except FileNotFoundError:
                 logger.warning(
-                    "[MTA] History file not found: %s — using empty DataFrame. "
+                    "[MTA] History file not found: %s  -  using empty DataFrame. "
                     "Run scripts/generate_mta_history.py to create it.", self._path
                 )
                 self._df = pd.DataFrame(columns=[
@@ -124,7 +124,7 @@ class MTAEngine:
 
         removal_effects: Dict[str, float] = {}
         for ch in CHANNELS:
-            # outbound_call and web have no journey data in the CSV — skip Markov
+            # outbound_call and web have no journey data in the CSV  -  skip Markov
             # computation for them; their weight comes from the fallback defaults.
             if ch not in MTA_JOURNEY_CHANNELS:
                 removal_effects[ch] = 0.0
@@ -338,7 +338,7 @@ class MTAEngine:
                 "confidence": "low" if total_sends == 0 else "medium",
                 "total_personal_sends": total_sends,
                 "reason": (
-                    f"Only {total_sends} personal send{'s' if total_sends != 1 else ''} recorded — "
+                    f"Only {total_sends} personal send{'s' if total_sends != 1 else ''} recorded  -  "
                     f"insufficient individual history. Using {persona or 'segment'}-level Markov "
                     f"attribution ({round(segment_attr.get(best, 0) * 100)}% for {CHANNEL_LABELS.get(best, best)}) "
                     "as the primary signal."
@@ -363,7 +363,7 @@ class MTAEngine:
                 personal_scores[ch] = round(score, 4)
 
         if not personal_scores:
-            # All channels with data are fatigued — segment fallback
+            # All channels with data are fatigued  -  segment fallback
             segment_attr = self.compute_markov_attribution(persona=persona)
             best = max(
                 (ch for ch in CHANNELS if not fatigue.get(ch, {}).get("is_fatigued", False)),
@@ -450,12 +450,12 @@ class MTAEngine:
             if digital_score >= 0.65 and best_channel in ("in_app", "sms"):
                 reason_lines.append({
                     "type": "positive",
-                    "text": f"Digital engagement score {digital_score:.2f} — confirms digital-first behavior",
+                    "text": f"Digital engagement score {digital_score:.2f}  -  confirms digital-first behavior",
                 })
             elif digital_score < 0.35 and best_channel in ("branch", "direct_mail"):
                 reason_lines.append({
                     "type": "positive",
-                    "text": f"Low digital engagement ({digital_score:.2f}) — branch or mail preferred",
+                    "text": f"Low digital engagement ({digital_score:.2f})  -  branch or mail preferred",
                 })
 
         # Fatigue warnings
@@ -465,7 +465,7 @@ class MTAEngine:
             reason_lines.append({
                 "type": "warning",
                 "text": (
-                    f"{ch_l}: fatigued — {f_info['sent']} sends, "
+                    f"{ch_l}: fatigued  -  {f_info['sent']} sends, "
                     f"{f_info['opened']} opens (suppressed)"
                 ),
             })

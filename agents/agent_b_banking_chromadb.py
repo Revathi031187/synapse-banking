@@ -62,7 +62,7 @@ class AgentB_Banking:
         Args:
             dataset_version: 'v1' or 'v2' dataset version
         """
-        print(f"[Agent B] load_data() starting — path={self.data_path}", flush=True)
+        print(f"[Agent B] load_data() starting  -  path={self.data_path}", flush=True)
         try:
             # Load banking data (no v2 for now, just use v1)
             products_path = self.data_path / 'products.csv'
@@ -97,7 +97,7 @@ class AgentB_Banking:
                 self.transactions_df = pd.read_csv(transactions_path)
                 logger.info(f"Loaded {len(self.transactions_df)} transactions from {transactions_path.name}")
             else:
-                logger.info("No transactions.csv found — 12-factor scorer will use monthly_transaction_volume from customers.csv")
+                logger.info("No transactions.csv found  -  12-factor scorer will use monthly_transaction_volume from customers.csv")
             
             # Initialize Banking 12-Factor Scorer
             logger.info("Initializing Banking 12-Factor Scorer ...")
@@ -108,7 +108,7 @@ class AgentB_Banking:
                     # Prefer Agent A's clustered customers + transactions so segment popularity / pairing match the live session
                     scorer_customers = self.customers_df
                     # transactions_df is optional (excluded from Databricks App deployments due to 57 MB size)
-                    # Banking12FactorScorer handles None/empty transactions gracefully — transaction_pattern
+                    # Banking12FactorScorer handles None/empty transactions gracefully  -  transaction_pattern
                     # factor (weight 0.01) reads monthly_transaction_volume from customers.csv instead.
                     scorer_txn = self.transactions_df if self.transactions_df is not None else pd.DataFrame()
                     if self.agent_a and getattr(self.agent_a, 'customers_df', None) is not None:
@@ -322,7 +322,7 @@ class AgentB_Banking:
         }
         if effective_top_n < top_n:
             result['count_note'] = (
-                f"Showing {returned_count} of {top_n} requested — only {len(filtered_products)} products "
+                f"Showing {returned_count} of {top_n} requested  -  only {len(filtered_products)} products "
                 f"available for this customer's segment/filters."
             )
         return result
@@ -495,7 +495,7 @@ class AgentB_Banking:
         # Snapshot the fully-gated pool so fallbacks never escape revenue/segment restrictions
         _base_pool = df.copy()
 
-        # Age-based hard exclusions — remove products unsuitable for the customer's life stage
+        # Age-based hard exclusions  -  remove products unsuitable for the customer's life stage
         if customer_info:
             _age = float(customer_info.get('age', 0) or 0)
             if _age >= 70:
@@ -524,7 +524,7 @@ class AgentB_Banking:
                 logger.info(f"🚫 {_ctype_excl}: excluded FHA Mortgage")
             if len(df) == 0:
                 df = _base_pool.copy()
-            # Homeowner filter — renters cannot take out home equity products
+            # Homeowner filter  -  renters cannot take out home equity products
             _home_own = str(customer_info.get('home_ownership_type', '') or '').lower()
             if _home_own == 'renter':
                 before_home = len(df)
@@ -555,7 +555,7 @@ class AgentB_Banking:
                 else:
                     logger.warning(f"⚠️ No products in subcategory '{cat_val}', showing all products")
 
-        # Filter by eligibility — credit score (50-point buffer)
+        # Filter by eligibility  -  credit score (50-point buffer)
         if 'min_credit_score' in df.columns:
             before_credit = len(df)
             df = df[
@@ -578,7 +578,7 @@ class AgentB_Banking:
                             df = df_sub
 
         # Filter by fee affordability (lenient)
-        # Secured Card is exempt — it's a credit-building product appropriate for Entry-tier customers
+        # Secured Card is exempt  -  it's a credit-building product appropriate for Entry-tier customers
         if 'annual_fee' in df.columns:
             before_fee = len(df)
             df = df[
@@ -595,7 +595,7 @@ class AgentB_Banking:
                     if len(df_cat) > 0:
                         df = df_cat
 
-        # Filter by search query — with fallback
+        # Filter by search query  -  with fallback
         if search_query:
             before_search = len(df)
             mask = (
@@ -766,7 +766,7 @@ class AgentB_Banking:
         
         # Wealth Investors: strong boost for premium (fee) products so they rank with free products
         # Triggered by: High_Net_Worth customer_type OR persona name containing wealth keywords
-        # Deliberately NOT triggered by deposits/income alone — avoids boosting premium cards for Retirees
+        # Deliberately NOT triggered by deposits/income alone  -  avoids boosting premium cards for Retirees
         _is_wealth = bool(
             customer_info and str(customer_info.get('customer_type', '') or '') == 'High_Net_Worth'
         ) or bool(
@@ -782,7 +782,7 @@ class AgentB_Banking:
             logger.info("   💎 Wealth Investor: applied 12% premium boost to fee products and re-ranked")
 
         # Customer-type affinity: boost products whose customer_types field matches this customer
-        # Uses the existing customer_types column in products.csv — no hardcoded persona rules needed
+        # Uses the existing customer_types column in products.csv  -  no hardcoded persona rules needed
         if customer_info:
             _ctype = str(customer_info.get('customer_type', '') or '').strip()
             if _ctype:

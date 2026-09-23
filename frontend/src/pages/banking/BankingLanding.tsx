@@ -161,12 +161,12 @@ const PERSONA_HERO: Record<string, HeroContent> = {
   },
   'Everyday Essential': {
     headline: 'Simple, fee-free banking the way it should be.',
-    subhead: 'No minimums, no surprises — just a checking account that works for you.',
+    subhead: 'No minimums, no surprises  -  just a checking account that works for you.',
     cta_label: 'Open an Account',
   },
   'At-Risk Saver': {
     headline: 'Start fresh. Banking without the hidden costs.',
-    subhead: 'A no-fee account to get back on track — with tools to help you save.',
+    subhead: 'A no-fee account to get back on track  -  with tools to help you save.',
     cta_label: 'Get Started Free',
   },
 };
@@ -261,12 +261,12 @@ function scoreProductsFromChat(products: Product[], answers: Record<string, stri
     if (goal === 'retire'   && sub === 'CD')                                      score += 3;
     if (goal === 'business' && cat === 'Business')                                score += 5;
 
-    // Income — penalise products above affordability threshold
+    // Income  -  penalise products above affordability threshold
     if (income === 'low'  && p.min_income > 20000) score -= 5;
     if (income === 'mid'  && p.min_income > 50000) score -= 5;
     if (income === 'high' && p.min_income > 100000) score -= 5;
 
-    // Home ownership — owning a home doesn't imply wanting equity products;
+    // Home ownership  -  owning a home doesn't imply wanting equity products;
     // only boost them when the goal is explicitly home-related.
     // Renters are ineligible for equity products and shouldn't need mortgages yet.
     if (home_status === 'own'    && goal === 'home' && ['Home Equity', 'HELOC'].includes(sub)) score += 6;
@@ -295,31 +295,31 @@ function scoreProductsFromChat(products: Product[], answers: Record<string, stri
 
 // ─── Fallback: all 28 products (used if /api/banking/products is unreachable) ─
 const FALLBACK: Product[] = [
-  // Personal — Checking
+  // Personal  -  Checking
   { product_id: 'MRD_P001', product_name: 'Meridian Essential Checking', category: 'Personal', subcategory: 'Checking', annual_fee: 0, monthly_fee: 0, min_balance: 0, interest_rate: 0, description: 'No-fee everyday checking with free mobile deposit, Bill Pay, and Zelle. No minimum balance required.', rewards_type: 'none', cash_back_pct: 0, regular_apr_pct: 0, avg_rating: 4.4, min_credit_score: 0, min_income: 0, fee_waiver_condition: 'none' },
   { product_id: 'MRD_P002', product_name: 'Meridian Plus Checking', category: 'Personal', subcategory: 'Checking', annual_fee: 0, monthly_fee: 12, min_balance: 0, interest_rate: 0.0005, description: 'Full-featured checking with 0.05% APY on your balance. Monthly fee waived with $500+ direct deposit.', rewards_type: 'none', cash_back_pct: 0, regular_apr_pct: 0, avg_rating: 4.2, min_credit_score: 0, min_income: 20000, fee_waiver_condition: 'direct_deposit_500' },
   { product_id: 'MRD_P003', product_name: 'Meridian Prestige Checking', category: 'Personal', subcategory: 'Checking', annual_fee: 0, monthly_fee: 25, min_balance: 2500, interest_rate: 0.001, description: 'Premium checking with 0.10% APY, unlimited ATM fee rebates, and a dedicated relationship banker. Waived with $2,500 daily balance.', rewards_type: 'none', cash_back_pct: 0, regular_apr_pct: 0, avg_rating: 4.5, min_credit_score: 0, min_income: 50000, fee_waiver_condition: 'balance_2500' },
-  // Personal — Savings
+  // Personal  -  Savings
   { product_id: 'MRD_P004', product_name: 'Meridian Basic Savings', category: 'Personal', subcategory: 'Savings', annual_fee: 0, monthly_fee: 0, min_balance: 0, interest_rate: 0.008, description: 'Simple savings account with 0.80% APY. No monthly fee, no minimum balance. FDIC insured.', rewards_type: 'none', cash_back_pct: 0, regular_apr_pct: 0, avg_rating: 4.1, min_credit_score: 0, min_income: 0, fee_waiver_condition: 'none' },
   { product_id: 'MRD_P005', product_name: 'Meridian High-Yield Savings', category: 'Personal', subcategory: 'Savings', annual_fee: 0, monthly_fee: 0, min_balance: 1000, interest_rate: 0.045, description: 'Earn 4.50% APY on every dollar above $1,000. No monthly fee. Automatic transfers from checking available.', rewards_type: 'none', cash_back_pct: 0, regular_apr_pct: 0, avg_rating: 4.6, min_credit_score: 0, min_income: 0, fee_waiver_condition: 'none' },
   { product_id: 'MRD_P006', product_name: 'Meridian Money Market', category: 'Personal', subcategory: 'Savings', annual_fee: 0, monthly_fee: 0, min_balance: 5000, interest_rate: 0.0475, description: '4.75% APY money market account with check-writing privileges. Tiered rates reward higher balances. $5,000 minimum.', rewards_type: 'none', cash_back_pct: 0, regular_apr_pct: 0, avg_rating: 4.5, min_credit_score: 0, min_income: 0, fee_waiver_condition: 'balance_5000' },
-  // Personal — CDs
+  // Personal  -  CDs
   { product_id: 'MRD_P007', product_name: 'Meridian 12-Month CD', category: 'Personal', subcategory: 'CD', annual_fee: 0, monthly_fee: 0, min_balance: 500, interest_rate: 0.05, description: 'Lock in 5.00% APY for 12 months. FDIC insured up to $250,000. Penalty for early withdrawal.', rewards_type: 'none', cash_back_pct: 0, regular_apr_pct: 0, avg_rating: 4.4, min_credit_score: 0, min_income: 0, fee_waiver_condition: 'none' },
   { product_id: 'MRD_P008', product_name: 'Meridian 24-Month CD', category: 'Personal', subcategory: 'CD', annual_fee: 0, monthly_fee: 0, min_balance: 500, interest_rate: 0.0485, description: '4.85% APY for a 24-month term. Great for medium-term goals. Early withdrawal penalty of 180 days interest.', rewards_type: 'none', cash_back_pct: 0, regular_apr_pct: 0, avg_rating: 4.3, min_credit_score: 0, min_income: 0, fee_waiver_condition: 'none' },
-  // Personal — Credit
+  // Personal  -  Credit
   { product_id: 'MRD_P009', product_name: 'Meridian Cash Back Card', category: 'Personal', subcategory: 'Credit', annual_fee: 0, monthly_fee: 0, min_balance: 0, interest_rate: 0, description: 'Unlimited 1.5% cash back on every purchase. 3% on groceries and gas. No annual fee. No rotating categories.', rewards_type: 'cash_back', cash_back_pct: 1.5, regular_apr_pct: 20.99, avg_rating: 4.6, min_credit_score: 670, min_income: 30000, fee_waiver_condition: 'none' },
   { product_id: 'MRD_P010', product_name: 'Meridian Rewards Visa', category: 'Personal', subcategory: 'Credit', annual_fee: 95, monthly_fee: 0, min_balance: 0, interest_rate: 0, description: '3x points on dining and travel, 2x on gas. 60,000 bonus points after $3,000 spend in first 3 months. $50 annual dining credit.', rewards_type: 'travel_points', cash_back_pct: 0, regular_apr_pct: 21.49, avg_rating: 4.7, min_credit_score: 700, min_income: 50000, fee_waiver_condition: 'none' },
   { product_id: 'MRD_P011', product_name: 'Meridian Platinum Card', category: 'Personal', subcategory: 'Credit', annual_fee: 195, monthly_fee: 0, min_balance: 0, interest_rate: 0, description: '4x points on travel booked through Meridian. Priority Pass airport lounge access. $200 annual travel credit. Concierge service.', rewards_type: 'travel_points', cash_back_pct: 0, regular_apr_pct: 22.49, avg_rating: 4.8, min_credit_score: 740, min_income: 75000, fee_waiver_condition: 'none' },
   { product_id: 'MRD_P012', product_name: 'Meridian Secured Card', category: 'Personal', subcategory: 'Credit', annual_fee: 35, monthly_fee: 0, min_balance: 300, interest_rate: 0, description: 'Build or rebuild your credit with a secured card. $300–$3,000 credit limit. Reports to all three major bureaus monthly.', rewards_type: 'cash_back', cash_back_pct: 1.0, regular_apr_pct: 24.99, avg_rating: 4.2, min_credit_score: 300, min_income: 12000, fee_waiver_condition: 'none' },
-  // Personal — Loans
+  // Personal  -  Loans
   { product_id: 'MRD_P013', product_name: 'Meridian Auto Loan', category: 'Personal', subcategory: 'Auto', annual_fee: 0, monthly_fee: 0, min_balance: 0, interest_rate: 0.0649, description: 'Finance your new or used vehicle at competitive rates. Terms from 36 to 84 months. Rate discount with auto-pay.', rewards_type: 'none', cash_back_pct: 0, regular_apr_pct: 0, avg_rating: 4.3, min_credit_score: 580, min_income: 25000, fee_waiver_condition: 'none' },
   { product_id: 'MRD_P014', product_name: 'Meridian Personal Loan', category: 'Personal', subcategory: 'Personal Loan', annual_fee: 0, monthly_fee: 0, min_balance: 0, interest_rate: 0.0899, description: 'Unsecured personal loan from $5,000 to $50,000. Fixed rate, fixed term. Fund debt consolidation, home improvement, or major purchases.', rewards_type: 'none', cash_back_pct: 0, regular_apr_pct: 0, avg_rating: 4.2, min_credit_score: 620, min_income: 30000, fee_waiver_condition: 'none' },
   { product_id: 'MRD_P015', product_name: 'Meridian Home Equity Loan', category: 'Personal', subcategory: 'Home Equity', annual_fee: 0, monthly_fee: 0, min_balance: 0, interest_rate: 0.0725, description: 'Fixed-rate home equity loan from $25,000 to $250,000. Up to 85% LTV. 10 to 20-year terms. Tax-deductible interest may apply.', rewards_type: 'none', cash_back_pct: 0, regular_apr_pct: 0, avg_rating: 4.4, min_credit_score: 660, min_income: 45000, fee_waiver_condition: 'none' },
   { product_id: 'MRD_P016', product_name: 'Meridian HELOC', category: 'Personal', subcategory: 'HELOC', annual_fee: 50, monthly_fee: 0, min_balance: 0, interest_rate: 0.085, description: 'Variable-rate line of credit secured by your home. Draw period 10 years, repayment 20 years. Interest-only payments during draw.', rewards_type: 'none', cash_back_pct: 0, regular_apr_pct: 0, avg_rating: 4.3, min_credit_score: 660, min_income: 45000, fee_waiver_condition: 'none' },
-  // Personal — Mortgage
+  // Personal  -  Mortgage
   { product_id: 'MRD_P017', product_name: 'Meridian 30yr Fixed Mortgage', category: 'Personal', subcategory: 'Mortgage', annual_fee: 0, monthly_fee: 0, min_balance: 0, interest_rate: 0.0675, description: '30-year fixed mortgage with competitive rates. Conventional loans up to $766,550. 20% down avoids PMI. Online application, local servicing.', rewards_type: 'none', cash_back_pct: 0, regular_apr_pct: 0, avg_rating: 4.5, min_credit_score: 640, min_income: 40000, fee_waiver_condition: 'none' },
   { product_id: 'MRD_P018', product_name: 'Meridian FHA Mortgage', category: 'Personal', subcategory: 'Mortgage', annual_fee: 0, monthly_fee: 0, min_balance: 0, interest_rate: 0.065, description: 'FHA loan with as little as 3.5% down. Credit scores as low as 580 accepted. Ideal for first-time homebuyers.', rewards_type: 'none', cash_back_pct: 0, regular_apr_pct: 0, avg_rating: 4.4, min_credit_score: 580, min_income: 30000, fee_waiver_condition: 'none' },
-  // Personal — Investment
+  // Personal  -  Investment
   { product_id: 'MRD_P019', product_name: 'Meridian Traditional IRA', category: 'Personal', subcategory: 'Investment', annual_fee: 25, monthly_fee: 0, min_balance: 0, interest_rate: 0, description: 'Tax-deferred retirement savings. Contribute up to $7,000/year ($8,000 if 50+). Access to mutual funds, ETFs, and bonds.', rewards_type: 'none', cash_back_pct: 0, regular_apr_pct: 0, avg_rating: 4.5, min_credit_score: 0, min_income: 0, fee_waiver_condition: 'balance_5000' },
   { product_id: 'MRD_P020', product_name: 'Meridian Roth IRA', category: 'Personal', subcategory: 'Investment', annual_fee: 25, monthly_fee: 0, min_balance: 0, interest_rate: 0, description: 'Tax-free growth and withdrawals in retirement. Contribute after-tax dollars up to $7,000/year. No required minimum distributions.', rewards_type: 'none', cash_back_pct: 0, regular_apr_pct: 0, avg_rating: 4.6, min_credit_score: 0, min_income: 0, fee_waiver_condition: 'balance_5000' },
   // Business
@@ -350,7 +350,7 @@ const NEWS_ARTICLES: NewsArticle[] = [
 
 // ─── Contact data ─────────────────────────────────────────────────────────────
 const BRANCHES = [
-  { name: 'Main Office — Financial District', address: '123 Commerce Blvd, Suite 400', city: 'Springfield, IL 62701', phone: '(217) 555-0100', hours: 'Mon–Fri 8:30am–5:00pm' },
+  { name: 'Main Office  -  Financial District', address: '123 Commerce Blvd, Suite 400', city: 'Springfield, IL 62701', phone: '(217) 555-0100', hours: 'Mon–Fri 8:30am–5:00pm' },
   { name: 'Westside Branch', address: '4500 West Oak Avenue', city: 'Springfield, IL 62704', phone: '(217) 555-0120', hours: 'Mon–Sat 9:00am–4:00pm' },
   { name: 'Agricultural Services Center', address: '8100 Rural Route 12', city: 'Lincoln, IL 62656', phone: '(217) 555-0140', hours: 'Mon–Fri 8:00am–4:30pm' },
 ];
@@ -390,7 +390,7 @@ export default function BankingLanding() {
   const [notifOffers, setNotifOffers]           = useState(() => localStorage.getItem('mrd_n_offers') !== 'false');
   const [notifNewsletter, setNotifNewsletter]   = useState(() => localStorage.getItem('mrd_n_news') !== 'false');
 
-  // Preferences — financial goals
+  // Preferences  -  financial goals
   const [prefGoals, setPrefGoals]         = useState<string[]>(() => {
     try { return JSON.parse(localStorage.getItem('mrd_pref_goals') ?? '[]'); }
     catch { return []; }
@@ -425,7 +425,7 @@ export default function BankingLanding() {
   const [searchQuery, setSearchQuery]     = useState('');
   const searchInputRef                    = useRef<HTMLInputElement>(null);
 
-  // (no side panels — news, contact are on-page sections)
+  // (no side panels  -  news, contact are on-page sections)
 
   // Contact form (in-page section)
   const [ctxName, setCtxName]             = useState('');
@@ -437,7 +437,7 @@ export default function BankingLanding() {
   // Success toast after sign-in / registration
   const [authToast, setAuthToast]         = useState<{ type: 'register' | 'signin'; name: string } | null>(null);
 
-  // Sign In modal — two-tab state
+  // Sign In modal  -  two-tab state
   const [modalTab, setModalTab]           = useState<'register' | 'signin'>('register');
   const [signEmail, setSignEmail]         = useState('');
   const [signPwd, setSignPwd]             = useState('');
@@ -494,7 +494,7 @@ export default function BankingLanding() {
             setPersonalizedCards(pr.product_cards ?? []);
             setPersonalized(true);
             if (pr.first_name) setFirstName(pr.first_name);
-            setModalTab('signin'); // returning visitor — default to Sign In tab
+            setModalTab('signin'); // returning visitor  -  default to Sign In tab
           }
         }
       } catch { /* silently fall back */ }
@@ -628,7 +628,7 @@ export default function BankingLanding() {
       setChatMessages(prev => [...prev, userMsg, botMsg]);
       setChatStep(nextStep);
     } else {
-      // All questions answered — score products
+      // All questions answered  -  score products
       const recommended = scoreProductsFromChat(allProducts, newAnswers);
       const doneMsg: ChatMessage = { id: 'done', type: 'bot', text: recommended.length > 0 ? `Based on your answers, here are your top ${recommended.length} product matches:` : "Thanks! Explore our full catalog below to find what fits you best." };
       const productMsg: ChatMessage = { id: 'products', type: 'products', products: recommended };
@@ -706,7 +706,7 @@ export default function BankingLanding() {
 
   const chips = activeTab === 'Personal' ? PERSONAL_CHIPS : activeTab === 'Business' ? BUSINESS_CHIPS : null;
 
-  // ── Product card render helper (not a component — avoids nested component issues) ──
+  // ── Product card render helper (not a component  -  avoids nested component issues) ──
   const renderCard = (product: Product, recRank?: number) => {
     const rate  = rateLabel(product);
     const isRec = recRank === 0 && personalized;
@@ -1600,16 +1600,16 @@ export default function BankingLanding() {
           };
           const pids = products.map(p => p.product_id);
           return [
-            { label: 'Rate / APY / APR',  getValue: (p: Product) => rateLabel(p) || '—',                        bestPid: null },
+            { label: 'Rate / APY / APR',  getValue: (p: Product) => rateLabel(p) || ' - ',                        bestPid: null },
             { label: 'Annual Fee',        getValue: (p: Product) => p.annual_fee === 0 ? 'None' : `$${p.annual_fee}/yr`,           bestPid: bestOf(pids, 'annual_fee', 'min') },
             { label: 'Monthly Fee',       getValue: (p: Product) => p.monthly_fee === 0 ? 'None' : `$${p.monthly_fee}/mo`,         bestPid: bestOf(pids, 'monthly_fee', 'min') },
-            { label: 'Fee Waiver',        getValue: (p: Product) => (p.fee_waiver_condition && p.fee_waiver_condition !== 'none') ? p.fee_waiver_condition : '—', bestPid: null },
+            { label: 'Fee Waiver',        getValue: (p: Product) => (p.fee_waiver_condition && p.fee_waiver_condition !== 'none') ? p.fee_waiver_condition : ' - ', bestPid: null },
             { label: 'Min Balance',       getValue: (p: Product) => p.min_balance === 0 ? 'None' : `$${p.min_balance.toLocaleString()}`,    bestPid: bestOf(pids, 'min_balance', 'min') },
             { label: 'Min Credit Score',  getValue: (p: Product) => p.min_credit_score === 0 ? 'Any' : `${p.min_credit_score}+`,  bestPid: bestOf(pids, 'min_credit_score', 'min') },
             { label: 'Min Income',        getValue: (p: Product) => p.min_income === 0 ? 'Any' : `$${p.min_income.toLocaleString()}/yr`,     bestPid: bestOf(pids, 'min_income', 'min') },
-            { label: 'Cash Back',         getValue: (p: Product) => p.cash_back_pct > 0 ? `${p.cash_back_pct}%` : '—',             bestPid: products.some(p => p.cash_back_pct > 0) ? bestOf(pids, 'cash_back_pct', 'max') : null },
-            { label: 'Regular APR',       getValue: (p: Product) => p.regular_apr_pct > 0 ? `${p.regular_apr_pct}%` : '—',         bestPid: null },
-            { label: 'Rewards',           getValue: (p: Product) => (p.rewards_type && p.rewards_type !== 'none') ? p.rewards_type : '—', bestPid: null },
+            { label: 'Cash Back',         getValue: (p: Product) => p.cash_back_pct > 0 ? `${p.cash_back_pct}%` : ' - ',             bestPid: products.some(p => p.cash_back_pct > 0) ? bestOf(pids, 'cash_back_pct', 'max') : null },
+            { label: 'Regular APR',       getValue: (p: Product) => p.regular_apr_pct > 0 ? `${p.regular_apr_pct}%` : ' - ',         bestPid: null },
+            { label: 'Rewards',           getValue: (p: Product) => (p.rewards_type && p.rewards_type !== 'none') ? p.rewards_type : ' - ', bestPid: null },
             { label: 'Rating',            getValue: (p: Product) => `${p.avg_rating} ★`,                        bestPid: bestOf(pids, 'avg_rating', 'max') },
           ];
         })();
@@ -2103,7 +2103,7 @@ export default function BankingLanding() {
         <div className="max-w-6xl mx-auto px-6 py-16 md:py-20">
           <div className="flex flex-col lg:flex-row items-center gap-12">
 
-            {/* Left — headline + CTA */}
+            {/* Left  -  headline + CTA */}
             <div className="flex-1 min-w-0">
               {firstName && personalized && (
                 <div className="inline-flex items-center gap-2 bg-emerald-500/20 border border-emerald-400/40 text-emerald-300 text-xs font-bold px-3 py-1.5 rounded-full mb-6 tracking-wide">
@@ -2151,12 +2151,12 @@ export default function BankingLanding() {
         </div>
       </div>
 
-      {/* ── First-Timer Popular Picks — always visible unless personalized picks are shown ── */}
+      {/* ── First-Timer Popular Picks  -  always visible unless personalized picks are shown ── */}
       {/* Condition: hide ONLY when the signed-in personalized section below will render.    */}
       {/* Previously used !personalized, but a cookie-tracked returning visitor can have     */}
       {/* personalized=true with no firstName → both sections disappeared.                  */}
       {!(firstName && personalized && personalizedCards.length > 0) && (() => {
-        // Pin the 3 default hero products by ID — no filter needed, no API dependency.
+        // Pin the 3 default hero products by ID  -  no filter needed, no API dependency.
         // Uses live API data when available; falls back to FALLBACK on first render.
         const DEFAULT_PICK_IDS = ['MRD_P001', 'MRD_P002', 'MRD_P003'];
         const picks: Product[] = DEFAULT_PICK_IDS
@@ -2282,7 +2282,7 @@ export default function BankingLanding() {
       <section id="products" className="max-w-6xl mx-auto px-6 py-14">
         <p className="text-xs uppercase tracking-widest font-bold text-teal-600 mb-2">Complete Catalog</p>
         <h2 className="mb-8" style={{ fontFamily: "'Inter', system-ui, sans-serif" }}>
-          <span className="text-2xl font-bold text-[#0F2744]">{allProducts.length} products —</span>{' '}
+          <span className="text-2xl font-bold text-[#0F2744]">{allProducts.length} products  - </span>{' '}
           <span className="text-2xl font-bold text-blue-600">personal,</span>{' '}
           <span className="text-2xl font-bold text-emerald-600">business</span>{' '}
           <span className="text-2xl font-bold text-[#0F2744]">&amp;</span>{' '}
@@ -2400,7 +2400,7 @@ export default function BankingLanding() {
                   bg: 'bg-emerald-50',
                   title: 'Rates that reward you',
                   titleColor: 'text-emerald-800',
-                  body: 'Industry-leading APY on savings, CDs, and money market accounts — no teaser rates, no hidden catches.',
+                  body: 'Industry-leading APY on savings, CDs, and money market accounts  -  no teaser rates, no hidden catches.',
                 },
                 {
                   icon: <Users className="w-6 h-6 text-violet-600" />,
@@ -2414,7 +2414,7 @@ export default function BankingLanding() {
                   bg: 'bg-blue-50',
                   title: 'AI-powered personalization',
                   titleColor: 'text-blue-800',
-                  body: 'Our AI matches you with the exact right product for your life stage and goals — not a generic brochure.',
+                  body: 'Our AI matches you with the exact right product for your life stage and goals  -  not a generic brochure.',
                 },
                 {
                   icon: <Star className="w-6 h-6 text-teal-600" />,
@@ -2428,7 +2428,7 @@ export default function BankingLanding() {
                   bg: 'bg-amber-50',
                   title: 'Community roots',
                   titleColor: 'text-amber-800',
-                  body: '12% of net income reinvested locally — small business grants, rural housing, and community programs.',
+                  body: '12% of net income reinvested locally  -  small business grants, rural housing, and community programs.',
                 },
               ].map(item => (
                 <div key={item.title} className="flex gap-4 p-5 rounded-2xl border border-slate-100 shadow-sm hover:shadow-md transition-shadow bg-white">
@@ -2474,7 +2474,7 @@ export default function BankingLanding() {
           <div className="max-w-6xl mx-auto px-6 py-10 flex flex-col sm:flex-row items-center justify-between gap-6">
             <div>
               <p className="text-white text-xl font-bold">Ready to get started?</p>
-              <p className="text-blue-300 text-sm mt-1">Open an account in under 5 minutes — no branch visit needed.</p>
+              <p className="text-blue-300 text-sm mt-1">Open an account in under 5 minutes  -  no branch visit needed.</p>
             </div>
             <div className="flex items-center gap-4 flex-shrink-0">
               <button
@@ -2656,11 +2656,11 @@ export default function BankingLanding() {
               <h3 className="text-[#0F2744] font-bold text-lg mb-6">How we can help</h3>
               <div className="space-y-5">
                 {[
-                  { title: 'Account questions', desc: 'Balance inquiries, statement requests, account closure — handled promptly, no hold music.' },
+                  { title: 'Account questions', desc: 'Balance inquiries, statement requests, account closure  -  handled promptly, no hold music.' },
                   { title: 'Product guidance', desc: 'Not sure which savings or loan product fits your goals? A relationship banker will walk you through it.' },
                   { title: 'Loan applications', desc: 'Start your mortgage, auto, or business loan conversation before you ever visit a branch.' },
                   { title: 'Fraud & disputes', desc: 'Noticed something suspicious? Our fraud team responds within 30 minutes, around the clock.' },
-                  { title: 'Technical support', desc: 'Online banking issues, app bugs, or password resets — our tech team is one call or chat away.' },
+                  { title: 'Technical support', desc: 'Online banking issues, app bugs, or password resets  -  our tech team is one call or chat away.' },
                 ].map(r => (
                   <div key={r.title} className="flex gap-3">
                     <div className="w-1.5 h-1.5 rounded-full bg-amber-400 flex-shrink-0 mt-2" />
@@ -2673,7 +2673,7 @@ export default function BankingLanding() {
               </div>
               <div className="mt-8 p-5 bg-[#0F2744] rounded-2xl">
                 <p className="text-amber-300 font-bold text-sm">Priority support for Premier members</p>
-                <p className="text-blue-300 text-xs mt-1 leading-relaxed">Premier and Private Banking clients receive a dedicated relationship manager with a direct line — no queue, no transfers.</p>
+                <p className="text-blue-300 text-xs mt-1 leading-relaxed">Premier and Private Banking clients receive a dedicated relationship manager with a direct line  -  no queue, no transfers.</p>
               </div>
             </div>
           </div>
@@ -2689,7 +2689,7 @@ export default function BankingLanding() {
               <span className="text-white"> to get started?</span>
             </h2>
             <p className="text-blue-200/70 text-sm" style={{ fontWeight: 300 }}>
-              Open an account in under 5 minutes — no branch visit needed.
+              Open an account in under 5 minutes  -  no branch visit needed.
             </p>
           </div>
           <button
@@ -2819,7 +2819,7 @@ export default function BankingLanding() {
             </div>
 
             {/* Answer options for current question */}
-            {/* Predefined option chips — guided flow */}
+            {/* Predefined option chips  -  guided flow */}
             {!chatDone && chatStep < CHAT_QUESTIONS.length && (
               <div className="px-3 pt-2 pb-1 border-t border-slate-100 flex-shrink-0">
                 <p className="text-[9px] text-slate-400 font-medium mb-1.5 uppercase tracking-wide">Quick pick</p>
@@ -2849,7 +2849,7 @@ export default function BankingLanding() {
               </div>
             )}
 
-            {/* Free-text input — always visible */}
+            {/* Free-text input  -  always visible */}
             <div className="px-3 pb-3 flex-shrink-0">
               <div className="flex items-center gap-1.5 bg-slate-50 border border-slate-200 rounded-xl px-3 py-1.5">
                 <input

@@ -77,7 +77,7 @@ class AgentA_Banking_Enhanced:
                 
                 # Use engine='python' for robust CSV parsing (handles various line endings)
                 self.customers_df = pd.read_csv(customers_path, engine='python')
-                # Resolve transactions.csv — downloads from UC Volume to /tmp/ when absent from Repos
+                # Resolve transactions.csv  -  downloads from UC Volume to /tmp/ when absent from Repos
                 from utils.large_file_loader import ensure_csv
                 transactions_path = ensure_csv(transactions_path)
                 self.transactions_df = pd.read_csv(transactions_path, engine='python') if transactions_path.exists() else pd.DataFrame()
@@ -210,8 +210,8 @@ class AgentA_Banking_Enhanced:
                 txn_counts = self.transactions_df.groupby('customer_id').size()
                 self.customers_df['monthly_transaction_volume'] = self.customers_df['customer_id'].map(txn_counts).fillna(0)
             else:
-                # Column not in CSV and no transactions available — use median as safe default
-                logger.warning("monthly_transaction_volume not in CSV and no transactions loaded — defaulting to 15")
+                # Column not in CSV and no transactions available  -  use median as safe default
+                logger.warning("monthly_transaction_volume not in CSV and no transactions loaded  -  defaulting to 15")
                 self.customers_df['monthly_transaction_volume'] = 15
         
         # Avg daily balance (from estimated_savings)
@@ -295,7 +295,7 @@ class AgentA_Banking_Enhanced:
         
         logger.info("✅ Created derived columns for clustering")
     
-    # Canonical archetype names — one fixed name per archetype type.
+    # Canonical archetype names  -  one fixed name per archetype type.
     # These are the exact names the business wants: clear, non-technical, universally understandable.
     _ARCHETYPE_CANONICAL_NAMES = {
         'HIGH-VALUE':    'Wealth Builder',
@@ -305,7 +305,7 @@ class AgentA_Banking_Enhanced:
         'AT-RISK':       'At-Risk Borrower',
     }
 
-    # Trait-based fallback pools — used only when archetype pre-classification is unavailable
+    # Trait-based fallback pools  -  used only when archetype pre-classification is unavailable
     _TRAIT_NAME_POOLS = {
         'deposits':     ['Wealth Builder', 'Deep Saver', 'Vault Keeper', 'Capital Grower', 'Legacy Holder'],
         'digital':      ['Digital Native', 'Mobile Pioneer', 'App-First Banker', 'Connected Spender', 'Tech Adopter'],
@@ -322,7 +322,7 @@ class AgentA_Banking_Enhanced:
 
         Reuses a previously-generated name for this same archetype for
         CACHE_TTL_HOURS (utils/segment_name_cache.py) instead of re-generating
-        one on every re-run — archetype_type is a stable identity for "this
+        one on every re-run  -  archetype_type is a stable identity for "this
         same segment" across runs regardless of n_clusters (see
         _relabel_clusters_to_archetypes), so this is safe even when the
         underlying cluster membership/stats shift slightly run to run.
@@ -383,13 +383,13 @@ class AgentA_Banking_Enhanced:
             self._trait_based_segment_name(primary_trait, characteristics, cluster_id, used_names)
         )
         characteristics['_segment_name_source'] = 'rule_based'
-        desc = f"{fallback_name} — {archetype_type or primary_trait} customer group."
+        desc = f"{fallback_name}  -  {archetype_type or primary_trait} customer group."
         characteristics['_segment_description'] = desc
         save_name('banking_macro', _cache_key, fallback_name, desc, 'rule_based')
         return fallback_name, desc
 
     def _generate_dynamic_segment_name(self, characteristics, percentile, primary_trait, avg_transactions_real, cluster_id=None, used_names=None):
-        """Thin wrapper kept for backward compat — returns name only."""
+        """Thin wrapper kept for backward compat  -  returns name only."""
         name, _ = self._generate_dynamic_segment_profile(
             characteristics, percentile, primary_trait, avg_transactions_real,
             cluster_id=cluster_id, used_names=used_names,
@@ -403,7 +403,7 @@ class AgentA_Banking_Enhanced:
         for name in pool:
             if name not in taken:
                 return name
-        # All pool names taken — append cluster id to last entry to guarantee uniqueness
+        # All pool names taken  -  append cluster id to last entry to guarantee uniqueness
         return f"{pool[-1]} {cluster_id or ''}"
     
     def _classify_customer_to_segment(self, row):
@@ -428,35 +428,35 @@ class AgentA_Banking_Enhanced:
         churn    = float(row.get('churn_probability', 0.2) or
                          row.get('churn_proxy', 0.2) or 0.2)
 
-        # 1. Retiree Anchor — elderly + very low digital (unique age+digital signature)
-        #    Retiree patch lo=57, Everyday hi=63 — threshold 63 sits above the new overlap zone
+        # 1. Retiree Anchor  -  elderly + very low digital (unique age+digital signature)
+        #    Retiree patch lo=57, Everyday hi=63  -  threshold 63 sits above the new overlap zone
         if age >= 63 and digital < 0.45:
             return 3  # LOYAL-STABLE
 
-        # 2. Digital Native — extremely high digital (0.82-0.99)
+        # 2. Digital Native  -  extremely high digital (0.82-0.99)
         #    Wealth Builder digital is capped at 0.78 in v2 data, gap is clean
         elif digital >= 0.79:
             return 1  # DIGITAL-FIRST
 
-        # 3. At-Risk Borrower — low credit + high churn
-        #    At-Risk credit: 512-612; churn: 0.38-0.88. Everyday credit min ~644 — no overlap.
+        # 3. At-Risk Borrower  -  low credit + high churn
+        #    At-Risk credit: 512-612; churn: 0.38-0.88. Everyday credit min ~644  -  no overlap.
         #    At-Risk deposits now ~$20K; classification relies purely on credit + churn signals.
         elif credit <= 630 and churn >= 0.38:
             return 4  # AT-RISK
 
-        # 4. Wealth Builder — high income (primary separator)
-        #    Digital max ~$122K, Everyday max ~$102K — threshold at $128K sits cleanly above both
+        # 4. Wealth Builder  -  high income (primary separator)
+        #    Digital max ~$122K, Everyday max ~$102K  -  threshold at $128K sits cleanly above both
         elif income >= 128000:
             return 0  # HIGH-VALUE
 
-        # 5. Everyday Essential — residual bucket
+        # 5. Everyday Essential  -  residual bucket
         else:
             return 2  # EVERYDAY
 
     def _relabel_clusters_to_archetypes(self, df):
         """Rename K-Prototypes cluster IDs to canonical archetype IDs by centroid proximity.
 
-        Does NOT reassign customers — only renames cluster labels so downstream
+        Does NOT reassign customers  -  only renames cluster labels so downstream
         persona-naming always sees the expected IDs:
           0 = HIGH-VALUE    (Wealth Builder)
           1 = DIGITAL-FIRST (Digital Native)
@@ -525,7 +525,7 @@ class AgentA_Banking_Enhanced:
 
         Uses THRESHOLD-BASED scoring: each archetype score is 0 for an average customer
         and only rises when stats clearly exceed the archetype threshold. EVERYDAY has a
-        small fixed score so it wins whenever no other archetype fires strongly — this
+        small fixed score so it wins whenever no other archetype fires strongly  -  this
         prevents the majority 'average' cluster from being misclassified as AT-RISK."""
         income   = characteristics.get('avg_income', 0)
         credit   = characteristics.get('avg_credit_score', 650)
@@ -552,11 +552,11 @@ class AgentA_Banking_Enhanced:
             'AT-RISK': (max(0, 50000 - income) / 15000
                         + max(0, 640 - credit) / 50
                         + max(0, churn - 0.28) / 0.25),
-            # EVERYDAY: fixed baseline — wins when no strong archetype signal found
+            # EVERYDAY: fixed baseline  -  wins when no strong archetype signal found
             'EVERYDAY': 2.0,
         }
         # Exclude already-assigned archetypes to enforce variety across segments.
-        # If all 5 are taken (n > 5 segments), allow reuse — the LLM will generate
+        # If all 5 are taken (n > 5 segments), allow reuse  -  the LLM will generate
         # a variant name since the original is already in used_names.
         scores = {k: v for k, v in all_scores.items() if k not in assigned_types}
         if not scores:
@@ -749,7 +749,7 @@ class AgentA_Banking_Enhanced:
         import time as _time
         _execute_start = _time.monotonic()
         logger.info(
-            f"[Agent A] Starting K-Prototypes clustering — n_clusters={n_clusters_input}, "
+            f"[Agent A] Starting K-Prototypes clustering  -  n_clusters={n_clusters_input}, "
             f"gamma={gamma}, customers={len(self.customers_df)}"
         )
 
@@ -830,7 +830,7 @@ class AgentA_Banking_Enhanced:
             (1 - (df_enhanced['overdraft_frequency'] / 10.0)) * 0.2
         )
         
-        # Normalized age — key for separating Retiree Anchor (old) from Digital Native (young)
+        # Normalized age  -  key for separating Retiree Anchor (old) from Digital Native (young)
         if 'age' in df_enhanced.columns:
             age_min = df_enhanced['age'].min()
             age_max = df_enhanced['age'].max()
@@ -838,7 +838,7 @@ class AgentA_Banking_Enhanced:
         else:
             df_enhanced['age_normalized'] = 0.4
 
-        # Churn/risk proxy — key for isolating the At-Risk Borrower archetype
+        # Churn/risk proxy  -  key for isolating the At-Risk Borrower archetype
         if 'churn_probability' in df_enhanced.columns:
             df_enhanced['churn_proxy'] = df_enhanced['churn_probability']
         elif 'overdraft_frequency' in df_enhanced.columns:
@@ -925,7 +925,7 @@ class AgentA_Banking_Enhanced:
                         n_clusters=n_clusters,
                         gamma=gamma,
                         init='Cao',
-                        n_init=3,        # 3 starts — enough quality, allows boundary variation
+                        n_init=3,        # 3 starts  -  enough quality, allows boundary variation
                         max_iter=100,
                         random_state=None,  # Non-deterministic: natural variation each run
                         verbose=0
@@ -1004,7 +1004,7 @@ class AgentA_Banking_Enhanced:
             )
             
             _total_ms = int((_time.monotonic() - _execute_start) * 1000)
-            logger.info(f"✅ Clustering complete with {best_n_clusters} personas — total duration {_total_ms}ms")
+            logger.info(f"✅ Clustering complete with {best_n_clusters} personas  -  total duration {_total_ms}ms")
             logger.info(f"📊 Business constraints met: {constraints_validation['all_constraints_met']}")
             
             # Calculate silhouette score for validation
@@ -1208,7 +1208,7 @@ class AgentA_Banking_Enhanced:
                 short_name = f"SEG{cluster_id}"
 
             # Use LLM-generated description (or rule-based fallback stored in characteristics)
-            description = persona_description or characteristics.get('_segment_description', f"{persona_name} — {primary_trait.title()} segment")
+            description = persona_description or characteristics.get('_segment_description', f"{persona_name}  -  {primary_trait.title()} segment")
             
             logger.info(f"✓ Cluster {cluster_id}: {persona_name} ({primary_trait} @ {percentile:.0f}th percentile)")
             
@@ -1296,7 +1296,7 @@ class AgentA_Banking_Enhanced:
         
         # SECOND PASS: Generate explanations now that all personas exist
         # Explanations use peer percentiles across all segments; self.personas must be the
-        # in-progress dict (execute() assigns self.personas only after this returns—was empty before).
+        # in-progress dict (execute() assigns self.personas only after this returns - was empty before).
         logger.info("🔍 Generating unique segment explanations...")
         self.personas = personas
         for cluster_id, persona in personas.items():
@@ -1337,7 +1337,7 @@ class AgentA_Banking_Enhanced:
         avg_age = characteristics.get('avg_age', 45)
         
         # Rank each metric against the GLOBAL customer population (all 5000 rows).
-        # Previously ranked against only 5 segment averages — with all segments at ~15 txns,
+        # Previously ranked against only 5 segment averages  -  with all segments at ~15 txns,
         # one would be "Top 20%" and another "Bottom 20%" even though values were identical.
         _COL_MAP = {
             'avg_deposits':                   'total_deposits',
@@ -1380,14 +1380,14 @@ class AgentA_Banking_Enhanced:
             if r >= 20: return 'Below avg'
             return 'Bottom 20%'
 
-        # ── KEY STATS — compact-formatted values so frontend never truncates ──
+        # ── KEY STATS  -  compact-formatted values so frontend never truncates ──
         def _fmt_usd(v):
             v = float(v or 0)
             if v >= 1_000_000: return f'${v/1_000_000:.1f}M'
             if v >= 1_000:     return f'${v/1_000:.0f}K'
             return f'${v:.0f}'
 
-        # Avg Balance and Digital Engagement are already visible on the macro card — excluded here
+        # Avg Balance and Digital Engagement are already visible on the macro card  -  excluded here
         key_stats = [
             {'label': 'Avg Income',       'value': _fmt_usd(avg_income),      'note': _rank_label(inc_rank)},
             {'label': 'Avg Credit Score', 'value': f'{avg_credit:.0f}',       'note': _rank_label(crd_rank)},
@@ -1395,15 +1395,15 @@ class AgentA_Banking_Enhanced:
             {'label': 'Monthly Txns',     'value': f'{avg_transactions:.0f}', 'note': _rank_label(txn_rank)},
         ]
 
-        # ── KEY BEHAVIORS — keyed on archetype_type, not trait_combo ────────
+        # ── KEY BEHAVIORS  -  keyed on archetype_type, not trait_combo ────────
         # trait_combo is unreliable: when all segments share similar txn counts,
         # the same combo can appear in multiple segments, producing copy-paste bullets.
         archetype_type = characteristics.get('archetype_type', '')
         archetype_behaviors = {
             'HIGH-VALUE': [
                 f'High earners (avg ${avg_income:,.0f}/yr) with strong savings discipline',
-                'Hold multiple Meridian products — deep, long-term relationship',
-                'Low churn risk — financially secure and unlikely to leave',
+                'Hold multiple Meridian products  -  deep, long-term relationship',
+                'Low churn risk  -  financially secure and unlikely to leave',
             ],
             'EVERYDAY': [
                 'Core everyday customers relying on checking, savings, and debit',
@@ -1413,7 +1413,7 @@ class AgentA_Banking_Enhanced:
             'DIGITAL-FIRST': [
                 'Mobile-first customers who manage all banking through the app',
                 'Frequent transactions and high engagement with digital features',
-                'Early adopters — respond quickly to in-app offers and new features',
+                'Early adopters  -  respond quickly to in-app offers and new features',
             ],
             'LOYAL-STABLE': [
                 'Long-standing, loyal customers who have banked with Meridian for years',
@@ -1422,7 +1422,7 @@ class AgentA_Banking_Enhanced:
             ],
             'AT-RISK': [
                 f'Financially stretched customers with avg income ${avg_income:,.0f}/yr and limited savings',
-                'Higher likelihood of leaving — need proactive retention outreach',
+                'Higher likelihood of leaving  -  need proactive retention outreach',
                 'Respond better to financial relief and support offers than upsell campaigns',
             ],
         }
@@ -1432,29 +1432,29 @@ class AgentA_Banking_Enhanced:
             f'Avg age {avg_age:.0f}, {_fmt_usd(avg_income)} income',
         ]))
         # Replace bullet 2 with the most genuinely distinctive metric for this segment.
-        # Digital engagement is intentionally excluded — it is similar across all segments
+        # Digital engagement is intentionally excluded  -  it is similar across all segments
         # (~50%) and mentioning it as a differentiator misleads the reader.
         distinctive_note = None
         if inc_rank >= 80:
-            distinctive_note = f'Top earners — {_fmt_usd(avg_income)} avg income, credit score {avg_credit:.0f}'
+            distinctive_note = f'Top earners  -  {_fmt_usd(avg_income)} avg income, credit score {avg_credit:.0f}'
         elif inc_rank <= 20:
-            distinctive_note = f'Value-focused — {_fmt_usd(avg_income)} avg income, credit score {avg_credit:.0f}'
+            distinctive_note = f'Value-focused  -  {_fmt_usd(avg_income)} avg income, credit score {avg_credit:.0f}'
         elif txn_rank >= 80:
-            distinctive_note = f'{avg_transactions:.0f} monthly transactions — top 20% activity level'
+            distinctive_note = f'{avg_transactions:.0f} monthly transactions  -  top 20% activity level'
         elif txn_rank <= 20:
-            distinctive_note = f'{avg_transactions:.0f} monthly transactions — bottom 20% activity level'
+            distinctive_note = f'{avg_transactions:.0f} monthly transactions  -  bottom 20% activity level'
         elif prd_rank >= 80:
-            distinctive_note = f'{avg_products:.1f} products held — above avg in portfolio depth'
+            distinctive_note = f'{avg_products:.1f} products held  -  above avg in portfolio depth'
         elif prd_rank <= 20:
-            distinctive_note = f'{avg_products:.1f} products held — below avg in portfolio depth'
+            distinctive_note = f'{avg_products:.1f} products held  -  below avg in portfolio depth'
         elif xsl_rank >= 80:
-            distinctive_note = f'{avg_cross_sell*100:.0f}% cross-sell receptivity — top 20% growth signal'
+            distinctive_note = f'{avg_cross_sell*100:.0f}% cross-sell receptivity  -  top 20% growth signal'
         elif crd_rank <= 20:
-            distinctive_note = f'Avg credit score {avg_credit:.0f} — below avg in creditworthiness'
+            distinctive_note = f'Avg credit score {avg_credit:.0f}  -  below avg in creditworthiness'
         if distinctive_note and len(key_behaviors) >= 3:
             key_behaviors[2] = distinctive_note
 
-        # ── MARKETING ACTIONS — keyed on archetype_type ──────────────────────
+        # ── MARKETING ACTIONS  -  keyed on archetype_type ──────────────────────
         archetype_actions = {
             'HIGH-VALUE': [
                 'Proactive wealth advisory and investment discovery calls',
@@ -1482,30 +1482,30 @@ class AgentA_Banking_Enhanced:
             'Test one targeted offer via preferred channel',
         ])
 
-        # Tagline templates — {dep}, {dig}, {prd}, {txn}, {xsl} are substituted with
+        # Tagline templates  -  {dep}, {dig}, {prd}, {txn}, {xsl} are substituted with
         # this segment's actual metric values so two segments with the same trait_combo
         # always produce different taglines.
         tagline_templates = {
-            'deposits_digital':       '${dep:,.0f} avg balance, {dig:.0f}% digital — high-wealth customers who bank online',
-            'deposits_products':      '${dep:,.0f} avg balance with {prd:.1f} products — wealth paired with deep product relationships',
-            'deposits_transactions':  '${dep:,.0f} avg balance, {txn:.0f} monthly transactions — cash-flow-active wealth holders',
-            'deposits_cross_sell':    '${dep:,.0f} avg balance, {xsl:.0f}% growth receptivity — affluent customers ready to expand',
-            'digital_deposits':       '{dig:.0f}% digital engagement, ${dep:,.0f} balance — tech-forward customers with financial standing',
-            'digital_products':       '{dig:.0f}% digital, {prd:.1f} products — customers who run their financial life through the app',
-            'digital_transactions':   '{dig:.0f}% digital, {txn:.0f} monthly transactions — app-first customers with high activity',
-            'digital_cross_sell':     '{dig:.0f}% digital, {xsl:.0f}% growth receptivity — online-active customers open to new products',
-            'products_deposits':      '{prd:.1f} products held, ${dep:,.0f} balance — multi-product customers with stable wealth',
-            'products_digital':       '{prd:.1f} products, {dig:.0f}% digital — broad-portfolio customers who self-serve online',
-            'products_transactions':  '{prd:.1f} products, {txn:.0f} monthly transactions — power users active across every account',
-            'products_cross_sell':    '{prd:.1f} products, {xsl:.0f}% growth receptivity — multi-product customers looking for the next add',
-            'transactions_deposits':  '{txn:.0f} monthly transactions, ${dep:,.0f} balance — frequent transactors with significant wealth',
-            'transactions_digital':   '{txn:.0f} monthly transactions, {dig:.0f}% digital — high-cadence mobile-native bankers',
-            'transactions_products':  '{txn:.0f} monthly transactions, {prd:.1f} products — active across every product they hold',
-            'transactions_cross_sell':'{txn:.0f} monthly transactions, {xsl:.0f}% growth receptivity — active bankers who act on the right offer',
-            'cross_sell_deposits':    '{xsl:.0f}% growth receptivity, ${dep:,.0f} balance — affluent customers ready to be asked',
-            'cross_sell_digital':     '{xsl:.0f}% growth receptivity, {dig:.0f}% digital — open to offers and easy to reach online',
-            'cross_sell_products':    '{xsl:.0f}% growth receptivity, {prd:.1f} products — multi-product holders actively seeking more',
-            'cross_sell_transactions':'{xsl:.0f}% growth receptivity, {txn:.0f} transactions — frequent transactors who respond to timely offers',
+            'deposits_digital':       '${dep:,.0f} avg balance, {dig:.0f}% digital  -  high-wealth customers who bank online',
+            'deposits_products':      '${dep:,.0f} avg balance with {prd:.1f} products  -  wealth paired with deep product relationships',
+            'deposits_transactions':  '${dep:,.0f} avg balance, {txn:.0f} monthly transactions  -  cash-flow-active wealth holders',
+            'deposits_cross_sell':    '${dep:,.0f} avg balance, {xsl:.0f}% growth receptivity  -  affluent customers ready to expand',
+            'digital_deposits':       '{dig:.0f}% digital engagement, ${dep:,.0f} balance  -  tech-forward customers with financial standing',
+            'digital_products':       '{dig:.0f}% digital, {prd:.1f} products  -  customers who run their financial life through the app',
+            'digital_transactions':   '{dig:.0f}% digital, {txn:.0f} monthly transactions  -  app-first customers with high activity',
+            'digital_cross_sell':     '{dig:.0f}% digital, {xsl:.0f}% growth receptivity  -  online-active customers open to new products',
+            'products_deposits':      '{prd:.1f} products held, ${dep:,.0f} balance  -  multi-product customers with stable wealth',
+            'products_digital':       '{prd:.1f} products, {dig:.0f}% digital  -  broad-portfolio customers who self-serve online',
+            'products_transactions':  '{prd:.1f} products, {txn:.0f} monthly transactions  -  power users active across every account',
+            'products_cross_sell':    '{prd:.1f} products, {xsl:.0f}% growth receptivity  -  multi-product customers looking for the next add',
+            'transactions_deposits':  '{txn:.0f} monthly transactions, ${dep:,.0f} balance  -  frequent transactors with significant wealth',
+            'transactions_digital':   '{txn:.0f} monthly transactions, {dig:.0f}% digital  -  high-cadence mobile-native bankers',
+            'transactions_products':  '{txn:.0f} monthly transactions, {prd:.1f} products  -  active across every product they hold',
+            'transactions_cross_sell':'{txn:.0f} monthly transactions, {xsl:.0f}% growth receptivity  -  active bankers who act on the right offer',
+            'cross_sell_deposits':    '{xsl:.0f}% growth receptivity, ${dep:,.0f} balance  -  affluent customers ready to be asked',
+            'cross_sell_digital':     '{xsl:.0f}% growth receptivity, {dig:.0f}% digital  -  open to offers and easy to reach online',
+            'cross_sell_products':    '{xsl:.0f}% growth receptivity, {prd:.1f} products  -  multi-product holders actively seeking more',
+            'cross_sell_transactions':'{xsl:.0f}% growth receptivity, {txn:.0f} transactions  -  frequent transactors who respond to timely offers',
         }
         template = tagline_templates.get(
             trait_combo,
@@ -1552,7 +1552,7 @@ class AgentA_Banking_Enhanced:
             if 'saver' in name_lower:
                 return f"'{persona_name}' reflects top-tier wealth (${avg_deposits/1000000:.1f}M deposits) combined with long-term savings focus."
             elif 'digital' in name_lower:
-                return f"'{persona_name}' combines exceptional wealth (${avg_deposits/1000000:.1f}M) with {avg_digital*100:.0f}% digital adoption—our most tech-savvy affluent customers."
+                return f"'{persona_name}' combines exceptional wealth (${avg_deposits/1000000:.1f}M) with {avg_digital*100:.0f}% digital adoption - our most tech-savvy affluent customers."
             else:
                 return f"'{persona_name}' designates our wealthiest tier with ${avg_deposits/1000000:.1f}M average deposits, representing top {100-primary_rank:.0f}% of customers."
         
@@ -1568,7 +1568,7 @@ class AgentA_Banking_Enhanced:
             if 'native' in name_lower:
                 return f"'{persona_name}' identifies mobile-first customers with {avg_digital*100:.0f}% digital usage, rarely visiting branches."
             elif 'adopter' in name_lower or 'first' in name_lower:
-                return f"'{persona_name}' highlights {avg_digital*100:.0f}% online banking adoption—tech-comfortable customers who embrace digital tools."
+                return f"'{persona_name}' highlights {avg_digital*100:.0f}% online banking adoption - tech-comfortable customers who embrace digital tools."
             else:
                 return f"'{persona_name}' captures {avg_digital*100:.0f}% digital engagement, representing our most technology-forward segment."
         
@@ -1577,7 +1577,7 @@ class AgentA_Banking_Enhanced:
             if 'earner' in name_lower:
                 return f"'{persona_name}' describes high-activity customers with {avg_transactions:.0f} monthly banking events and ${avg_deposits:,.0f} actively managed funds."
             else:
-                return f"'{persona_name}' reflects {avg_transactions:.0f} monthly banking events—highly engaged customers who interact frequently."
+                return f"'{persona_name}' reflects {avg_transactions:.0f} monthly banking events - highly engaged customers who interact frequently."
         
         # COMMUNITY/FAMILY patterns
         elif 'community' in name_lower or 'family' in name_lower or 'household' in name_lower:
@@ -1594,7 +1594,7 @@ class AgentA_Banking_Enhanced:
         # SAVER patterns (general)
         elif 'saver' in name_lower:
             if avg_deposits > 1000000:
-                return f"'{persona_name}' emphasizes wealth accumulation with ${avg_deposits/1000000:.1f}M in deposits—serious savers building long-term financial security."
+                return f"'{persona_name}' emphasizes wealth accumulation with ${avg_deposits/1000000:.1f}M in deposits - serious savers building long-term financial security."
             else:
                 return f"'{persona_name}' highlights savings-focused behavior with ${avg_deposits:,.0f} deposits, prioritizing financial stability."
         
@@ -1611,7 +1611,7 @@ class AgentA_Banking_Enhanced:
             if primary_trait == 'deposits':
                 return f"'{persona_name}' defined by ${avg_deposits:,.0f} average deposits, ranking {primary_rank:.0f}th percentile in wealth."
             elif primary_trait == 'digital':
-                return f"'{persona_name}' characterized by {avg_digital*100:.0f}% digital engagement—above {primary_rank:.0f}% of customers."
+                return f"'{persona_name}' characterized by {avg_digital*100:.0f}% digital engagement - above {primary_rank:.0f}% of customers."
             elif primary_trait == 'products':
                 return f"'{persona_name}' reflects {avg_products:.1f} products held, indicating {primary_rank:.0f}th percentile portfolio depth."
             elif primary_trait == 'transactions':
@@ -1750,7 +1750,7 @@ class AgentA_Banking_Enhanced:
                 'customer_id': row['customer_id'],
                 'customer_name': row.get('customer_name', row['customer_id']),
                 'persona': persona.get('persona_name', 'All customers' if cid == 0 and not self.personas else 'Unknown'),
-                'persona_short': persona.get('short_name', '—'),
+                'persona_short': persona.get('short_name', ' - '),
                 'cluster_id': cid,
                 'total_deposits': float(row.get('total_deposits', 0) or 0),
                 'num_products': int(float(row.get('num_products', 0) or 0)),
@@ -1788,7 +1788,7 @@ class AgentA_Banking_Enhanced:
 
         # self.personas is keyed by int right after a fresh Agent A run, but by
         # STRING once restored from the on-disk JSON cache (JSON object keys
-        # are always strings) — try both so a persona lookup never silently
+        # are always strings)  -  try both so a persona lookup never silently
         # misses and falls back to "Unknown" just because of which path
         # populated it this process.
         persona = self.personas.get(cluster_id) or self.personas.get(str(cluster_id)) or {}

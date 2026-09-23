@@ -11,14 +11,14 @@ export interface PinnedOfferCardData {
   content_benefit_3?: string;
   days_remaining?: number | null;
   terms_summary?: string;
-  /** Plain-English pin reason — used as a fallback body when there's no
+  /** Plain-English pin reason  -  used as a fallback body when there's no
    * richer marketing-offer content available (e.g. the Offer tab, which has
    * no offer-flyer copy of its own, only Agent D's pin reasoning text). */
   reason?: string;
 }
 
 /**
- * Shared "Director's pinned offer" card — used by both the Recommender and
+ * Shared "Director's pinned offer" card  -  used by both the Recommender and
  * Offer tabs so a pin looks identical wherever it surfaces. `onUnpin` clears
  * the pin (DELETE /api/banking/agent_d/pin/{customer_id}) so the caller can
  * refetch and show each agent's natural, unpinned pick in its place.

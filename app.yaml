@@ -1,16 +1,24 @@
 # Databricks Apps: run FastAPI on one port serving API + React frontend (same port).
 # run_app.py sets working directory to repo root so data/, api/, frontend/dist resolve correctly.
 #
-# TOGETHER_API_KEY: Create a .env file in this repo in Databricks (same folder as run_app.py)
-# with: TOGETHER_API_KEY=your_key. See deploy/DATABRICKS_ENV_FILE.md for steps.
+# Secrets below come from the `banking-app-secrets` scope, populated via the CLI
+# (databricks secrets put-secret) - NOT from a manually-placed .env file in the
+# workspace folder. This is the fix for the SQL-warehouse-export 403: the app was
+# previously relying on whatever DATABRICKS_TOKEN/DATABRICKS_SQL_WAREHOUSE_ID
+# happened to be in that manually-placed .env, which turned out to be stale/wrong.
+# App-declared env vars take precedence over .env (load_dotenv() never overrides
+# an already-set os.environ value), so this reliably wins over that file for these
+# specific keys - other keys (SMTP, Twilio, etc.) still come from .env until those
+# are migrated into this same secret scope too.
 command:
   - python
   - run_app.py
 
-# UC Volume declaration — grants the App's service principal READ FILES on this volume.
-# transactions.csv (876K rows, ~80 MB) lives here and is too large for the App bundle.
-# The App reads it directly from /Volumes/dev/banking/meridian_preloaded/ at runtime.
 resources:
+  # UC Volume declaration - grants the App's service principal READ FILES on this
+  # volume. transactions.csv (876K rows, ~80 MB) lives here and is too large for
+  # the App bundle. The App reads it directly from
+  # /Volumes/dev/banking/meridian_preloaded/ at runtime.
   - name: meridian-preloaded-volume
     description: "Meridian Bank preloaded transaction data (transactions.csv)"
     uc_volume:
@@ -18,3 +26,23 @@ resources:
       schema: banking
       volume_name: meridian_preloaded
       access_type: READ
+  - name: databricks-token
+    description: "PAT for SQL warehouse fallback + Genie calls"
+    secret: { scope: banking-app-secrets, key: databricks-token, permission: READ }
+  - name: sql-warehouse-id
+    description: "SQL warehouse ID for transactions.csv fallback + Genie"
+    secret: { scope: banking-app-secrets, key: sql-warehouse-id, permission: READ }
+  - name: genie-space-id
+    description: "Genie space ID"
+    secret: { scope: banking-app-secrets, key: genie-space-id, permission: READ }
+  - name: together-api-key
+    description: "Together AI API key"
+    secret: { scope: banking-app-secrets, key: together-api-key, permission: READ }
+
+env:
+  - { name: "DATABRICKS_TOKEN", valueFrom: "databricks-token" }
+  - { name: "DATABRICKS_SQL_WAREHOUSE_ID", valueFrom: "sql-warehouse-id" }
+  - { name: "GENIE_SPACE_ID", valueFrom: "genie-space-id" }
+  - { name: "TOGETHER_API_KEY", valueFrom: "together-api-key" }
+  - { name: "DOMAIN_CATALOG", value: "dev" }
+  - { name: "DOMAIN_SCHEMA", value: "banking" }

@@ -36,7 +36,7 @@ const queryClient = new QueryClient({
 // Basename: VITE_BASE_PATH for deployment (e.g. /banking-platform/v1), else /nba-platform/v3 in prod
 const basename = import.meta.env.VITE_BASE_PATH || (import.meta.env.MODE === 'production' ? '/nba-platform/v3' : '/');
 
-// Entry point for /banking (e.g. landing straight into the app) — routes to
+// Entry point for /banking (e.g. landing straight into the app)  -  routes to
 // the Dashboard only when there's actually a completed segmentation to show;
 // otherwise straight to the Data Loader, so a fresh environment never lands
 // on a Dashboard tab that has nothing to display. /api/banking/status is a
@@ -60,7 +60,7 @@ function App() {
     <QueryClientProvider client={queryClient}>
       <Router basename={basename}>
         <Routes>
-          {/* Public landing page — personalized on return visits */}
+          {/* Public landing page  -  personalized on return visits */}
           <Route path="/landing" element={<BankingLanding />} />
 
           {/* Redirect root to landing page */}

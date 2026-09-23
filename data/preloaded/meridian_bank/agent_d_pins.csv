@@ -1,0 +1,5 @@
+customer_id,recommender_pin_product_id,offer_pin_product_id
+CUST_00008,MRD_P003,
+CUST_00012,MRD_P003,
+CUST_00001,,MRD_P018
+CUST_00003,,MRD_B002

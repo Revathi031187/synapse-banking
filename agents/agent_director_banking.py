@@ -1,19 +1,19 @@
 """
-DirectorAgent — interprets behavioral signals from a customer's current session
+DirectorAgent  -  interprets behavioral signals from a customer's current session
 and decides what product to recommend on their next visit.
 
 This is distinct from Agent D's impression ledger (which tracks shown/clicked
-counts over time). The Director reads *intent signals* — time on page, form
-fills, high-value clicks — and derives an affinity score per product. The
+counts over time). The Director reads *intent signals*  -  time on page, form
+fills, high-value clicks  -  and derives an affinity score per product. The
 product with the highest affinity becomes the next-visit pin directive.
 
 Signal weights reflect intent strength:
-    form_fill             1.00  — customer started applying (strongest signal)
-    time_on_page_long     0.70  — >90 seconds = serious consideration
-    click_apply           0.60  — explicit apply intent
-    click_learn_more      0.35  — exploration, not yet committed
-    time_on_page_medium   0.25  — 30–90 seconds, soft interest
-    page_view             0.10  — weakest, merely visible
+    form_fill             1.00   -  customer started applying (strongest signal)
+    time_on_page_long     0.70   -  >90 seconds = serious consideration
+    click_apply           0.60   -  explicit apply intent
+    click_learn_more      0.35   -  exploration, not yet committed
+    time_on_page_medium   0.25   -  30–90 seconds, soft interest
+    page_view             0.10   -  weakest, merely visible
 """
 import os
 from typing import Optional
@@ -211,7 +211,7 @@ class DirectorAgent:
         """
         Auto-derive behavioral signals from Agent D's impression ledger rows.
 
-        Used by the "Live / Auto" tab in the frontend — no manual input needed.
+        Used by the "Live / Auto" tab in the frontend  -  no manual input needed.
 
         Parameters
         ----------

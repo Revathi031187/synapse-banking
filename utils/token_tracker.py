@@ -9,10 +9,10 @@ Two things live here:
    let a caller wrap a block of work and read back the total afterwards,
    without threading a counter through every intermediate LLM call site.
 
-2. log_llm_call() — a single structured console-log line emitted for every
+2. log_llm_call()  -  a single structured console-log line emitted for every
    LLM invocation, Together AI and Anthropic/Claude alike, so token spend
    (and thus $ cost) can be audited from the server console alone. This
-   NEVER logs prompt/response content — metadata and metrics only.
+   NEVER logs prompt/response content  -  metadata and metrics only.
 """
 import json
 import logging
@@ -25,7 +25,7 @@ _local = threading.local()
 
 
 def reset_scope() -> None:
-    """Start a fresh accumulation scope — call at the top of one logical request
+    """Start a fresh accumulation scope  -  call at the top of one logical request
     (e.g. one chatbot question) before any LLM calls it may trigger."""
     _local.usage = {"prompt_tokens": 0, "completion_tokens": 0, "total_tokens": 0, "calls": 0}
 
@@ -61,8 +61,8 @@ def log_llm_call(
     note: str = "",
 ) -> None:
     """
-    Log one LLM API call's metadata/metrics to the console — provider, model,
-    duration, and token counts (never the prompt or response content) — and
+    Log one LLM API call's metadata/metrics to the console  -  provider, model,
+    duration, and token counts (never the prompt or response content)  -  and
     add its tokens to the current accumulation scope (see reset_scope above).
     """
     total_tokens = total_tokens or (prompt_tokens + completion_tokens)

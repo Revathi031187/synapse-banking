@@ -43,7 +43,7 @@ logger = logging.getLogger(__name__)
 
 # ── Per-macro feature sets ────────────────────────────────────────────────────
 # Each macro segment type uses 3 features most relevant to its defining trait.
-# Customers within a macro are split along THESE dimensions — different macros
+# Customers within a macro are split along THESE dimensions  -  different macros
 # split along different axes, so micro sub-groups are meaningfully distinct.
 _MICRO_FEATURE_SETS = {
     'deposits':     ['account_maturity', 'portfolio_depth', 'digital_engagement'],
@@ -115,7 +115,7 @@ def _build_micro_name(feature_profile, split_features, parent_short, used_adject
     for adj in candidates:
         if adj not in used_adjectives:
             return f"{adj} {parent_short}"
-    # All preferred adjectives taken — use first candidate anyway to avoid "Core X"
+    # All preferred adjectives taken  -  use first candidate anyway to avoid "Core X"
     if candidates:
         return f"{candidates[0]} {parent_short}"
     return f"Core {parent_short}"
@@ -164,7 +164,7 @@ class AgentA_Banking_Micro:
         Initialize Micro Segmentation Agent
 
         global_used_names: set/list of names already used across all prior micro segment
-        runs in this session — prevents cross-macro name collisions.
+        runs in this session  -  prevents cross-macro name collisions.
         """
         self.customers_df = customers_df
         self.macro_personas = macro_personas
@@ -224,7 +224,7 @@ class AgentA_Banking_Micro:
             # Calculate micro segmentation features (all 6 computed, subset selected below)
             features_df = self._calculate_micro_features(macro_customers)
 
-            # Resolve macro persona — needed to determine which features to split on
+            # Resolve macro persona  -  needed to determine which features to split on
             macro_persona = None
             for key in [macro_segment_id, str(macro_segment_id), int(macro_segment_id)]:
                 if key in self.macro_personas:
@@ -376,7 +376,7 @@ class AgentA_Banking_Micro:
 
         feature_names selects which columns to cluster on.  After fitting,
         self._last_cluster_feature_profiles stores a High/Mid/Low profile
-        per cluster per feature — used downstream to generate meaningful names.
+        per cluster per feature  -  used downstream to generate meaningful names.
         """
         all_features = [
             'digital_engagement', 'portfolio_depth', 'credit_utilization',
@@ -509,7 +509,7 @@ class AgentA_Banking_Micro:
 
             # A name reused from the segment-name cache (see
             # _generate_micro_segment_profile) is EXPECTED to already be in
-            # used_names — that persistent set tracks every name ever used
+            # used_names  -  that persistent set tracks every name ever used
             # across all past runs, and a cached name was used before by
             # definition. Only treat "already used" as a real collision for a
             # freshly-generated name, not a legitimate historical reuse of
@@ -517,7 +517,7 @@ class AgentA_Banking_Micro:
             from utils.segment_name_cache import get_cached_name as _get_cached_micro_name
             _is_cache_hit = _get_cached_micro_name('banking_micro', f"{macro_segment_id}:{micro_id}") is not None
             if segment_name in used_names and not _is_cache_hit:
-                logger.warning(f"Micro name collision '{segment_name}' — regenerating with rule-based fallback")
+                logger.warning(f"Micro name collision '{segment_name}'  -  regenerating with rule-based fallback")
                 fp   = characteristics.get('_feature_profile', {})
                 sf   = characteristics.get('_split_features', [])
                 ps   = _PARENT_SHORT_NAMES.get(macro_name, macro_name.split()[-1] if macro_name else 'Customer')
@@ -587,7 +587,7 @@ class AgentA_Banking_Micro:
         _cache_key = f"{macro_segment_id}:{micro_id}"
 
         # NOTE: no "not in used_names" re-check here, unlike the macro cache
-        # hook — `used_names`/`_global_used_names` for micro is a PERSISTENT
+        # hook  -  `used_names`/`_global_used_names` for micro is a PERSISTENT
         # registry of every name ever used across ALL past runs (see
         # __init__'s global_used_names param), not a per-run set. A cached
         # name is by definition already in it (that's why it's cached), so
@@ -647,7 +647,7 @@ class AgentA_Banking_Micro:
                         save_name('banking_micro', _cache_key, llm_name, llm_desc, 'llm')
                         return llm_name, llm_desc
                     elif llm_name and llm_desc:
-                        # LLM returned a duplicate — fall through to rule-based naming
+                        # LLM returned a duplicate  -  fall through to rule-based naming
                         # which tracks used adjectives and always produces a unique name
                         logger.warning(f"LLM micro name collision '{llm_name}', using rule-based fallback")
             except Exception as e:
@@ -667,7 +667,7 @@ class AgentA_Banking_Micro:
         return segment_name, desc
 
     def _generate_micro_segment_name(self, characteristics, ltv_tier, macro_name, micro_id=0, used_names=None) -> str:
-        """Backward-compat wrapper — returns name only."""
+        """Backward-compat wrapper  -  returns name only."""
         name, _ = self._generate_micro_segment_profile(characteristics, ltv_tier, macro_name, micro_id, used_names)
         return name
     
@@ -789,7 +789,7 @@ class AgentA_Banking_Micro:
         # Build UNIQUE segment definition with ALL characteristics + emojis for visual clarity
         segment_definition.append(f"**{segment_name}** micro segment ({segment_size} customers)")
         segment_definition.append(
-            f"🧭 Sub-cluster #{micro_id + 1}: distinct behavioral slice within the parent macro segment (K-Means cell)—metrics below apply only to this group."
+            f"🧭 Sub-cluster #{micro_id + 1}: distinct behavioral slice within the parent macro segment (K-Means cell) - metrics below apply only to this group."
         )
         segment_definition.append(f"💰 Value: {deposits_range} average | {ltv_tier} tier | Income: {income_range}/year")
         segment_definition.append(f"📊 Portfolio: {avg_products:.1f} avg products held | {digital_engagement*100:.0f}% digital engagement")

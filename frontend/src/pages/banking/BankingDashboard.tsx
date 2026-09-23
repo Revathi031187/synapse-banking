@@ -24,11 +24,11 @@ export default function BankingDashboard() {
             </div>
             <div>
               <h1 className="text-5xl font-bold text-white tracking-tight">JPMorgan Chase</h1>
-              <p className="text-xl text-blue-50 mt-2">AI-Powered Next Best Action — Personal, Business & Agricultural Banking</p>
+              <p className="text-xl text-blue-50 mt-2">AI-Powered Next Best Action  -  Personal, Business & Agricultural Banking</p>
             </div>
           </div>
           <p className="text-lg text-blue-50 max-w-2xl">
-            Agentic personalization platform — Claude AI-powered segment naming, compliance-aware offer selection, and behavioral orchestration.
+            Agentic personalization platform  -  Claude AI-powered segment naming, compliance-aware offer selection, and behavioral orchestration.
           </p>
         </div>
       </div>
@@ -38,7 +38,7 @@ export default function BankingDashboard() {
         <div className="max-w-6xl mx-auto px-8 pt-6">
           <div className="flex items-center gap-3 bg-amber-50 border border-amber-300 text-amber-800 rounded-lg px-4 py-3 text-sm">
             <span className="text-amber-500 text-lg">⚠</span>
-            <span>Could not reach the banking API — some navigation links may not reflect actual pipeline status. Start the backend with <code className="bg-amber-100 px-1 rounded">uvicorn api.main_unified_chromadb:app --port 8002</code> and reload.</span>
+            <span>Could not reach the banking API  -  some navigation links may not reflect actual pipeline status. Start the backend with <code className="bg-amber-100 px-1 rounded">uvicorn api.main_unified_chromadb:app --port 8002</code> and reload.</span>
           </div>
         </div>
       )}

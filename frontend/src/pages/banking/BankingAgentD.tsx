@@ -1,4 +1,4 @@
-import React, { useMemo, useState } from 'react';
+import React, { useMemo } from 'react';
 import { Link } from 'react-router-dom';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { motion, AnimatePresence } from 'framer-motion';
@@ -28,7 +28,7 @@ const API_BASE = getBankingApiBase();
 
 export const AGENT_D_UI_KEY = 'banking-agent-d-v1';
 
-// Every successful orchestrate call this tab session, appended (not overwritten) —
+// Every successful orchestrate call this tab session, appended (not overwritten)  - 
 // separate from persistedOrchestrate (which only remembers the latest, for UI resume).
 // Consumed by the Activation tab's "Create Dataset" push, which dedupes by timestamp.
 export const AGENT_D_SESSION_LOG_KEY = 'banking-agent-d-session-log-v1';
@@ -76,12 +76,48 @@ export const DEFAULT_AGENT_D_UI = {
   // True right after the user clicks Unpin, until the next explicit "Load
   // supervisor view" run. orchestrate() always recomputes a pin from
   // underlying signals (last click / incomplete app / saved goal / Agent C's
-  // offer / Agent B's #1) and unconditionally overwrites last_directives —
+  // offer / Agent B's #1) and unconditionally overwrites last_directives  - 
   // so re-running it immediately after an unpin would just re-derive and
   // silently reinstate the same pin. This flag hides pin UI locally instead
   // of re-fetching data that would fight the unpin.
   pinCleared: false,
+  // Snapshot (JSON-stringified) of the orchestrate query key at the moment
+  // "Load supervisor view" was last explicitly clicked. The orchestrate query is
+  // only `enabled` when the CURRENT key still matches this value, so switching
+  // customer/persona/mode without re-clicking cannot trigger a computation.
+  // Deliberately NOT reset on reload (no merge function is passed to
+  // useSessionStorageState for this tab)  -  unlike Recommender, Director's
+  // existing convention is to restore the last loaded view after a reload.
+  lastRequestedKey: null as string | null,
 };
+
+/** Standalone orchestrate() fetch, given an explicit inputs snapshot rather than
+ * closing over live component state - used both by the reactive orchestrateQuery
+ * and by submitOrchestrate's always-fresh imperative fetchQuery call. */
+async function fetchOrchestrate(
+  apiBase: string,
+  inputs: { customerId: string; mode: 'persona' | 'customer'; personaId: string },
+) {
+  const res = await fetch(`${apiBase}/api/banking/agent_d/orchestrate`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      customer_id: inputs.customerId,
+      saved_goals: [],
+      incomplete_applications: [],
+      clicked_product_ids: [],
+      // Persona mode: recommendation + offer are computed for the whole segment
+      // server-side (same logic as the Recommender/Offer tabs' persona modes)  -
+      // customer_id still identifies which real customer's ledger tracks impressions/clicks.
+      ...(inputs.mode === 'persona' && inputs.personaId ? { persona_id: inputs.personaId } : {}),
+    }),
+  });
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}));
+    throw new Error(err.detail || 'Load failed');
+  }
+  return res.json();
+}
 
 function BoldParts({ text }: { text: string }) {
   const parts = text.split(/\*\*/);
@@ -192,7 +228,7 @@ function OfferIntelCard({ offer }: { offer: OfferCard }) {
 export default function BankingAgentD() {
   const queryClient = useQueryClient();
   const [ui, setUi] = useSessionStorageState(AGENT_D_UI_KEY, DEFAULT_AGENT_D_UI);
-  const { mode, personaId, customerId, persistedOrchestrate, pinCleared } = ui;
+  const { mode, personaId, customerId, persistedOrchestrate, pinCleared, lastRequestedKey } = ui;
   const [, setSessionLog] = useSessionStorageState<AgentDSessionLogEntry[]>(AGENT_D_SESSION_LOG_KEY, []);
 
   const personasQuery = useQuery({
@@ -280,46 +316,80 @@ export default function BankingAgentD() {
     }
   }, [mode, personaId, segmentCustomersQuery.isSuccess, segmentCustomers, customerId]);
 
-  const orchestrateMutation = useMutation({
-    mutationFn: async () => {
-      const res = await fetch(`${API_BASE}/api/banking/agent_d/orchestrate`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          customer_id: customerId,
-          saved_goals: [],
-          incomplete_applications: [],
-          clicked_product_ids: [],
-          // Persona mode: recommendation + offer are computed for the whole segment
-          // server-side (same logic as the Recommender/Offer tabs' persona modes) —
-          // customer_id still identifies which real customer's ledger tracks impressions/clicks.
-          ...(mode === 'persona' && personaId ? { persona_id: personaId } : {}),
-        }),
-      });
-      if (!res.ok) {
-        const err = await res.json().catch(() => ({}));
-        throw new Error(err.detail || 'Load failed');
-      }
-      return res.json();
-    },
-    onSuccess: (payload) => {
-      const cid = String(customerId).trim();
-      if (cid) {
-        setUi((prev) => ({ ...prev, persistedOrchestrate: { customerId: cid, response: payload }, pinCleared: false }));
-        setSessionLog((prev) => [
-          ...prev,
-          { customerId: cid, timestamp: new Date().toISOString(), data: payload?.data },
-        ]);
-        queryClient.invalidateQueries({ queryKey: ['banking-agent-d-directives-b', cid] });
-        queryClient.invalidateQueries({ queryKey: ['banking-agent-d-directives-b'] });
-      }
-    },
-  });
-
   const cidKey = String(customerId).trim();
 
+  // Query, not mutation, for orchestrate itself  -  a `useMutation`'s state lives
+  // only in this one component instance and is silently dropped if the user
+  // navigates away before it resolves (the POST keeps running server-side, its
+  // ledger/impression effects still happen, but the result never reaches the UI
+  // on return). A `useQuery` with a stable key is tracked by the shared
+  // QueryClient (App.tsx: gcTime: Infinity) regardless of which component is
+  // mounted, so switching tabs mid-load and coming back shows the finished
+  // result (or still-loading state) correctly. `enabled` only matches when the
+  // CURRENT key equals what "Load supervisor view" was last explicitly clicked
+  // for (lastRequestedKey), so this never fires just from switching
+  // customer/persona/mode or from a plain remount.
+  const orchestrateQueryKey = useMemo(
+    () => ['banking-agent-d-orchestrate', cidKey, mode === 'persona' ? personaId : null] as const,
+    [cidKey, mode, personaId],
+  );
+  const orchestrateRequestKey = useMemo(() => JSON.stringify(orchestrateQueryKey), [orchestrateQueryKey]);
+  const orchestrateQuery = useQuery({
+    queryKey: orchestrateQueryKey,
+    queryFn: () => fetchOrchestrate(API_BASE, { customerId, mode, personaId }),
+    enabled: lastRequestedKey === orchestrateRequestKey,
+    // Seeds from the sessionStorage-mirrored last result so a plain reload shows
+    // it immediately with no network call (see the "on new success" effect below
+    // for where persistedOrchestrate gets written). An in-flight-at-the-exact-
+    // moment-of-reload request is not resumed  -  the JS execution context was
+    // destroyed by the reload, so there's nothing left to resume client-side.
+    initialData: () =>
+      persistedOrchestrate?.customerId === cidKey && cidKey ? persistedOrchestrate.response : undefined,
+  });
+
+  /** Submits the CURRENT customer/mode/persona as an orchestrate run. Always
+   * forces a genuine fresh network computation, regardless of whether this exact
+   * combination already has cached data from earlier this session - only
+   * switching tabs (enabled/initialData above) shows cached/resumed results;
+   * clicking "Load supervisor view" never should. staleTime: 0 on this one
+   * imperative call overrides the app-wide staleTime: Infinity default. */
+  const submitOrchestrate = () => {
+    setUi((prev) => ({ ...prev, lastRequestedKey: orchestrateRequestKey }));
+    void queryClient.fetchQuery({
+      queryKey: orchestrateQueryKey,
+      queryFn: () => fetchOrchestrate(API_BASE, { customerId, mode, personaId }),
+      staleTime: 0,
+    });
+  };
+
+  // Runs once per newly-landed successful result (dataUpdatedAt changes exactly
+  // then)  -  useQuery has no onSuccess callback in this TanStack Query version.
+  // Seeded from the query's OWN dataUpdatedAt at mount (not 0): without this, a
+  // fresh mount that resumes an already-cached/initialData-seeded result would
+  // look like a "new" result and re-append a duplicate row to the session log
+  // (setSessionLog below) every time this tab is revisited, not just on a
+  // genuine new orchestrate run.
+  const lastHandledOrchestrateAtRef = React.useRef(orchestrateQuery.dataUpdatedAt);
+  React.useEffect(() => {
+    if (!orchestrateQuery.isSuccess || orchestrateQuery.dataUpdatedAt === lastHandledOrchestrateAtRef.current) return;
+    lastHandledOrchestrateAtRef.current = orchestrateQuery.dataUpdatedAt;
+    if (cidKey) {
+      setUi((prev) => ({
+        ...prev,
+        persistedOrchestrate: { customerId: cidKey, response: orchestrateQuery.data },
+        pinCleared: false,
+      }));
+      setSessionLog((prev) => [
+        ...prev,
+        { customerId: cidKey, timestamp: new Date().toISOString(), data: (orchestrateQuery.data as { data?: unknown })?.data },
+      ]);
+      queryClient.invalidateQueries({ queryKey: ['banking-agent-d-directives-b', cidKey] });
+      queryClient.invalidateQueries({ queryKey: ['banking-agent-d-directives-b'] });
+    }
+  }, [orchestrateQuery.isSuccess, orchestrateQuery.dataUpdatedAt, orchestrateQuery.data, cidKey]);
+
   // Recommender's and Offer's pins are independent (each reads its own field
-  // server-side) — this is the shared source of truth both cards' toggle
+  // server-side)  -  this is the shared source of truth both cards' toggle
   // buttons read from, refetched (not orchestrate() re-run) after every
   // pin/unpin so a card's button flips immediately without triggering
   // orchestrate()'s slow, unrelated recompute of its own auto-pin narrative.
@@ -334,7 +404,7 @@ export default function BankingAgentD() {
     staleTime: 0,
     refetchOnMount: 'always',
     // Pinning/unpinning from Recommender or Offer directly (not through this
-    // page) doesn't touch anything Director itself would know to invalidate —
+    // page) doesn't touch anything Director itself would know to invalidate  - 
     // this is a cheap dict lookup (no LLM calls), so poll it while the tab is
     // open, plus refetch on refocus, so an external change shows up here
     // without requiring a manual reload.
@@ -367,12 +437,10 @@ export default function BankingAgentD() {
   }
   const recommenderPinToggle = usePinToggle('recommender');
   const offerPinToggle = usePinToggle('offer');
-  type OrchestrateBody = NonNullable<typeof orchestrateMutation.data>['data'];
-  const data: OrchestrateBody | undefined =
-    orchestrateMutation.data?.data ??
-    (persistedOrchestrate?.customerId === cidKey
-      ? (persistedOrchestrate.response as { data?: OrchestrateBody })?.data
-      : undefined);
+  type OrchestrateBody = NonNullable<typeof orchestrateQuery.data>['data'];
+  // orchestrateQuery.data already covers both the live-fetch and the
+  // reload-seeded (initialData) cases  -  no separate fallback needed here.
+  const data: OrchestrateBody | undefined = orchestrateQuery.data?.data;
   const sv = data?.supervisor_view;
   const liveStack = (data?.live_recommendations ?? []) as Array<{
     product_id: string;
@@ -395,10 +463,6 @@ export default function BankingAgentD() {
 
   const canLoad = !!customerId;
 
-  // ── Next Visit Intelligence state ───────────────────────────────────────────
-  const [nextVisitResult, setNextVisitResult] = useState<DirectorResult | null>(null);
-  const [nextVisitLoading, setNextVisitLoading] = useState(false);
-
   // Read Agent C channel attribution from TanStack Query cache
   const agentCQueryData = queryClient.getQueryData<{ data?: {
     offer_intelligence?: {
@@ -417,35 +481,37 @@ export default function BankingAgentD() {
   const winningChannelLabel = winningChannelEntry ? (CHANNEL_LABELS[winningChannelEntry[0]] ?? winningChannelEntry[0]) : '';
   const mtaPersonaName = data?.persona_name ?? 'this segment';
   const mtaExplanation = winningChannelEntry
-    ? `${winningChannelLabel} outperformed all channels for ${mtaPersonaName} customers — serving this offer via ${winningChannelLabel.toLowerCase()} yields ${Math.round(winningChannelEntry[1] * 100)}% of total segment conversions.`
+    ? `${winningChannelLabel} outperformed all channels for ${mtaPersonaName} customers  -  serving this offer via ${winningChannelLabel.toLowerCase()} yields ${Math.round(winningChannelEntry[1] * 100)}% of total segment conversions.`
     : '';
 
-  // Auto-fetch Director when Agent D data loads or customer changes
-  React.useEffect(() => {
-    if (!customerId) { setNextVisitResult(null); return; }
-    const effectiveData = orchestrateMutation.data?.data ??
-      (persistedOrchestrate?.customerId === customerId
-        ? (persistedOrchestrate.response as { data?: unknown })?.data
-        : undefined);
-    if (!effectiveData) { setNextVisitResult(null); return; }
-
-    setNextVisitResult(null);
-    setNextVisitLoading(true);
-    fetch(`${API_BASE}/api/banking/agent_director/analyze`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        customer_id: customerId,
-        behavioral_signals: [],
-        current_recommended_product_id: autoPinnedProductId ?? focus?.product_id ?? null,
-        auto_from_ledger: true,
-      }),
-    })
-      .then(r => r.json())
-      .then(json => setNextVisitResult((json.data as DirectorResult) ?? null))
-      .catch(() => setNextVisitResult(null))
-      .finally(() => setNextVisitLoading(false));
-  }, [orchestrateMutation.data, persistedOrchestrate?.customerId, customerId]);
+  // ── Next Visit Intelligence  -  a dependent query, not a raw useState+fetch
+  // effect: fires whenever orchestrate data exists (matching the original
+  // effect's trigger condition exactly), but as a genuine useQuery it's tracked
+  // by the shared QueryClient and survives navigation like everything else
+  // (the old version reset to null on every unmount and re-fetched from
+  // scratch on every remount, with no protection for an in-flight request
+  // dropped by an unmount).
+  const nextVisitCurrentProductId = autoPinnedProductId ?? focus?.product_id ?? null;
+  const nextVisitQuery = useQuery({
+    queryKey: ['banking-agent-d-next-visit', cidKey, nextVisitCurrentProductId],
+    queryFn: async () => {
+      const res = await fetch(`${API_BASE}/api/banking/agent_director/analyze`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          customer_id: customerId,
+          behavioral_signals: [],
+          current_recommended_product_id: nextVisitCurrentProductId,
+          auto_from_ledger: true,
+        }),
+      });
+      const json = await res.json();
+      return (json.data as DirectorResult) ?? null;
+    },
+    enabled: !!data && !!cidKey,
+  });
+  const nextVisitResult = nextVisitQuery.data ?? null;
+  const nextVisitLoading = nextVisitQuery.isFetching;
 
   return (
     <div className="space-y-6 animate-fadeIn">
@@ -462,7 +528,7 @@ export default function BankingAgentD() {
           </div>
         </header>
 
-        {/* Control card — supervisor */}
+        {/* Control card  -  supervisor */}
         <div className="bg-white rounded-2xl border border-slate-200 shadow-md p-5 md:p-6 space-y-5">
           {(personasQuery.isError || customersQuery.isError) && (
             <div className="rounded-xl bg-amber-50 border border-amber-200 px-4 py-3 text-amber-900 text-sm">
@@ -517,12 +583,12 @@ export default function BankingAgentD() {
           </div>
 
           {mode === 'persona' && (
-            // No customer picker here by design — persona mode runs Director for the
+            // No customer picker here by design  -  persona mode runs Director for the
             // segment as a whole, not a hand-picked individual (that's what Customer
             // mode above is for). The segment's representative customer is still
             // resolved automatically underneath (see the effect populating customerId
-            // from segmentCustomers below) since Director's orchestrate logic — the
-            // impression ledger, click tracking, incomplete-application recovery — is
+            // from segmentCustomers below) since Director's orchestrate logic  -  the
+            // impression ledger, click tracking, incomplete-application recovery  -  is
             // inherently tied to one real customer's behavioral history; there's no
             // whole-segment equivalent to run instead, unlike Recommender/Offer's
             // aggregate-profile approach.
@@ -538,13 +604,12 @@ export default function BankingAgentD() {
                     personaId: e.target.value,
                     customerId: '',
                   }));
-                  orchestrateMutation.reset();
                 }}
               >
                 {personasQuery.isLoading ? (
                   <option value="">Loading segments…</option>
                 ) : personas.length === 0 ? (
-                  <option value="">Run Segmentation first — no segments</option>
+                  <option value="">Run Segmentation first  -  no segments</option>
                 ) : (
                   personas.map((p) => (
                     <option key={String(p.id)} value={String(p.id)}>
@@ -565,10 +630,9 @@ export default function BankingAgentD() {
                 customers={allCustomers}
                 value={customerId}
                 loading={customersQuery.isLoading}
-                emptyListLabel="No customers — run Segmentation first"
+                emptyListLabel="No customers  -  run Segmentation first"
                 onChange={(id) => {
                   setUi((prev) => ({ ...prev, customerId: id, persistedOrchestrate: null, pinCleared: false }));
-                  orchestrateMutation.reset();
                 }}
               />
             </div>
@@ -577,11 +641,11 @@ export default function BankingAgentD() {
           <div className="flex flex-wrap gap-3 items-center">
             <button
               type="button"
-              disabled={!canLoad || orchestrateMutation.isPending}
-              onClick={() => orchestrateMutation.mutate()}
+              disabled={!canLoad || orchestrateQuery.isFetching}
+              onClick={submitOrchestrate}
               className="inline-flex items-center justify-center gap-2 px-6 py-3 rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white font-semibold shadow-lg disabled:opacity-50 min-w-[200px]"
             >
-              {orchestrateMutation.isPending ? (
+              {orchestrateQuery.isFetching ? (
                 <Loader2 className="w-5 h-5 animate-spin" />
               ) : (
                 <LayoutGrid className="w-5 h-5" />
@@ -597,20 +661,20 @@ export default function BankingAgentD() {
           </p>
         </div>
 
-        {orchestrateMutation.isError && (
+        {orchestrateQuery.isError && (
           <div className="text-sm text-red-700 bg-red-50 border border-red-200 rounded-xl p-4">
-            {(orchestrateMutation.error as Error).message}
+            {(orchestrateQuery.error as Error).message}
           </div>
         )}
 
         {/* Empty state */}
-        {!data && !orchestrateMutation.isPending && (
+        {!data && !orchestrateQuery.isFetching && (
           <div className="border-2 border-dashed border-slate-300 rounded-2xl py-20 px-6 text-center text-slate-500 text-sm">
             Select mode, choose a customer or segment, then <strong>Load supervisor view</strong>.
           </div>
         )}
 
-        {orchestrateMutation.isPending && (
+        {orchestrateQuery.isFetching && (
           <div className="flex justify-center py-16">
             <Loader2 className="w-10 h-10 text-emerald-600 animate-spin" />
           </div>
@@ -644,7 +708,7 @@ export default function BankingAgentD() {
                     <CreditCard className="w-4 h-4 text-white" />
                   </div>
                   <div>
-                    <p className="text-sm font-bold text-slate-900">Recommender — Top 3</p>
+                    <p className="text-sm font-bold text-slate-900">Recommender  -  Top 3</p>
                     <p className="text-[11px] text-slate-500">12-factor persona fit ranking</p>
                   </div>
                   {bRecs[0]?.product_id && (() => {
@@ -710,7 +774,7 @@ export default function BankingAgentD() {
                   </div>
                   <div className="flex-1 min-w-0">
                     <p className="text-sm font-bold text-slate-900">Best Offer Agent</p>
-                    <p className="text-[11px] text-slate-500">Offer engine — retention & eligibility</p>
+                    <p className="text-[11px] text-slate-500">Offer engine  -  retention & eligibility</p>
                   </div>
                   {cOffer?.product_id && (() => {
                     const isPinned = String(pinsQuery.data?.offer_pin_product_id ?? '') === String(cOffer.product_id);
@@ -743,7 +807,7 @@ export default function BankingAgentD() {
                     <div className="flex items-start gap-3 p-4 rounded-xl bg-amber-50 border border-amber-200">
                       <span className="text-amber-500 text-lg shrink-0">⚠</span>
                       <p className="text-sm text-amber-800 leading-relaxed">
-                        No offer returned — eligibility filters or exclusions may apply. Supervisor still routes using segment fit.
+                        No offer returned  -  eligibility filters or exclusions may apply. Supervisor still routes using segment fit.
                       </p>
                     </div>
                   </div>
@@ -823,7 +887,7 @@ export default function BankingAgentD() {
             )}
             {!focus && data && sv && (
               <div className="rounded-2xl border border-slate-200 bg-slate-50 px-5 py-4 text-sm text-slate-500">
-                No focus product pinned — run Best Offer with a valid offer or add an incomplete application signal.
+                No focus product pinned  -  run Best Offer with a valid offer or add an incomplete application signal.
               </div>
             )}
 

@@ -41,7 +41,7 @@ export default function BankingAgentA() {
   const [pollingProgress, setPollingProgress] = useState(0);
   const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
-  // Reset on every mount — user must explicitly run segmentation; never replay stale session data.
+  // Reset on every mount  -  user must explicitly run segmentation; never replay stale session data.
   useEffect(() => {
     setUi((prev) => ({ ...prev, resultsEnabled: false }));
     queryClient.removeQueries({ queryKey: ['banking-agent-a-results'] });
@@ -104,7 +104,7 @@ export default function BankingAgentA() {
             setPollingStatus('failed');
           }
         } catch {
-          /* network blip — keep polling */
+          /* network blip  -  keep polling */
         }
       }, 2000);
     }
@@ -242,7 +242,7 @@ export default function BankingAgentA() {
           <div className="mt-4 bg-red-50 border border-red-200 rounded-lg p-4">
             <div className="flex items-center gap-2 text-red-800">
               <AlertCircle className="w-5 h-5" />
-              <span className="font-semibold">Segmentation failed — check server logs</span>
+              <span className="font-semibold">Segmentation failed  -  check server logs</span>
             </div>
           </div>
         )}
@@ -395,7 +395,7 @@ export default function BankingAgentA() {
                       <span className="font-semibold text-gray-900">
                         {persona.characteristics?.avg_products != null
                           ? `${Number(persona.characteristics.avg_products).toFixed(1)}`
-                          : '—'}
+                          : ' - '}
                       </span>
                     </div>
                     

@@ -1,5 +1,5 @@
 """
-OfferScorer — scores each product offer against a customer profile.
+OfferScorer  -  scores each product offer against a customer profile.
 
 Used by Agent C after the best product is selected: loads all active offers
 for that product, runs this scorer, and returns the best-fit offer plus
@@ -102,7 +102,7 @@ class OfferScorer:
         "urgency_retention_signal":  0.10,
     }
 
-    # Per-persona weight overrides — must sum to 1.0
+    # Per-persona weight overrides  -  must sum to 1.0
     PERSONA_WEIGHT_OVERRIDES: Dict[str, Dict[str, float]] = {
         "digital native": {
             "monetary_value_relevance":  0.20,
@@ -141,7 +141,7 @@ class OfferScorer:
         },
     }
 
-    # Guaranteed lifestyle tags injected per persona — augment customer-derived tags
+    # Guaranteed lifestyle tags injected per persona  -  augment customer-derived tags
     PERSONA_TAG_MAP: Dict[str, set] = {
         "digital native":     {"early_career", "digital_shopper", "safety_first"},
         "wealth builder":     {"wealth_builder", "high_earner", "retirement_saver"},
@@ -182,7 +182,7 @@ class OfferScorer:
         cs = _si(customer.get("credit_score", 600))
         home_type = str(customer.get("home_ownership_type", "renter")).lower()
 
-        # new_customer_only — use 12 months as the practical cutoff so recent joiners
+        # new_customer_only  -  use 12 months as the practical cutoff so recent joiners
         # still see new-customer offers (3-month window was too aggressive for this dataset)
         if _sb(offer.get("new_customer_only", False)) and tenure > 12:
             return False, "new_customer_only: customer tenure > 12 months"
@@ -320,7 +320,7 @@ class OfferScorer:
         return round(final, 4), breakdown
 
     def _build_fallback_result(self, product_id: str, customer: Dict) -> Dict[str, Any]:
-        """Lifestyle-matched generic offer — returned when no product-specific offers are registered or all are blocked."""
+        """Lifestyle-matched generic offer  -  returned when no product-specific offers are registered or all are blocked."""
         tags = self._derive_customer_lifestyle_tags(customer)
 
         if 'frequent_traveler' in tags or 'international_traveler' in tags:
@@ -329,9 +329,9 @@ class OfferScorer:
             b1, b2, b3 = "Earn points on every transaction", "Redeem for flights, hotels, and upgrades", "No blackout dates on redemptions"
             offer_type = "cashback_boost"
         elif 'debt_reducer' in tags:
-            hero = "Cut interest costs — pay smarter"
+            hero = "Cut interest costs  -  pay smarter"
             how  = "Set up automatic payments from your Meridian checking to lock in a rate discount and pay down debt faster."
-            b1, b2, b3 = "Rate reduction with auto-pay enrollment", "Debt-payoff tracker in the Meridian app", "No prepayment penalty — pay off early"
+            b1, b2, b3 = "Rate reduction with auto-pay enrollment", "Debt-payoff tracker in the Meridian app", "No prepayment penalty  -  pay off early"
             offer_type = "rate_discount"
         elif 'retirement_focused' in tags or 'retirement_saver' in tags:
             hero = "Your retirement goals, our priority"
@@ -341,7 +341,7 @@ class OfferScorer:
         elif 'homebuyer' in tags or 'home_improvement' in tags:
             hero = "Your path to homeownership starts here"
             how  = "Apply today for a personalized rate quote and connect with a Meridian home loan specialist."
-            b1, b2, b3 = "Competitive rates for qualified buyers", "60-day rate lock guarantee", "Fast pre-approval — decision in minutes"
+            b1, b2, b3 = "Competitive rates for qualified buyers", "60-day rate lock guarantee", "Fast pre-approval  -  decision in minutes"
             offer_type = "rate_discount"
         elif 'wealth_builder' in tags or 'high_earner' in tags:
             hero = "Premium banking for premium results"
@@ -349,12 +349,12 @@ class OfferScorer:
             b1, b2, b3 = "Premium deposit and loan rates", "Dedicated relationship banker", "Exclusive wealth management referrals"
             offer_type = "loyalty_reward"
         elif 'early_career' in tags or 'digital_shopper' in tags:
-            hero = "Start strong — zero fees, max rewards"
+            hero = "Start strong  -  zero fees, max rewards"
             how  = "Set up direct deposit to activate your new member welcome benefits immediately."
             b1, b2, b3 = "No monthly fee with direct deposit", "Instant mobile account management", "Free credit score monitoring"
             offer_type = "fee_waiver"
         elif 'family' in tags:
-            hero = "Family banking — simplified"
+            hero = "Family banking  -  simplified"
             how  = "Bundle family accounts to unlock shared savings benefits and simplify your household finances."
             b1, b2, b3 = "Linked family accounts in one app", "Joint savings booster rate", "Free family debit cards"
             offer_type = "fee_waiver"
@@ -369,7 +369,7 @@ class OfferScorer:
             b1, b2, b3 = "Seasonal interest-only payment options", "Lines of credit up to $2M", "48-hour credit decisions"
             offer_type = "rate_discount"
         else:
-            hero = "Exclusive Meridian member benefit — active now"
+            hero = "Exclusive Meridian member benefit  -  active now"
             how  = "Maintain your account in good standing to enjoy ongoing member benefits and preferred pricing."
             b1, b2, b3 = "Preferred rates and terms", "Priority customer service access", "Digital banking with advanced security"
             offer_type = "loyalty_reward"
@@ -429,7 +429,7 @@ class OfferScorer:
         if not candidates:
             _offer_logger.info(
                 f"[OFFER-INTEL] cust={_cust_id} | product={product_id} | "
-                f"NO OFFERS DEFINED — fallback"
+                f"NO OFFERS DEFINED  -  fallback"
             )
             return self._build_fallback_result(product_id, scored_customer)
 
@@ -451,7 +451,7 @@ class OfferScorer:
         if not eligible:
             _offer_logger.info(
                 f"[OFFER-INTEL] cust={_cust_id} | product={product_id} | "
-                f"total={len(candidates)} | eligible=0 | blocked={blocked} — all offers blocked"
+                f"total={len(candidates)} | eligible=0 | blocked={blocked}  -  all offers blocked"
             )
             for _oid, _why in blocked_reasons:
                 _offer_logger.info(f"[OFFER-INTEL]   🚫 {_oid} blocked: {_why}")
@@ -601,7 +601,7 @@ class OfferScorer:
         if prim_cat in ('online_retail', 'online retail', 'shopping'):
             tags.add('digital_shopper')
 
-        # life_stage — handles CSV values (Title Case / spaces / dashes) and snake_case variants
+        # life_stage  -  handles CSV values (Title Case / spaces / dashes) and snake_case variants
         life_stage = str(customer.get('life_stage', '') or '').lower().replace('-', '_').replace(' ', '_')
         if life_stage in ('student', 'young_single', 'young_professional'):
             tags.add('early_career')
@@ -613,7 +613,7 @@ class OfferScorer:
         if life_stage == 'retiree':
             tags.add('retirement_focused')
 
-        # financial_goal — handles CSV values (debt_payoff, wealth_growth, etc.)
+        # financial_goal  -  handles CSV values (debt_payoff, wealth_growth, etc.)
         goal = str(customer.get('financial_goal', '') or '').lower().replace(' ', '_')
         if goal in ('pay_off_debt', 'debt_payoff', 'debt_reduction'):
             tags.add('debt_reducer')
@@ -723,7 +723,7 @@ class OfferScorer:
         travel_freq  = str(customer.get("travel_frequency", "none")).lower()
         xsell        = _sf(customer.get("cross_sell_receptivity", 0.5))
 
-        # Lifestyle tag matching — primary behavioral signal when tags are declared on the offer
+        # Lifestyle tag matching  -  primary behavioral signal when tags are declared on the offer
         offer_tags = offer.get('lifestyle_tags')
         if offer_tags:
             customer_tags = self._derive_customer_lifestyle_tags(customer)
@@ -768,7 +768,7 @@ class OfferScorer:
             if offer_type == "signup_bonus" and goal == "pay_off_debt":
                 return max(0.0, 0.40 + xsell * 0.25 - 0.10)
 
-        # generic offer — moderate baseline boosted by cross-sell receptivity
+        # generic offer  -  moderate baseline boosted by cross-sell receptivity
         return 0.40 + xsell * 0.25
 
     # ── factor 3: life stage fit ──────────────────────────────────────────────
@@ -835,7 +835,7 @@ class OfferScorer:
             simplicity_bonus = 1.0 - (offer_complexity - 1) / 3.0
             digital_score = simplicity_bonus * 0.7 + (1 - w_boost) * 0.3
         else:
-            # mid-range — blend
+            # mid-range  -  blend
             digital_score = w_boost * digital + (1 - w_boost) * (1 - digital) * 0.5
 
         return min(1.0, max(0.05, digital_score))
@@ -936,7 +936,7 @@ class OfferScorer:
                 "inputs": {"Outstanding debt": "$0", "Fee sensitivity tier": fee_sens},
                 "formula": "No debt → fee_sensitivity fallback",
                 "steps": [
-                    "No outstanding debt — interest-savings path skipped",
+                    "No outstanding debt  -  interest-savings path skipped",
                     f"Fee sensitivity '{fee_sens}' → score = {sc}",
                 ],
             }
@@ -1086,7 +1086,7 @@ class OfferScorer:
             return {
                 "inputs": {"Offer lifestyle tags": ", ".join(offer_tags), "Customer tags": "none derived"},
                 "formula": "Lifestyle tags present but no customer tags derived",
-                "steps": ["Could not derive customer lifestyle tags — generic fallback"],
+                "steps": ["Could not derive customer lifestyle tags  -  generic fallback"],
             }
 
         if cashback_cat:
@@ -1299,7 +1299,7 @@ class OfferScorer:
                 bnote = f"Acquisition offer for {churn_category}-churn customer → −0.10 penalty"
         else:
             rb    = 0.0
-            bnote = f"Churn: {churn_category or 'Low/None'} — no retention adjustment"
+            bnote = f"Churn: {churn_category or 'Low/None'}  -  no retention adjustment"
 
         if not is_evergreen and days_left is not None:
             if days_left <= 7:    urg, tier = 1.00, "Critical (≤7d)"
@@ -1308,7 +1308,7 @@ class OfferScorer:
             elif days_left <= 60: urg, tier = 0.65, "Medium (≤60d)"
             else:                 urg, tier = 0.55, "Low (>60d)"
         else:
-            urg, tier = 0.55, "None — evergreen"
+            urg, tier = 0.55, "None  -  evergreen"
 
         sc = round(min(1.0, max(0.0, urg + rb)), 2)
         return {
@@ -1333,7 +1333,7 @@ class OfferScorer:
         offer_type = str(offer.get("offer_type", "")).lower()
         if offer_type == "signup_bonus":
             val = offer.get("value_amount", 0)
-            return f"${val} bonus vs customer income — spend attainability factored in (score {score:.0%})"
+            return f"${val} bonus vs customer income  -  spend attainability factored in (score {score:.0%})"
         if offer_type in ("intro_apr","balance_transfer_promo"):
             debt = _sf(customer.get("outstanding_debt_total", 0))
             return f"Interest savings on ${debt:,.0f} outstanding debt over intro period (score {score:.0%})"
@@ -1355,7 +1355,7 @@ class OfferScorer:
             if matched:
                 return f"Lifestyle match: customer profile ({', '.join(matched)}) aligns with offer's target audience"
             else:
-                return f"Lifestyle mismatch: offer targets {offer_tags} — no overlap with customer profile"
+                return f"Lifestyle mismatch: offer targets {offer_tags}  -  no overlap with customer profile"
         cat = offer.get("cashback_category") or "general"
         prim = customer.get("primary_spending_category","unknown")
         if str(cat).lower() == str(prim).lower():
@@ -1369,12 +1369,12 @@ class OfferScorer:
         age = customer.get("age", 40)
         ls  = customer.get("life_stage", "unknown")
         ot  = offer.get("offer_type","")
-        return f"Age {age} ({ls} stage) — {ot} offer fit for this life stage (score {score:.0%})"
+        return f"Age {age} ({ls} stage)  -  {ot} offer fit for this life stage (score {score:.0%})"
 
     def _explain_digital(self, offer, customer, score) -> str:
         dig = _sf(customer.get("digital_engagement_score", 0.5))
         cpx = offer.get("offer_complexity", 1)
-        return (f"Digital engagement {dig:.0%} vs offer complexity {cpx}/4 — "
+        return (f"Digital engagement {dig:.0%} vs offer complexity {cpx}/4  -  "
                 f"channel alignment {'strong' if score > 0.7 else 'moderate' if score > 0.4 else 'limited'}")
 
     def _explain_urgency(self, offer, churn_category, score) -> str:
@@ -1382,9 +1382,9 @@ class OfferScorer:
         if churn_category in ("High","Critical"):
             return f"Retention boost applied for {churn_category} churn risk customer"
         if days is not None and days <= 30:
-            return f"Time-limited offer — {days} days remaining creates urgency"
+            return f"Time-limited offer  -  {days} days remaining creates urgency"
         if _sb(offer.get("is_evergreen", False)):
-            return "Evergreen offer — no urgency premium, standard baseline score"
+            return "Evergreen offer  -  no urgency premium, standard baseline score"
         return f"Offer timing relevance (score {score:.0%})"
 
     @staticmethod
@@ -1428,7 +1428,7 @@ class OfferScorer:
         r_type = runner_offer.get("offer_type","")
         w_type = winner_offer.get("offer_type","")
         if gap > 0.15:
-            return f"Score gap {gap:.0%} — '{w_type}' offer better fit for this customer's profile"
+            return f"Score gap {gap:.0%}  -  '{w_type}' offer better fit for this customer's profile"
         if r_type != w_type:
             return f"'{w_type}' offer (score {winner_score:.0%}) ranked higher than '{r_type}' (score {runner_score:.0%}) for this profile"
         return f"Similar offer type but lower overall score ({runner_score:.0%} vs {winner_score:.0%})"

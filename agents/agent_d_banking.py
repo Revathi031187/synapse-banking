@@ -1,5 +1,5 @@
 """
-Agent D Banking — Behavioral supervisor / session orchestration.
+Agent D Banking  -  Behavioral supervisor / session orchestration.
 Connects saved goals, incomplete applications, and impression/click history to:
 - This visit's prioritized product stack (after Agent B + Agent C signals)
 - Impression logging for next-run deprioritization
@@ -336,7 +336,7 @@ class AgentD_Banking:
             offer_reason = str(offer.get("reasoning") or offer.get("reason") or "").strip()
 
         # Build offer card snapshot to surface in Recommender when the pinned product is shown.
-        # Requires only a product_id — offer experiment fields are optional so the card still
+        # Requires only a product_id  -  offer experiment fields are optional so the card still
         # renders even when no named offer experiment is active for this customer.
         _pinned_offer_card = None
         if offer and offer.get("product_id"):
@@ -437,7 +437,7 @@ class AgentD_Banking:
             "supervisor_view": {
                 "agent_b_product_recommendations": agent_b_top_three,
                 "agent_b_note": (
-                    "Agent B ranks banking products by persona fit, eligibility, and 12-factor match — "
+                    "Agent B ranks banking products by persona fit, eligibility, and 12-factor match  -  "
                     "not by campaign or offer strategy."
                 ),
                 # Fall back to top Agent B product if Agent C didn't select an offer
@@ -466,7 +466,7 @@ class AgentD_Banking:
                     bool(offer and offer.get("product_id")),
                 ),
                 "agent_c_note": (
-                    "Agent C picks the one best commercial offer (retention, strategy, eligibility) — "
+                    "Agent C picks the one best commercial offer (retention, strategy, eligibility)  -  "
                     "often different from B’s #1 ranked product."
                 ),
                 "digital_journey_signals": {
@@ -481,7 +481,7 @@ class AgentD_Banking:
                 "why_b_and_c_differ": (
                     "**Why the lists differ:** Agent B optimizes for **relationship fit** (segment, credit, "
                     "deposits, product history). Agent C optimizes for **business outcome** (one best offer). "
-                    "**Agent D** decides what Agent B should **lead with next** — an **incomplete application** "
+                    "**Agent D** decides what Agent B should **lead with next**  -  an **incomplete application** "
                     "beats everything; otherwise align with **Agent C’s primary** so mobile, branch, and email "
                     "stay consistent."
                 ),
@@ -529,10 +529,10 @@ class AgentD_Banking:
         # Template fallback
         if focus_source == "incomplete_application":
             return (
-                f"Recovery priority: incomplete application — {fn}",
+                f"Recovery priority: incomplete application  -  {fn}",
                 (
                     f"**Supervisor (Agent D) -> Agent B:** On the **next session or outbound campaign**, lead with "
-                    f"**{fn}**. The customer started but did not finish this application — recovery takes priority "
+                    f"**{fn}**. The customer started but did not finish this application  -  recovery takes priority "
                     f"over generic **{persona_label}** product rankings. Pin this product **#1** and pair with "
                     f"branch or digital completion messaging."
                 ),
@@ -559,7 +559,7 @@ class AgentD_Banking:
                 (
                     f"No **incomplete application** on file for this session. **Supervisor instructs Agent B:** on the "
                     f"**next visit or campaign**, lead with **{fn}** (Agent C primary) so recommendations match the "
-                    f"**commercial offer** — consistent across app, branch, and email."
+                    f"**commercial offer**  -  consistent across app, branch, and email."
                 ),
             )
         if focus_source == "agent_b_top_fallback":
@@ -606,7 +606,7 @@ class AgentD_Banking:
         lines = [
             f"**Supervisor summary (Customer {customer_id})**",
             "",
-            "**This session stack** — ordered by behavioral priority, then Agent C, then Agent B (ignored SKUs demoted):",
+            "**This session stack**  -  ordered by behavioral priority, then Agent C, then Agent B (ignored SKUs demoted):",
         ]
         for i, rec in enumerate(live[:10], 1):
             slot = rec.get("supervisor_slot", "")
@@ -632,7 +632,7 @@ class AgentD_Banking:
 
         oc = (agent_c or {}).get("offer")
         if oc:
-            lines.append(f"- Agent C primary offer: **{oc.get('product_name')}** — {(agent_c or {}).get('reason', '')[:120]}")
+            lines.append(f"- Agent C primary offer: **{oc.get('product_name')}**  -  {(agent_c or {}).get('reason', '')[:120]}")
 
         lines.append("")
         lines.append("**Next visit → Agent B**")
@@ -788,7 +788,7 @@ class AgentD_Banking:
             bullets.append(f"{label} matches how {persona_disp} customers typically expand the relationship")
 
         highlights: List[Dict[str, str]] = []
-        # After supervisor boost, displayed score can hit 100% — show pre-adjustment fit only (honest chip).
+        # After supervisor boost, displayed score can hit 100%  -  show pre-adjustment fit only (honest chip).
         if baseline_pct is not None and baseline_pct > 0:
             highlights.append(
                 {"label": "Baseline model fit", "value": f"{min(baseline_pct, 99.9):.1f}%"},
@@ -801,7 +801,7 @@ class AgentD_Banking:
         if src == "clicked_recommendation":
             headline = f"We’re leading with {label} because they engaged with it"
             p1 = (
-                f"They recently clicked or opened {label} in the recommendation journey — that is the strongest "
+                f"They recently clicked or opened {label} in the recommendation journey  -  that is the strongest "
                 f"real-time intent signal in the data we have for this session."
             )
             p2 = (
@@ -809,7 +809,7 @@ class AgentD_Banking:
                 f"product they did not choose and keeps the conversation credible."
             )
             p3 = (
-                f"Against their profile ({profile_clause}), {label} remains eligible and on-strategy — "
+                f"Against their profile ({profile_clause}), {label} remains eligible and on-strategy  -  "
                 f"the pin simply aligns the ranked list with what they already showed interest in."
             )
             if fit_bits:
@@ -825,17 +825,17 @@ class AgentD_Banking:
             )
         elif src == "incomplete_application":
             headline = f"Finish-line priority: {label}"
-            p1 = f"They started {label} but did not complete it — recovery beats cold cross-sell for conversion and experience."
+            p1 = f"They started {label} but did not complete it  -  recovery beats cold cross-sell for conversion and experience."
             p2 = f"As **{persona_disp}**, nudging completion (docs, rate lock, or next step) is often the fastest win."
             p3 = f"Given {profile_clause}, leading with this SKU signals you remember where they left off."
             p4 = fit_bits[0] if fit_bits else f"{label} still fits standard eligibility checks for their tier."
             retention = "Retention: abandoned applications are a leading churn signal; closing the loop materially improves win-back odds."
         elif src == "saved_goal":
             headline = f"They marked {label} as a goal"
-            p1 = f"{label} is on their saved goals or watchlist — stated intent without a fresh click still deserves airtime."
+            p1 = f"{label} is on their saved goals or watchlist  -  stated intent without a fresh click still deserves airtime."
             p2 = f"For **{persona_disp}**, surfacing the goal first respects what they told the bank they care about."
             p3 = f"With {profile_clause}, this is a disciplined way to deepen share-of-wallet without guessing."
-            p4 = fit_bits[0] if fit_bits else f"Twelve-factor scoring still shows how {label} fits their needs — see below."
+            p4 = fit_bits[0] if fit_bits else f"Twelve-factor scoring still shows how {label} fits their needs  -  see below."
             retention = "Retention: acknowledging saved goals reinforces that the bank listens, which lifts engagement on the next visit or outbound."
         elif src == "agent_c_primary":
             headline = f"Strategic lead offer: {label}"
@@ -843,7 +843,7 @@ class AgentD_Banking:
                 p1 = f"For **{persona_disp}**, the bank’s primary offer story is: {offer_snip}"
             else:
                 p1 = (
-                    f"For **{persona_disp}**, {label} is the single coordinated offer the bank wants to lead with — "
+                    f"For **{persona_disp}**, {label} is the single coordinated offer the bank wants to lead with  -  "
                     f"balancing growth, risk, and eligibility for this customer."
                 )
             p2 = (
@@ -855,16 +855,16 @@ class AgentD_Banking:
                 f"told one story in the app and another at the desk."
             )
             p4 = fit_bits[0] if fit_bits else (
-                f"{label} as a **{sub}** product maps to how similar customers expand — use the rate and benefits "
+                f"{label} as a **{sub}** product maps to how similar customers expand  -  use the rate and benefits "
                 f"below to personalize the conversation."
             )
             retention = (
                 "Retention: a consistent ‘hero’ offer reduces confusion, supports pricing discipline, and makes it "
-                "easier to defend why this product—not another—deserves the first conversation."
+                "easier to defend why this product - not another - deserves the first conversation."
             )
         elif src == "agent_b_top_fallback":
             headline = f"Segment-fit lead: {label}"
-            p1 = f"No stronger journey signal fired, so {label} — the best raw segment match — is the supervisory default."
+            p1 = f"No stronger journey signal fired, so {label}  -  the best raw segment match  -  is the supervisory default."
             p2 = f"For **{persona_disp}**, that means leading with the strongest model score while we wait for clicks, goals, or offers."
             p3 = f"Profile context: {profile_clause}."
             p4 = fit_bits[0] if fit_bits else f"Expand with the 12-factor narrative below to explain why the score landed where it did."
@@ -939,7 +939,7 @@ Rules:
 - Paragraph 1: why this product fits THIS customer’s situation (money, relationship, segment).
 - Paragraph 2: concrete product value using facts (rate/APY/type if present in bullets or offer_note).
 - Paragraph 3: consistency across channels / trust.
-- Paragraph 4: retention — why opening with this product helps keep or grow the relationship.
+- Paragraph 4: retention  -  why opening with this product helps keep or grow the relationship.
 
 CUSTOMER_FACTS_JSON:
 {payload}
@@ -1059,7 +1059,7 @@ P4: ...
                 target["priority_pin_reason"] = "\n\n".join(story.get("paragraphs") or [])
 
             if not pinned:
-                # Supervisor-clicked product may not be in B's filtered top-N — still force #1
+                # Supervisor-clicked product may not be in B's filtered top-N  -  still force #1
                 cat = _get_product_from_catalog(products_df, pin)
 
                 def _fnum(v: Any, default: float = 0.0) -> float:

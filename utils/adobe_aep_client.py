@@ -4,7 +4,7 @@ Adobe Experience Platform (AEP) activation client.
 Uses customer-supplied credentials (client id, org id, access token, sandbox,
 tenant id) to validate access and provision a personalization field group +
 schema in the Schema Registry. This is the real network call behind the
-"Activation" tab's Adobe Experience Platform connector — failures surface the
+"Activation" tab's Adobe Experience Platform connector  -  failures surface the
 raw Adobe API error back to the caller so the UI can show exactly what went
 wrong (status, title, detail, registry request id, sub-errors).
 
@@ -76,7 +76,7 @@ class AdobeAEPError(Exception):
 
 def _headers(access_token: str, client_id: str, org_id: str, sandbox: str) -> Dict[str, str]:
     # Credentials often arrive with stray leading/trailing whitespace (e.g. a
-    # newline picked up when pasting the access token into the textarea) —
+    # newline picked up when pasting the access token into the textarea)  - 
     # Adobe IMS rejects a Bearer token with trailing whitespace as invalid,
     # so strip every field before it goes on the wire.
     return {
@@ -114,7 +114,7 @@ def _field_group_body(tenant_id: str, title: str) -> Dict[str, Any]:
                 },
             }
         },
-        # A field group's allOf may only reference other field groups (via local $refs) —
+        # A field group's allOf may only reference other field groups (via local $refs)  - 
         # meta:intendedToExtend is what declares which class(es) it's compatible with.
         # Referencing the Profile class directly here is rejected as XDM-1507 ("classes"
         # aren't allowed in a field group's allOf).
@@ -125,7 +125,7 @@ def _field_group_body(tenant_id: str, title: str) -> Dict[str, Any]:
 def _find_by_title(kind: str, title: str, headers: Dict[str, str]) -> Optional[Dict[str, Any]]:
     """Look up an existing tenant field group/schema by exact title. Returns the
     id-only listing entry ({"$id": ..., "title": ..., "version": ...}) if found,
-    else None. Used to make activation idempotent — Adobe rejects a second
+    else None. Used to make activation idempotent  -  Adobe rejects a second
     create with the same title (XDM-1521 "Title not unique")."""
     try:
         resp = requests.get(
@@ -178,7 +178,7 @@ def validate_and_activate(
     tenant_id = tenant_id.strip()
     headers = _headers(access_token, client_id, org_id, sandbox)
 
-    # Step 1 — validate credentials with a cheap, read-only call
+    # Step 1  -  validate credentials with a cheap, read-only call
     try:
         resp = requests.get(
             f"{SCHEMA_REGISTRY_BASE}/tenant/schemas",
@@ -193,13 +193,13 @@ def validate_and_activate(
     if resp.status_code >= 400:
         raise AdobeAEPError(step="auth_validation", response=resp)
 
-    # Step 2 — create the field group holding this platform's personalization attributes
-    # (or reuse it if a prior activation already created one — titles must be unique per tenant).
+    # Step 2  -  create the field group holding this platform's personalization attributes
+    # (or reuse it if a prior activation already created one  -  titles must be unique per tenant).
     # Scoped to schema_title (not just industry) so a new schema name always gets its own
-    # field group — otherwise every schema, old or new, would keep resolving to whatever
+    # field group  -  otherwise every schema, old or new, would keep resolving to whatever
     # field group a fixed title happened to match, silently reusing stale field definitions.
     schema_title_for_fg = (schema_name or "").strip() or DEFAULT_SCHEMA_NAME
-    fg_title = f"{label} NBA Personalization Attributes — {schema_title_for_fg}"
+    fg_title = f"{label} NBA Personalization Attributes  -  {schema_title_for_fg}"
     field_group = _find_by_title("fieldgroups", fg_title, headers)
     if field_group is None:
         try:
@@ -220,7 +220,7 @@ def validate_and_activate(
 
     field_group_id = field_group.get("$id")
 
-    # Step 3 — assemble a schema on top of the Individual Profile class + new field group
+    # Step 3  -  assemble a schema on top of the Individual Profile class + new field group
     # (or reuse it if a prior activation already created one)
     schema_title = (schema_name or "").strip() or DEFAULT_SCHEMA_NAME
     schema = _find_by_title("schemas", schema_title, headers)
@@ -255,7 +255,7 @@ def validate_and_activate(
 
 def _find_dataset_by_name(name: str, headers: Dict[str, str]) -> Optional[str]:
     """Look up an existing dataset by exact name via the Catalog Service. Returns
-    its id if found, else None — makes dataset creation idempotent the same way
+    its id if found, else None  -  makes dataset creation idempotent the same way
     _find_by_title does for field groups/schemas."""
     try:
         resp = requests.get(
@@ -360,7 +360,7 @@ def ingest_records(
 
     upload_url = f"{BATCHES_BASE}/{batch_id}/datasets/{dataset_id}/files/activation-records.json"
     try:
-        # The batch file-upload endpoint rejects application/json (415) — it wants the
+        # The batch file-upload endpoint rejects application/json (415)  -  it wants the
         # raw bytes as application/octet-stream regardless of the batch's inputFormat.
         resp = requests.put(
             upload_url,
@@ -376,7 +376,7 @@ def ingest_records(
 
     try:
         # Signaling completion is a bodiless POST with action=COMPLETE as a query
-        # param — not a PATCH with a JSON body (that returns 405 Method Not Allowed).
+        # param  -  not a PATCH with a JSON body (that returns 405 Method Not Allowed).
         resp = requests.post(
             f"{BATCHES_BASE}/{batch_id}",
             headers=headers,
@@ -392,7 +392,7 @@ def ingest_records(
     status, batch_errors, metrics = _poll_batch_status(batch_id, headers, poll_attempts, poll_delay)
 
     # A batch's top-level status can say "success" even when every record inside it
-    # was individually rejected by validation — status only reflects "the file processed
+    # was individually rejected by validation  -  status only reflects "the file processed
     # without a system error," not "the records actually landed." metrics.failedRecordCount
     # is the authoritative signal; this is what was silently reporting false success before.
     failed_record_count = int((metrics or {}).get("failedRecordCount") or 0)
@@ -441,7 +441,7 @@ def _fetch_row_errors(batch_id: str, headers: Dict[str, str]) -> List[str]:
     """
     Best-effort fetch of per-record rejection reasons for a batch whose top-level
     status/errors didn't explain a nonzero failedRecordCount. Two-step: list the
-    error files for this batch, then read each file's _errors. Never raises —
+    error files for this batch, then read each file's _errors. Never raises  - 
     returns [] on any failure so a diagnostics hiccup doesn't mask the real error.
     """
     try:
@@ -457,7 +457,7 @@ def _fetch_row_errors(batch_id: str, headers: Dict[str, str]) -> List[str]:
         files = (listing.json() or {}).get("data") or []
 
         messages: List[str] = []
-        for f in files[:5]:  # cap — this is a diagnostic aid, not a full report
+        for f in files[:5]:  # cap  -  this is a diagnostic aid, not a full report
             href = ((f.get("_links") or {}).get("self") or {}).get("href")
             if not href:
                 continue

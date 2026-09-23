@@ -191,7 +191,7 @@ function fmtTooltip(v: number): string {
 }
 
 function fmtCellNum(n: number): string {
-  if (!isFinite(n)) return '—';
+  if (!isFinite(n)) return ' - ';
   const abs = Math.abs(n);
   if (n === Math.round(n) && n >= 2000 && n <= 2040) return String(n);
   if (abs >= 1_000_000_000) return (n / 1_000_000_000).toFixed(2) + 'B';
@@ -556,7 +556,7 @@ function exportReport(entry: ChatEntry) {
 
   const html = `<!DOCTYPE html>
 <html><head><meta charset="utf-8">
-<title>Segment AI Report — ${question}</title>
+<title>Segment AI Report  -  ${question}</title>
 <style>
   body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; max-width: 860px; margin: 40px auto; color: #1e293b; padding: 0 24px; }
   .logo { font-size: 11px; font-weight: 700; letter-spacing: 0.1em; color: #7c3aed; text-transform: uppercase; margin-bottom: 4px; }
@@ -638,7 +638,7 @@ function ChatMessage({
               {ans.table && (
                 <p className="mt-2.5 text-[10.5px] text-slate-400 flex items-center gap-1.5">
                   <span className="inline-block w-1.5 h-1.5 rounded-full bg-amber-400 flex-shrink-0" />
-                  AI-generated summary — verify values in the table below.
+                  AI-generated summary  -  verify values in the table below.
                 </p>
               )}
               {!!ans.token_usage?.total_tokens && (
@@ -786,12 +786,12 @@ const ANOMALY_META: Record<string, {
   high_value_churn: {
     whatItMeans: "These are your highest-value customers (Gold / Platinum CLV tier) who are statistically likely to close accounts or stop transacting within 90 days. Each lost Platinum customer can represent thousands in lifetime revenue.",
     colDefs: {
-      clv:        "Customer Lifetime Value — total expected revenue over this customer's entire relationship with Meridian Bank.",
+      clv:        "Customer Lifetime Value  -  total expected revenue over this customer's entire relationship with Meridian Bank.",
       churn_prob: "Probability (0–1) the customer will disengage within 90 days. Above 0.6 is considered high-risk.",
       clv_tier:   "CLV segment bucket: Platinum > Gold > Silver > Bronze.",
-      income:     "Annual gross income — used to gauge the financial impact of losing this customer.",
+      income:     "Annual gross income  -  used to gauge the financial impact of losing this customer.",
     },
-    actionHint: "Prioritise personal outreach from relationship managers — especially for Platinum-tier customers.",
+    actionHint: "Prioritise personal outreach from relationship managers  -  especially for Platinum-tier customers.",
   },
   wishlist_gap: {
     whatItMeans: "Products that many customers expressed interest in (wishlist) but rarely converted to purchase. A large gap between wishlisters and buyers usually signals a pricing, eligibility, or awareness barrier.",
@@ -806,10 +806,10 @@ const ANOMALY_META: Record<string, {
     whatItMeans: "Customers whose transaction count is significantly above the typical customer. Could indicate high engagement (power users) or irregular activity worth a compliance review.",
     colDefs: {
       txn_count:            "Total number of transactions recorded for this customer across all products.",
-      avg_count:            "Average transaction count across all customers — the baseline being compared against.",
+      avg_count:            "Average transaction count across all customers  -  the baseline being compared against.",
       z_score:              "Standard deviations above the mean transaction count. A z-score above 2 is a statistical outlier.",
       clv_tier:             "CLV segment: Platinum > Gold > Silver > Bronze. Helps distinguish power users from low-value outliers.",
-      churn_risk_category:  "Model-assigned churn risk label (High / Medium / Low) — high-volume + high-churn is the most urgent combination.",
+      churn_risk_category:  "Model-assigned churn risk label (High / Medium / Low)  -  high-volume + high-churn is the most urgent combination.",
     },
     actionHint: "Review high z-score customers for both upsell opportunity (engaged users) and unusual patterns.",
   },
@@ -825,7 +825,7 @@ const ANOMALY_META: Record<string, {
     whatItMeans: "Channel-persona pairs whose Return on Ad Spend (ROAS) is unusually high or low compared to the overall average. Positive outliers reveal your best-performing marketing mix; negative outliers highlight budget waste.",
     colDefs: {
       roas:        "Return on Ad Spend = Revenue ÷ Ad Spend. A ROAS of 3.5 means $3.50 earned for every $1 spent.",
-      total_spend: "Total marketing dollars spent on this channel-persona combination — context for how meaningful the ROAS figure is.",
+      total_spend: "Total marketing dollars spent on this channel-persona combination  -  context for how meaningful the ROAS figure is.",
       z_score:     "Standard deviations from the mean ROAS across all channel-persona pairs. z > 1.5 = significantly above average (great); z < −1.5 = significantly below average (review or cut).",
     },
     actionHint: "Shift budget toward high-ROAS pairs and pause or renegotiate low-ROAS channels.",
@@ -1038,7 +1038,7 @@ function TrendsPanel({ trends, onClose }: { trends: TrendResult[]; onClose: () =
                       {current.direction === 'down'  && <TrendingDown className="w-4 h-4 text-red-500" />}
                       {current.direction === 'flat'  && <Minus className="w-4 h-4 text-slate-400" />}
                       <span className={`text-lg font-bold ${current.direction === 'up' ? 'text-emerald-600' : current.direction === 'down' ? 'text-red-600' : 'text-slate-500'}`}>
-                        {current.pct_change !== null ? `${current.pct_change > 0 ? '+' : ''}${current.pct_change}%` : '—'}
+                        {current.pct_change !== null ? `${current.pct_change > 0 ? '+' : ''}${current.pct_change}%` : ' - '}
                       </span>
                     </div>
                   </div>
@@ -1053,7 +1053,7 @@ function TrendsPanel({ trends, onClose }: { trends: TrendResult[]; onClose: () =
                 <div className="flex items-start gap-2 bg-amber-50 border border-amber-200 rounded-xl px-3 py-2.5 mb-4">
                   <AlertTriangle className="w-3.5 h-3.5 text-amber-600 shrink-0 mt-0.5" />
                   <p className="text-[11px] text-amber-800 leading-relaxed">
-                    <span className="font-semibold">Last month is partial.</span> The most recent month in the chart contains only part of the month's data — transactions are still being recorded. The MoM % shown above compares the two most recent <em>complete</em> months, so the trend direction is reliable. The last bar may appear lower than expected simply because the month isn't finished yet.
+                    <span className="font-semibold">Last month is partial.</span> The most recent month in the chart contains only part of the month's data  -  transactions are still being recorded. The MoM % shown above compares the two most recent <em>complete</em> months, so the trend direction is reliable. The last bar may appear lower than expected simply because the month isn't finished yet.
                   </p>
                 </div>
               )}
@@ -1106,7 +1106,7 @@ function TrendsPanel({ trends, onClose }: { trends: TrendResult[]; onClose: () =
                             </td>
                             <td className="px-3 py-2 text-slate-900 text-right font-semibold">{fmtTrendVal(m.value, current.unit)}</td>
                             <td className={`px-3 py-2 text-right font-semibold ${isLastPartial ? 'text-amber-500 italic text-[10px]' : chg === null ? 'text-slate-400' : chg > 0 ? 'text-emerald-600' : chg < 0 ? 'text-red-600' : 'text-slate-400'}`}>
-                              {isLastPartial ? 'in progress' : chg === null ? '—' : `${chg > 0 ? '+' : ''}${chg.toFixed(1)}%`}
+                              {isLastPartial ? 'in progress' : chg === null ? ' - ' : `${chg > 0 ? '+' : ''}${chg.toFixed(1)}%`}
                             </td>
                           </tr>
                         );
@@ -1242,7 +1242,7 @@ function ProductPulsePanel({ products, onClose }: { products: ProductPulseItem[]
                   <div className="flex items-start gap-2 bg-amber-50 border border-amber-200 rounded-xl px-3 py-2.5 mb-4">
                     <AlertTriangle className="w-3.5 h-3.5 text-amber-600 shrink-0 mt-0.5" />
                     <p className="text-[11px] text-amber-800 leading-snug">
-                      Latest month is incomplete — KPIs and momentum reflect{' '}
+                      Latest month is incomplete  -  KPIs and momentum reflect{' '}
                       <strong>{current.kpi_month_label ?? 'last complete month'}</strong> instead.
                       The partial month is still shown in the chart.
                     </p>
@@ -1324,7 +1324,7 @@ function ProductPulsePanel({ products, onClose }: { products: ProductPulseItem[]
                               <td className="px-3 py-2 text-right font-semibold text-slate-900">{fmtVol(m.volume)}</td>
                               <td className="px-3 py-2 text-right text-slate-600">{m.customers.toLocaleString()}</td>
                               <td className={`px-3 py-2 text-right font-semibold ${chg === null ? 'text-slate-400' : chg > 0 ? 'text-emerald-600' : chg < 0 ? 'text-red-600' : 'text-slate-400'}`}>
-                                {chg === null ? '—' : `${chg > 0 ? '+' : ''}${chg.toFixed(1)}%`}
+                                {chg === null ? ' - ' : `${chg > 0 ? '+' : ''}${chg.toFixed(1)}%`}
                               </td>
                             </tr>
                           );
@@ -1650,7 +1650,7 @@ export default function SegmentAIPanel() {
             <div className={`flex items-center gap-1.5 pb-2 ${isFullscreen ? 'px-0 mb-1' : 'px-1'}`}>
               <div className="w-1.5 h-1.5 rounded-full bg-emerald-400 flex-shrink-0" />
               <p className={`text-slate-400 ${isFullscreen ? 'text-sm' : 'text-[10px]'}`}>
-                Context active — ask follow-ups like "show as pie chart" or "filter to High churn only"
+                Context active  -  ask follow-ups like "show as pie chart" or "filter to High churn only"
               </p>
             </div>
           )}

@@ -11,7 +11,7 @@ import { getBankingApiBase } from '../../utils/apiBase';
 const API_BASE_URL = getBankingApiBase();
 
 // ─── Types ──────────────────────────────────────────────────────────────────
-// A per-factor entry from Banking12FactorScorer.score_product()'s breakdown —
+// A per-factor entry from Banking12FactorScorer.score_product()'s breakdown  - 
 // same shape Agent B's Recommender tab uses for its "How is Suitability Score
 // calculated?" panel.
 interface FactorDetail {
@@ -41,7 +41,7 @@ interface TopProduct {
   sampled_customers: number | null; // size of the customer sample this product was ranked from
 }
 type OfferProduct = TopProduct;
-// One KPI chip in the segment-level Best Offer card — Est. Reach, Expected
+// One KPI chip in the segment-level Best Offer card  -  Est. Reach, Expected
 // Conversions, Projected Revenue, or Best Channel, each with a tooltip explaining
 // what it measures.
 interface AggregateOfferKpi {
@@ -60,7 +60,7 @@ interface AggregateBestOffer {
   category: string | null;
   subcategory: string | null;
   score_pct: number;
-  why_this_offer: string[];       // bulleted reasons — leads with Agent C's own tailored reason when available
+  why_this_offer: string[];       // bulleted reasons  -  leads with Agent C's own tailored reason when available
   how_to_earn: string | null;     // mechanics of qualifying, when a specific offer is configured
   what_you_get: string | null;    // the offer's headline value proposition
   benefits: string[];             // supporting benefit bullets under "what you get"
@@ -121,7 +121,7 @@ interface AdSpendMonthly { data: Record<string, Record<string, MonthlyRow[]>> }
 const CHANNELS = ['in_app', 'email', 'sms', 'branch'];
 const CHANNEL_LABELS: Record<string, string> = { in_app: 'In-App', email: 'Email', sms: 'SMS', branch: 'Branch' };
 
-// Segment identity color is driven by churn risk — the single most actionable
+// Segment identity color is driven by churn risk  -  the single most actionable
 // "at a glance" signal for a marketer scanning segments: healthy/growing segments
 // read green, segments that need retention attention read red, with amber in
 // between. It's a continuous gradient (not 3 fixed buckets) so e.g. 8% and 22%
@@ -130,7 +130,7 @@ const CHANNEL_LABELS: Record<string, string> = { in_app: 'In-App', email: 'Email
 // so this coloring is consistent with every other churn-tone indicator on the
 // page. Driving color off a real metric (rather than hashing the LLM-generated
 // name into an arbitrary fixed palette) also sidesteps the old failure mode of
-// a name the palette map didn't recognize — any churnPct always resolves to a
+// a name the palette map didn't recognize  -  any churnPct always resolves to a
 // real, visible color.
 function colorForSegment(name: string, churnPct: number): string {
   const pct = Number.isFinite(churnPct) ? Math.max(0, churnPct) : 14;
@@ -145,7 +145,7 @@ function colorForSegment(name: string, churnPct: number): string {
   return `hsl(${hue.toFixed(0)}, 70%, 38%)`;
 }
 
-// Display name for a segment's best offer — prefers the Agent-C-selected offer/promo
+// Display name for a segment's best offer  -  prefers the Agent-C-selected offer/promo
 // name from the aggregate-profile computation, falls back to that computation's
 // underlying product name, then to the older representative-customer pick, so a
 // segment still shows something sensible if the aggregate computation degraded
@@ -156,11 +156,11 @@ function bestOfferName(s: SegmentData): string {
     s.aggregate_best_offer?.product_name ||
     s.offer_product?.name ||
     s.top_products[0]?.name ||
-    '—'
+    ' - '
   );
 }
 
-// Segment descriptions are LLM-generated multi-sentence paragraphs — trim to
+// Segment descriptions are LLM-generated multi-sentence paragraphs  -  trim to
 // the first 1-2 sentences for the header; line-clamp is a CSS safety net for
 // any sentence that's still too long on its own.
 function shortDescription(desc: string): string {
@@ -224,7 +224,7 @@ function KpiTile({
   );
 }
 
-// Hover-to-explain bubble used next to KPIs, chart titles, and section headers —
+// Hover-to-explain bubble used next to KPIs, chart titles, and section headers  - 
 // tells a marketer (not a data analyst) what a number means and where it comes
 // from (which agent / which data file) without cluttering the UI permanently.
 const INFO_TIP_WIDTH = 224; // px, matches w-56
@@ -238,7 +238,7 @@ function InfoTip({ text }: { text: string }) {
     const rect = anchorRef.current?.getBoundingClientRect();
     if (!rect) return;
     // Anchor to the icon's center, then clamp so the (fixed-width) bubble
-    // never runs past the left/right edge of the viewport — e.g. for KPIs
+    // never runs past the left/right edge of the viewport  -  e.g. for KPIs
     // near the right side of the screen, centering on the icon alone would
     // push the tooltip's right edge off-screen.
     const centerX = rect.left + rect.width / 2;
@@ -369,7 +369,7 @@ function ChannelTable({ rows, subtitle }: { rows: { name: string; roas: number }
     <div className="bg-white border border-gray-200 rounded-xl shadow-sm p-4 flex flex-col">
       <div className="flex items-center gap-1.5">
         <p className="text-[14px] font-bold text-gray-900">Channel Performance</p>
-        <InfoTip text="ROAS per marketing channel (email, SMS, in-app, branch) — Opportunity ≥3.5×, Mixed 2.2-3.5×, Underperform below that." />
+        <InfoTip text="ROAS per marketing channel (email, SMS, in-app, branch)  -  Opportunity ≥3.5×, Mixed 2.2-3.5×, Underperform below that." />
       </div>
       <p className="text-[11.5px] text-gray-400 mb-3">{subtitle}</p>
       <div className="grid grid-cols-[1.3fr_1fr_0.7fr] gap-x-2 text-[10px] font-bold uppercase tracking-wide text-gray-400 pb-2">
@@ -397,7 +397,7 @@ function NoSegmentDataCard({ onGoToDataLoader }: { onGoToDataLoader: () => void 
         <p className="text-gray-900 font-bold text-[15px] mb-2">No segment data yet</p>
         <p className="text-gray-500 text-[13.5px] leading-relaxed mb-5">
           This dashboard shows real figures from Agent A's customer clusters. Load the banking dataset and run
-          clustering first, then come back — every number here will reflect the actual customer segments.
+          clustering first, then come back  -  every number here will reflect the actual customer segments.
         </p>
         <button
           onClick={onGoToDataLoader}
@@ -412,7 +412,7 @@ function NoSegmentDataCard({ onGoToDataLoader }: { onGoToDataLoader: () => void 
 
 // ─── Data hooks ─────────────────────────────────────────────────────────────
 // Cheap, fast pre-check (an in-memory boolean on the backend, no per-persona
-// computation) — gates the heavier useSegments() fetch below so that when
+// computation)  -  gates the heavier useSegments() fetch below so that when
 // nothing has been segmented yet, this page never even attempts the full
 // segments call, and never shows a "Loading segment data…" spinner for data
 // that was never going to exist. refetchOnMount: 'always' for the same
@@ -430,7 +430,7 @@ function useBankingStatus() {
   });
 }
 
-// refetchOnMount: 'always' on this one specifically — segmentation can complete
+// refetchOnMount: 'always' on this one specifically  -  segmentation can complete
 // on a totally different tab (Data Loader), and this page's own mount is the
 // one moment we can be certain to catch up regardless of whether a cross-tab
 // invalidateQueries call landed before this component mounted. The backend
@@ -520,10 +520,10 @@ export default function BankingSegmentDashboard() {
   const [descExpanded, setDescExpanded] = useState(false);
   const navigate = useNavigate();
 
-  // Fast pre-check first — an in-memory boolean on the backend, no per-persona
+  // Fast pre-check first  -  an in-memory boolean on the backend, no per-persona
   // computation. Gates the heavier segments fetch so that when nothing has
   // been segmented yet, we never even attempt it, and never show "Loading
-  // segment data…" for data that was never going to exist — we go straight
+  // segment data…" for data that was never going to exist  -  we go straight
   // from this quick check to the "go to Data Loader" card.
   const statusQuery = useBankingStatus();
   const dashboardEnabled = statusQuery.data?.agent_a_complete === true;
@@ -541,7 +541,7 @@ export default function BankingSegmentDashboard() {
   useEffect(() => { setDescExpanded(false); }, [segId]);
 
   if (statusQuery.isLoading) {
-    // Near-instant (a plain in-memory check on the backend) — an empty frame
+    // Near-instant (a plain in-memory check on the backend)  -  an empty frame
     // avoids both a layout jump and a "Loading…" flash for what's normally a
     // sub-frame wait.
     return <div className="flex-1" />;
@@ -565,7 +565,7 @@ export default function BankingSegmentDashboard() {
   if (segmentsQuery.data?.ready === false || segments.length === 0) {
     // Safety net for a race between the fast status check and the fuller
     // segments fetch (e.g. segmentation was reset in the moment between the
-    // two calls) — same card as the fast-path check above.
+    // two calls)  -  same card as the fast-path check above.
     return <NoSegmentDataCard onGoToDataLoader={() => navigate('/banking/data-loader')} />;
   }
 
@@ -592,7 +592,7 @@ export default function BankingSegmentDashboard() {
       {/* Right side: segment rail (fixed) + scrollable content */}
       <div className="flex-1 flex flex-col overflow-hidden min-h-0">
 
-        {/* Top strip — segment/cluster rail only */}
+        {/* Top strip  -  segment/cluster rail only */}
         <div className="bg-white border-b border-gray-200 flex-shrink-0">
           <div className="px-6 py-2.5 flex gap-2 overflow-x-auto">
             <button
@@ -619,7 +619,7 @@ export default function BankingSegmentDashboard() {
           </div>
         </div>
 
-        {/* Scrollable content — segment header now scrolls with everything else */}
+        {/* Scrollable content  -  segment header now scrolls with everything else */}
         <div className="flex-1 overflow-y-auto bg-gradient-to-b from-blue-50/50 via-gray-50 to-gray-50">
           <div className="max-w-6xl mx-auto px-6 py-6">
 
@@ -693,7 +693,7 @@ export default function BankingSegmentDashboard() {
 // ─── Overview: all segments ─────────────────────────────────────────────────
 type TopOffersSortKey = 'count' | 'avg_balance' | 'cross_sell_pct';
 
-// Small sortable column header — click to sort by this column, click again to
+// Small sortable column header  -  click to sort by this column, click again to
 // flip direction. Only the active column shows a solid arrow; inactive columns
 // show a faint one as an affordance without competing visually with the active sort.
 function SortableHeader({
@@ -744,7 +744,7 @@ function OverviewAll({ segments, portfolio, onSelect }: { segments: SegmentData[
       <div className="grid grid-cols-4 gap-3 mb-8">
         <KpiTile
           label="Addressable Customers" value={fmtInt(portfolio.total_customers)} caption="across 5 personas"
-          tip="Total customers across all Agent A segments — the full portfolio this platform can target."
+          tip="Total customers across all Agent A segments  -  the full portfolio this platform can target."
         />
         <KpiTile
           label="Avg. Customer Value" value={fmtUSD(portfolio.avg_balance)} caption="avg. deposit balance, blended"
@@ -752,7 +752,7 @@ function OverviewAll({ segments, portfolio, onSelect }: { segments: SegmentData[
         />
         <KpiTile
           label="Offer Receptivity" value={`${portfolio.cross_sell_pct.toFixed(0)}%`} caption="propensity to accept a targeted offer"
-          tip="Average cross-sell receptivity score across the whole portfolio — how likely customers are to say yes to a new offer."
+          tip="Average cross-sell receptivity score across the whole portfolio  -  how likely customers are to say yes to a new offer."
         />
         <KpiTile
           label="Churn Risk" value={`${portfolio.churn_pct.toFixed(0)}%`} tone={churnTone(portfolio.churn_pct)}
@@ -763,7 +763,7 @@ function OverviewAll({ segments, portfolio, onSelect }: { segments: SegmentData[
 
       <SectionHead
         title="Segment Snapshot" hint="Click a segment to see its full detail"
-        tip="One card per Agent A segment — best offer is picked from the segment's top 3 most-recommended products, ranked by how many real customers here had each in their own top picks."
+        tip="One card per Agent A segment  -  best offer is picked from the segment's top 3 most-recommended products, ranked by how many real customers here had each in their own top picks."
       />
       <div className="grid grid-cols-5 gap-3 mb-8">
         {segments.map((s) => (
@@ -830,7 +830,7 @@ function factorLabel(key: string): string {
 }
 
 // Agent B's rank_explanation/reason strings carry **bold**/*italic* Markdown
-// emphasis markers meant for a Markdown-aware renderer — this plain <p> isn't
+// emphasis markers meant for a Markdown-aware renderer  -  this plain <p> isn't
 // one, so strip them rather than showing literal asterisks to the user.
 function stripMdEmphasis(s: string): string {
   return s.replace(/\*\*(.*?)\*\*/g, '$1').replace(/\*(.*?)\*/g, '$1');
@@ -848,7 +848,7 @@ function ProductFactChip({ label, value, tip }: { label: string; value: string; 
   );
 }
 
-// Detail popup for a single recommended product — the full description, fees,
+// Detail popup for a single recommended product  -  the full description, fees,
 // rank rationale, and 12-factor breakdown that the compact card intentionally
 // leaves out (see ProductCompactCard). Same plain-CSS overlay convention as
 // frontend/src/components/CustomerInsightModal.tsx.
@@ -986,7 +986,7 @@ function OverviewSegment({ seg }: { seg: SegmentData }) {
       <div className="grid grid-cols-4 gap-3 mb-8">
         <KpiTile
           label="Segment Size" value={fmtInt(seg.count)} caption={`${seg.pct_of_base.toFixed(0)}% of portfolio`}
-          tip="Agent A's real cluster size — the number of customers K-Prototypes clustering assigned to this segment."
+          tip="Agent A's real cluster size  -  the number of customers K-Prototypes clustering assigned to this segment."
         />
         <KpiTile
           label="Avg. Customer Value" value={fmtUSD(seg.avg_balance)} caption="avg. deposit balance"
@@ -994,11 +994,11 @@ function OverviewSegment({ seg }: { seg: SegmentData }) {
         />
         <KpiTile
           label="Offer Receptivity" value={`${seg.cross_sell_pct.toFixed(0)}%`} caption="propensity to accept a targeted offer"
-          tip="Average cross-sell receptivity score for this segment's customers — how likely they are to say yes to a new product offer."
+          tip="Average cross-sell receptivity score for this segment's customers  -  how likely they are to say yes to a new product offer."
         />
         <KpiTile
           label="Churn Risk" value={`${seg.churn_pct.toFixed(0)}%`} tone={churnTone(seg.churn_pct)}
-          caption={churnTone(seg.churn_pct) === 'good' ? 'within healthy range' : churnTone(seg.churn_pct) === 'warning' ? 'elevated — monitor' : 'high — prioritize retention'}
+          caption={churnTone(seg.churn_pct) === 'good' ? 'within healthy range' : churnTone(seg.churn_pct) === 'warning' ? 'elevated  -  monitor' : 'high  -  prioritize retention'}
           tip="Average churn probability across this segment's real customers, from our churn model."
         />
       </div>
@@ -1008,7 +1008,7 @@ function OverviewSegment({ seg }: { seg: SegmentData }) {
           <SectionHead
             title="Recommended Products"
             hint=" "
-            tip="Ranked by how many real customers in this segment had each product in their own top picks — a segment-wide signal, not one representative customer's individual ranking (that's what the Recommender tab's persona mode shows instead) — click a product for full details."
+            tip="Ranked by how many real customers in this segment had each product in their own top picks  -  a segment-wide signal, not one representative customer's individual ranking (that's what the Recommender tab's persona mode shows instead)  -  click a product for full details."
           />
           <div className="bg-white border border-gray-200 rounded-xl shadow-sm overflow-hidden flex flex-col flex-1 min-h-0">
             <div className="flex-1 overflow-y-auto min-h-0 p-3 space-y-2">
@@ -1034,7 +1034,7 @@ function OverviewSegment({ seg }: { seg: SegmentData }) {
         <div className="flex flex-col h-[420px]">
           <SectionHead
             title="Best Offer for This Segment" hint=" "
-            tip="Picks the best of the segment's top 3 Recommended Products above, scored against the segment's aggregate profile (the mean/mode of every real customer's credit score, income, deposits, digital engagement, etc.) — so this can never disagree with what's already shown as recommended, and then finds the specific offer/promo for that product via Agent C."
+            tip="Picks the best of the segment's top 3 Recommended Products above, scored against the segment's aggregate profile (the mean/mode of every real customer's credit score, income, deposits, digital engagement, etc.)  -  so this can never disagree with what's already shown as recommended, and then finds the specific offer/promo for that product via Agent C."
           />
           <div className="bg-white border border-gray-200 rounded-xl shadow-sm overflow-hidden flex flex-col flex-1 min-h-0">
             <div className="p-4 flex-shrink-0" style={{ background: `linear-gradient(120deg, ${colorForSegment(seg.name, seg.churn_pct)}, #2563EB)` }}>
@@ -1046,7 +1046,7 @@ function OverviewSegment({ seg }: { seg: SegmentData }) {
                   </span>
                 )}
               </div>
-              <p className="text-[15px] font-extrabold text-white leading-tight">{agg?.offer_name || agg?.product_name || seg.featured_offer.split(' — ')[0]}</p>
+              <p className="text-[15px] font-extrabold text-white leading-tight">{agg?.offer_name || agg?.product_name || seg.featured_offer.split('  -  ')[0]}</p>
               {agg && (
                 <p className="text-[11px] text-white/70 mt-0.5">
                   {agg.offer_name ? `on ${agg.product_name}${agg.subcategory ? ' · ' + agg.subcategory : ''}` : (agg.subcategory || '')}
@@ -1156,7 +1156,7 @@ function MarketingAll({
         />
         <KpiTile
           label="Attributed Revenue" value={fmtUSD(metrics.summary.total_revenue_usd)} caption="conversions × product value"
-          tip="Revenue attributed to marketing campaigns — conversions multiplied by the value of the product converted."
+          tip="Revenue attributed to marketing campaigns  -  conversions multiplied by the value of the product converted."
         />
         <KpiTile
           label="Blended ROAS" value={`${metrics.summary.blended_roas.toFixed(2)}×`} tone={roasTone(metrics.summary.blended_roas)} caption="$ returned per $1 spent"
@@ -1171,11 +1171,11 @@ function MarketingAll({
       <SectionHead title="What Needs Your Attention" hint="" tip="Automatically generated from the actual best/worst-performing channel and segment in the data below." />
       <div className="grid grid-cols-3 gap-3 mb-8">
         <InsightCard tone="good" icon={<Star className="w-3.5 h-3.5" />} title={`Move budget into ${best.name}`}>
-          <p className="text-[11.5px] text-gray-500 leading-relaxed mb-2">{best.name} returns {best.roas.toFixed(1)}&times; ROAS blended across segments — the strongest channel in the portfolio right now.</p>
+          <p className="text-[11.5px] text-gray-500 leading-relaxed mb-2">{best.name} returns {best.roas.toFixed(1)}&times; ROAS blended across segments  -  the strongest channel in the portfolio right now.</p>
           <StatusBadge tone="good" label={`${best.roas.toFixed(1)}× return`} />
         </InsightCard>
         <InsightCard tone="critical" icon={<AlertTriangle className="w-3.5 h-3.5" />} title={`${worst.name} returns the least`}>
-          <p className="text-[11.5px] text-gray-500 leading-relaxed mb-2">This channel returns {worst.roas.toFixed(1)}&times; blended — the most room to improve of any channel in the portfolio.</p>
+          <p className="text-[11.5px] text-gray-500 leading-relaxed mb-2">This channel returns {worst.roas.toFixed(1)}&times; blended  -  the most room to improve of any channel in the portfolio.</p>
           <StatusBadge tone="critical" label={`${worst.roas.toFixed(1)}× return`} />
         </InsightCard>
         <InsightCard tone="neutral" icon={<PenSquare className="w-3.5 h-3.5" />} title={`${bestSegment.seg.name} is your best segment`}>
@@ -1223,7 +1223,7 @@ function MarketingAll({
                 </div>
               </div>
               <div className="flex justify-between text-[11.5px] text-gray-500 mb-2">
-                <span>Best channel</span><span className="text-gray-700 font-medium">{best ? `${best.name} · ${best.roas.toFixed(1)}×` : '—'}</span>
+                <span>Best channel</span><span className="text-gray-700 font-medium">{best ? `${best.name} · ${best.roas.toFixed(1)}×` : ' - '}</span>
               </div>
               <span className="text-[11.5px] font-bold text-blue-600">View breakdown &rarr;</span>
             </button>
@@ -1252,7 +1252,7 @@ function MarketingSegment({ seg, metrics, monthly }: { seg: SegmentData; metrics
         />
         <KpiTile
           label="Attributed Revenue" value={fmtUSD(totalRevenue)} caption="conversions × product value"
-          tip="Revenue attributed to this segment's marketing campaigns — conversions multiplied by product value."
+          tip="Revenue attributed to this segment's marketing campaigns  -  conversions multiplied by product value."
         />
         <KpiTile
           label="Segment ROAS" value={`${roas.toFixed(2)}×`} tone={roasTone(roas)} caption="$ returned per $1 spent"
@@ -1263,7 +1263,7 @@ function MarketingSegment({ seg, metrics, monthly }: { seg: SegmentData; metrics
       {best && worst && (
         <InsightCard tone="neutral" icon={<Star className="w-3.5 h-3.5" />} title={`Best channel: ${best.name} (${best.roas.toFixed(1)}× ROAS)`} wide>
           <p className="text-[11.5px] text-gray-500 leading-relaxed">
-            {seg.name}'s outreach performs best through {best.name} and worst through {worst.name} ({worst.roas.toFixed(1)}&times;) — consider shifting incremental budget accordingly.
+            {seg.name}'s outreach performs best through {best.name} and worst through {worst.name} ({worst.roas.toFixed(1)}&times;)  -  consider shifting incremental budget accordingly.
           </p>
         </InsightCard>
       )}
@@ -1271,7 +1271,7 @@ function MarketingSegment({ seg, metrics, monthly }: { seg: SegmentData; metrics
       <div className="grid grid-cols-[1.6fr_1fr] gap-4 mt-6 items-stretch">
         <div className="bg-white border border-gray-200 rounded-xl shadow-sm p-4">
           <div className="flex items-center gap-1.5 mb-2">
-            <p className="text-[14px] font-bold text-gray-900">Spend vs. Attributed Revenue — {seg.name}</p>
+            <p className="text-[14px] font-bold text-gray-900">Spend vs. Attributed Revenue  -  {seg.name}</p>
             <InfoTip text={`Monthly spend vs. attributed revenue for the "${persona}" marketing persona.`} />
           </div>
           <TrendChart spend={spend} revenue={revenue} title={`Spend vs. Attributed Revenue, ${seg.name}`} />

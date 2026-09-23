@@ -42,7 +42,7 @@ interface DatasetTableGroup { base: string; displayName: string; versions: Datas
 
 // Group a dataset's flat table list by base name (stripping a trailing `_v2`,
 // `_v3`, ... suffix) so a table with multiple versions renders as one cell
-// with a version dropdown instead of one row per version. Generic — a future
+// with a version dropdown instead of one row per version. Generic  -  a future
 // `_v3` groups automatically alongside `_v2` and the base table.
 function groupDatasetTables(tables: any[]): DatasetTableGroup[] {
   const groups = new Map<string, DatasetTableGroup>();
@@ -62,7 +62,7 @@ function groupDatasetTables(tables: any[]): DatasetTableGroup[] {
   return order.map(base => groups.get(base)!);
 }
 
-// Modern pill-style replacement for a native `<select>` — used to pick which
+// Modern pill-style replacement for a native `<select>`  -  used to pick which
 // version of a multi-version dataset (e.g. Ad Spend Monthly v1/v2) is active.
 function VersionDropdown({
   versions, activeName, onSelect,
@@ -126,7 +126,7 @@ export default function BankingDataLoader() {
   const [tableData, setTableData] = useState<any | null>(null);
 
   // Per-table checkbox state, keyed by table `name`. A table not yet present
-  // in this map defaults to checked (`checkedTables[name] ?? true`) — this is
+  // in this map defaults to checked (`checkedTables[name] ?? true`)  -  this is
   // what makes "select all by default" true both on a genuine first run and
   // whenever a new table (e.g. a freshly-added v2 dataset) appears later for
   // a returning user who has never seen it before.
@@ -137,7 +137,7 @@ export default function BankingDataLoader() {
   const toggleTable = (name: string) => setCheckedTables(prev => ({ ...prev, [name]: !isChecked(name) }));
 
   // Which concrete version is selected per table group (keyed by base name).
-  // Defaults to the newest version present — computed on read, not persisted
+  // Defaults to the newest version present  -  computed on read, not persisted
   // until the user actually picks one, so a newly-added even-newer version
   // (e.g. a future v3) still defaults correctly for a returning user.
   const [selectedVersion, setSelectedVersion] = useSessionStorageState(
@@ -154,6 +154,23 @@ export default function BankingDataLoader() {
     setAgentAUi(prev => ({ ...prev, pollingStatus: s }));
   const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const [pollingProgress, setPollingProgress] = useState(0);
+
+  // ── Results message text state machine ─────────────────────────────────────
+  // Both flags are deliberately local (plain useState, not sessionStorage-backed)
+  // so they naturally reset to false on every fresh mount of this component -
+  // i.e. every time the user switches away to another tab and back. That's
+  // exactly the "demote after switching tabs" behavior wanted: neither flag can
+  // stay true across a remount on its own, only be re-armed by the specific
+  // event each one represents.
+  // True only for the instant a segmentation THIS tab ran/resumed just finished.
+  const [justCompletedThisMount, setJustCompletedThisMount] = useState(false);
+  // True only when this tab discovers, on mount, that the backend ALREADY has a
+  // valid segmentation even though resultsEnabled (persisted) was false at that
+  // exact moment - i.e. this session never ran or resumed anything itself, the
+  // result was restored purely from the backend's own persisted cache.
+  const [justRestoredThisMount, setJustRestoredThisMount] = useState(false);
+  const resultsEnabledAtMountRef = useRef(resultsEnabled);
+  const resultsSectionRef = useRef<HTMLDivElement>(null);
 
   // startPolling lives in a ref so both the mutation callback and the resume-on-mount
   // effect share the same logic without creating circular hook dependencies.
@@ -172,6 +189,7 @@ export default function BankingDataLoader() {
           clearInterval(pollRef.current!);
           pollRef.current = null;
           const resultsRes = await fetch(`${API_BASE_URL}/api/banking/agent_a/results`);
+          setJustCompletedThisMount(true);
           if (resultsRes.ok) {
             const resultsData = await resultsRes.json();
             queryClient.setQueryData(['banking-agent-a-results'], resultsData.results || resultsData);
@@ -184,7 +202,7 @@ export default function BankingDataLoader() {
           // (see _run_agent_a_background), so these refetches land fast. Without
           // this, the Dashboard tab's ['dashboard-segments'] query keeps serving
           // its stale "please segment first" response from before this run until
-          // a full page reload — this is the actual page users run segmentation
+          // a full page reload  -  this is the actual page users run segmentation
           // from, so this is the invalidation that matters (BankingAgentA.tsx has
           // its own copy of this fix, but isn't the page most users hit).
           queryClient.invalidateQueries({ queryKey: ['dashboard-segments'] });
@@ -197,7 +215,7 @@ export default function BankingDataLoader() {
           pollRef.current = null;
           setPollingStatus('failed');
         }
-      } catch { /* network blip — keep polling */ }
+      } catch { /* network blip  -  keep polling */ }
     }, 2000);
   };
 
@@ -210,7 +228,7 @@ export default function BankingDataLoader() {
   }, []);
 
   // ── Data Loader queries / mutations ────────────────────────────────────────
-  // staleTime: 0 overrides the app-wide `Infinity` default (App.tsx) — this is
+  // staleTime: 0 overrides the app-wide `Infinity` default (App.tsx)  -  this is
   // a live browse/preview of on-disk state (row counts, which version's data
   // is actually present), not a computed result to persist. With the app-wide
   // default it never refetches after the first mount, so e.g. switching a
@@ -247,7 +265,7 @@ export default function BankingDataLoader() {
   });
 
   // ── transactions.csv explicit download (Databricks Files REST API, see
-  // utils/large_file_loader.py) — an explicit, watchable step in the Data
+  // utils/large_file_loader.py)  -  an explicit, watchable step in the Data
   // Loader itself instead of an invisible fetch buried inside Segmentation.
   const [txnDownload, setTxnDownload] = useState<{
     status: 'idle' | 'downloading' | 'complete' | 'error';
@@ -289,7 +307,7 @@ export default function BankingDataLoader() {
           } else {
             setTxnDownload({ status: 'downloading', pct });
           }
-        } catch { /* transient poll error — try again next tick */ }
+        } catch { /* transient poll error  -  try again next tick */ }
       }, 1000);
     } catch {
       setTxnDownload({ status: 'error', pct: null, error: 'Failed to start download' });
@@ -333,6 +351,12 @@ export default function BankingDataLoader() {
     }
   });
 
+  // Unconditionally enabled (not gated behind resultsEnabled): this is what lets
+  // a brand-new session/tab discover a segmentation the BACKEND already has
+  // (restored from its own persisted cache after a restart, or run by a
+  // different tab), not just resume one this specific tab already knew about.
+  // The endpoint itself is cheap (in-memory/disk lookup, no LLM calls) and
+  // already correctly returns null on 404, so this is safe to always attempt.
   const resultsQuery = useQuery({
     queryKey: ['banking-agent-a-results'],
     queryFn: async () => {
@@ -348,9 +372,33 @@ export default function BankingDataLoader() {
     gcTime: Infinity,
     refetchOnMount: false,
     refetchOnWindowFocus: false,
-    enabled: resultsEnabled,
     retry: 1
   });
+
+  // Discover a backend-persisted segmentation this tab never knew about. Only
+  // fires once resultsQuery actually has valid, non-empty data AND this specific
+  // mount started out with resultsEnabled false (captured once via the ref above,
+  // before any state change here could affect it) - i.e. this session never ran
+  // or resumed anything itself.
+  useEffect(() => {
+    if (resultsEnabledAtMountRef.current) return;
+    if (justCompletedThisMount) return; // this mount's own fresh run wins, not a "restore"
+    const r = resultsQuery.data;
+    const hasData = !!r && (r.total_customers ?? 0) > 0 && Object.keys(r.personas || {}).length > 0;
+    if (!hasData) return;
+    setJustRestoredThisMount(true);
+    setAgentAUi(prev => (prev.resultsEnabled ? prev : { ...prev, resultsEnabled: true }));
+  }, [resultsQuery.data, justCompletedThisMount]);
+
+  // Scroll to the results section once a restored segmentation is discovered,
+  // so returning to this tab after an app restart lands straight on it instead
+  // of the (now redundant) "Load Data" step at the top of the page. Mirrors the
+  // ref + scrollIntoView pattern already used in BankingAgentC.tsx.
+  useEffect(() => {
+    if (!justRestoredThisMount) return;
+    const t = setTimeout(() => resultsSectionRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' }), 400);
+    return () => clearTimeout(t);
+  }, [justRestoredThisMount]);
 
   const handleExport = async () => {
     try {
@@ -387,10 +435,15 @@ export default function BankingDataLoader() {
   const personas = results?.personas || {};
   const vizData = results?.visualization_data || {};
   // A `results` object can exist without representing a real completed
-  // segmentation — e.g. a stale/corrupt persisted cache — so only treat it as
+  // segmentation  -  e.g. a stale/corrupt persisted cache  -  so only treat it as
   // valid (and show the "complete" summary) when it actually has customers
   // assigned to at least one real persona, not just a truthy but empty shell.
   const hasValidResults = !!results && (results.total_customers ?? 0) > 0 && Object.keys(personas).length > 0;
+  // At least one table, in any dataset, has actually been loaded into the system
+  // (persistent backend state via GET /datasets, staleTime: 0 so this is always
+  // fresh - correct even right after a fresh page load/restart, unlike checking
+  // loadMutation.isSuccess which is mutation state that doesn't survive a remount).
+  const anyDataLoaded = datasets.some((ds: any) => (ds.tables || []).some((t: any) => t.loaded));
 
   if (datasetsLoading) {
     return (
@@ -411,7 +464,7 @@ export default function BankingDataLoader() {
         <h2 className="text-2xl font-bold text-gray-900">Available Datasets</h2>
 
         {/* Surfaced proactively (on page load, from GET /datasets) whenever the ad
-            spend dataset is code-forced to v1 and v1 itself failed to load — a
+            spend dataset is code-forced to v1 and v1 itself failed to load  -  a
             plain-language explanation, not a raw HTTP error. */}
         {datasetsData?.ad_spend_dataset_status?.error && (
           <div className="bg-red-50 border-2 border-red-300 rounded-xl p-6">
@@ -549,7 +602,7 @@ export default function BankingDataLoader() {
                                     <span className="flex items-center gap-1">
                                       <CheckCircle2 className="w-3 h-3 text-green-600" />
                                       {active.row_count?.toLocaleString() || 0} rows
-                                      {!checked && <span className="text-amber-600 ml-1">(unchecked — will be skipped)</span>}
+                                      {!checked && <span className="text-amber-600 ml-1">(unchecked  -  will be skipped)</span>}
                                     </span>
                                   ) : g.base === 'transactions' && txnDownload.status === 'downloading' ? (
                                     <div className="space-y-1">
@@ -716,7 +769,8 @@ export default function BankingDataLoader() {
 
           <button
             onClick={() => executeMutation.mutate()}
-            disabled={segmentationLoading}
+            disabled={segmentationLoading || !anyDataLoaded}
+            title={!anyDataLoaded ? 'Load a dataset into the system first' : undefined}
             className="btn-primary w-full flex items-center justify-center gap-2"
           >
             {segmentationLoading ? (
@@ -731,6 +785,9 @@ export default function BankingDataLoader() {
               </>
             )}
           </button>
+          {!anyDataLoaded && !segmentationLoading && (
+            <p className="text-xs text-amber-600 mt-2">Load a dataset into the system above first.</p>
+          )}
 
           {executeMutation.isError && (
             <div className="mt-4 bg-red-50 border border-red-200 rounded-lg p-4">
@@ -746,10 +803,20 @@ export default function BankingDataLoader() {
         {/* Results Section */}
         {hasValidResults && (
           <>
-            {/* Results header */}
-            <div className="flex items-center gap-2">
+            {/* Results header - text reflects HOW this data arrived: just finished
+                this mount (complete), resumed via a tab switch within the same
+                session (metrics), or discovered from the backend's own persisted
+                cache on a brand-new session (restored). Demotes to "metrics" on
+                the next remount either way, since both flags are local state. */}
+            <div ref={resultsSectionRef} className="flex items-center gap-2">
               <CheckCircle2 className="w-5 h-5 text-green-600" />
-              <span className="text-sm font-semibold text-green-700">Segmentation complete</span>
+              <span className="text-sm font-semibold text-green-700">
+                {justCompletedThisMount
+                  ? 'Segmentation complete'
+                  : justRestoredThisMount
+                    ? 'Current Segmentation details'
+                    : 'Segmentation metrics'}
+              </span>
             </div>
 
             {/* Summary Stats */}
@@ -870,7 +937,7 @@ export default function BankingDataLoader() {
                         <span className="font-semibold text-gray-900">
                           {persona.characteristics?.avg_products != null
                             ? `${Number(persona.characteristics.avg_products).toFixed(1)}`
-                            : '—'}
+                            : ' - '}
                         </span>
                       </div>
 
@@ -1001,7 +1068,7 @@ export default function BankingDataLoader() {
                     {viewingTable}
                   </h3>
                   <p className="text-blue-100 text-sm mt-1">
-                    Showing {tableData?.data?.length ?? 0} of {tableData?.total_rows?.toLocaleString() ?? '—'} rows
+                    Showing {tableData?.data?.length ?? 0} of {tableData?.total_rows?.toLocaleString() ?? ' - '} rows
                   </p>
                 </div>
                 <button

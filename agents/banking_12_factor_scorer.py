@@ -29,7 +29,7 @@ except ImportError:
 # row counts, as a cheap sanity check in case a since-freed object's id() gets
 # reused) of the customers/transactions DataFrames passed in. The API's
 # init_banking_agent_b() constructs 4 separate Agent B variants back-to-back
-# from the exact same two DataFrame objects — each one building its own
+# from the exact same two DataFrame objects  -  each one building its own
 # Banking12FactorScorer and, without this cache, redundantly re-scanning the
 # full transactions table (876K+ rows in the demo dataset) 4 times in a row
 # for identical results, which was a real, avoidable contributor to that
@@ -68,7 +68,7 @@ class Banking12FactorScorer:
 
         # TIER 3: Behavioral & Contextual (13%)
         'complexity_match': 0.04,       # Product sophistication vs customer level
-        'intent_score': 0.06,           # Cross-sell receptivity — directly measured, strong conversion signal
+        'intent_score': 0.06,           # Cross-sell receptivity  -  directly measured, strong conversion signal
         'segment_affinity': 0.02,       # Peer behavior in segment
         'transaction_pattern': 0.01,    # Activity level derived from monthly_transaction_volume
 
@@ -146,7 +146,19 @@ class Banking12FactorScorer:
         _STATS_CACHE[cache_key] = (self.customer_products, self.segment_product_popularity)
 
     def _merge_factor_weights(self, factor_weights: Dict = None) -> Dict[str, float]:
-        """Merge API/UI weights (percentages 0–100 or fractions) with defaults; normalize to sum 1.0."""
+        """Merge API/UI weights (always percentages 0-100  -  see utils/banking_factor_weights.py,
+        every caller in this codebase uses that convention exclusively) with defaults; normalize
+        to sum 1.0.
+
+        Previously this guessed percent-vs-fraction per key via `v > 1.5`, which silently broke
+        for any factor whose percent value was itself <= 1.5 (e.g. transaction_pattern's default
+        of 1%): `1` was treated as an already-a-fraction 100% instead of 1%, which both massively
+        over-weighted that one factor and, via the subsequent sum-normalization, roughly halved
+        every other factor's weight. That's what made the Recommender (which always sends
+        explicit factor_weights) rank products differently from Agent C's reference call (which
+        omits factor_weights and falls back to self.WEIGHTS untouched)  -  same nominal weights,
+        completely different effective weights once merged.
+        """
         if not factor_weights:
             return dict(self.WEIGHTS)
         keys = list(self.WEIGHTS.keys())
@@ -155,8 +167,7 @@ class Banking12FactorScorer:
             if k not in factor_weights:
                 merged[k] = self.WEIGHTS[k]
                 continue
-            v = float(factor_weights[k])
-            merged[k] = (v / 100.0) if v > 1.5 else v
+            merged[k] = float(factor_weights[k]) / 100.0
         s = sum(merged.values())
         if s <= 0:
             return dict(self.WEIGHTS)
@@ -412,8 +423,15 @@ class Banking12FactorScorer:
                 'hard_block': True,
             }
 
-        # Credit score match (40% of eligibility)
-        if credit_score >= min_credit + 50:
+        # Credit score match (40% of eligibility). min_credit == 0 is a real,
+        # intentional value for deposit products (checking/savings/CD/IRA never
+        # credit-check  -  see products.csv)  -  there's no bar to clear, so skip
+        # the qualification tiering (and its "vs 0 required" framing below)
+        # entirely rather than force a tier label onto a nonexistent threshold.
+        if min_credit <= 0:
+            credit_match = 1.0
+            credit_status = None
+        elif credit_score >= min_credit + 50:
             credit_match = 1.0
             credit_status = "well qualified"
         elif credit_score >= min_credit:
@@ -444,7 +462,13 @@ class Banking12FactorScorer:
 
         eligibility_score = (credit_match * 0.4) + (income_match * 0.35) + (balance_match * 0.25)
 
-        explanation = f"Credit: {int(credit_score)} vs {int(min_credit)} required ({credit_status})"
+        if min_credit <= 0:
+            # Lead with the reassurance, not the number  -  the customer's score didn't
+            # factor into eligibility here at all, so framing it as "Credit: 782 (...)"
+            # still reads like their score was being evaluated against something.
+            explanation = f"No minimum credit score required  -  automatically eligible (your score: {int(credit_score)})"
+        else:
+            explanation = f"Credit: {int(credit_score)} vs {int(min_credit)} required ({credit_status})"
         if min_income > 0:
             explanation += f", Income: ${income:,.0f} vs ${min_income:,.0f} required"
 
@@ -537,7 +561,7 @@ class Banking12FactorScorer:
                 score = 0.5
                 explanation = "Evaluate need case-by-case at this life stage"
         else:
-            # 35–54: peak borrowing / wealth-building — avoid tying auto loans to CDs/IRAs (same score → same #1 for everyone)
+            # 35–54: peak borrowing / wealth-building  -  avoid tying auto loans to CDs/IRAs (same score → same #1 for everyone)
             if kind == 'Investment':
                 score = 0.92
                 explanation = "Mid-career: prioritize growth, retirement, and rate products"
@@ -913,7 +937,7 @@ class Banking12FactorScorer:
         score += roi_score * 0.15
 
         # ========== 5. PROJECTED BANK REVENUE FROM THIS CUSTOMER (20%) ==========
-        # This score is CUSTOMER-SPECIFIC — it estimates how much revenue the bank
+        # This score is CUSTOMER-SPECIFIC  -  it estimates how much revenue the bank
         # will earn from THIS customer using THIS product, based on their actual
         # spending, balances, credit behaviour, and financial goals.
         # A free product ranks higher here for a customer whose profile generates
@@ -985,7 +1009,7 @@ class Banking12FactorScorer:
             rev_short_value = f"${deposit_float_rev:.0f}/yr"
 
         else:
-            # Checking — free accounts: revenue = NIM on deposit float + direct-deposit stability value
+            # Checking  -  free accounts: revenue = NIM on deposit float + direct-deposit stability value
             deposit_float_rev = avg_daily_bal * 0.025
             dd_stability       = (dd_amt * 0.015) if has_dd else 0.0   # sticky DD customer
             total_monthly_rev  = (deposit_float_rev + dd_stability) / 12 + monthly_fee

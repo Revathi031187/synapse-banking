@@ -28,15 +28,15 @@ TOGETHER_API_BASE = "https://api.together.xyz/v1"
 
 # Which Together models to try, and in what order, is controlled by
 # config/llm_priority.json (utils/llm_priority_config.get_together_models())
-# so a human can reorder/prune them without touching code — see that file's
+# so a human can reorder/prune them without touching code  -  see that file's
 # _readme for how. The old hardcoded list here was found (2026-08-20) to be
-# 100% dead — every one of its 5 models was either deprecated/non-serverless
+# 100% dead  -  every one of its 5 models was either deprecated/non-serverless
 # or rate-limited, so every call silently wasted ~10s per model before giving
 # up empty. get_together_models() falls back to a working default list if the
 # config file is ever missing.
 
 if not TOGETHER_API_KEY:
-    logger.warning("⚠️  TOGETHER_API_KEY is not set — LLM persona text will use fallbacks. Add it to .env")
+    logger.warning("⚠️  TOGETHER_API_KEY is not set  -  LLM persona text will use fallbacks. Add it to .env")
 else:
     logger.info(f"✓ TOGETHER_API_KEY loaded (ends with ...{TOGETHER_API_KEY[-6:]})")
 
@@ -142,13 +142,13 @@ class TogetherAIService:
         """
         Generate text using LLM. Tries several Together models in the order set by
         config/llm_priority.json, then falls back to Claude/Anthropic (via
-        claude_client) if every Together model fails — so a Together outage
+        claude_client) if every Together model fails  -  so a Together outage
         degrades to "slower" rather than "silently empty". Set TOGETHER_CHAT_MODEL
         in .env, or pass `model=`, to force a specific model to the front of the list.
         """
         t0 = time.monotonic()
         if not self.api_key or len(self.api_key) < 8:
-            logger.debug("Together chat skipped: no API key — trying Claude fallback")
+            logger.debug("Together chat skipped: no API key  -  trying Claude fallback")
             return self._claude_fallback(prompt, system_message, max_tokens, temperature, agent_name, call_type)
 
         env_model = (os.getenv("TOGETHER_CHAT_MODEL") or "").strip()
@@ -215,7 +215,9 @@ class TogetherAIService:
                     total_tokens=int(usage.get("total_tokens", 0) or 0),
                 )
                 logger.info(f"✅ Generated {len(generated_text)} chars with {mname}")
-                return generated_text
+                # Same em-dash sanitization as claude_client.generate_text()  -  an
+                # LLM stylistic tell that reads as obviously AI-written to a client.
+                return generated_text.replace("\u2014", " - ")
 
             except requests.exceptions.RequestException as e:
                 last_detail = str(e)
@@ -239,7 +241,7 @@ class TogetherAIService:
         that have no fallback of their own: if every Together model just failed (or
         there's no Together key at all), try Claude/Anthropic once directly before
         giving up completely. Calls claude_client's Anthropic path directly (not its
-        generate_text()) so this doesn't re-try Together AI a second time — we
+        generate_text()) so this doesn't re-try Together AI a second time  -  we
         already know it just failed.
         """
         _t0 = time.monotonic()
@@ -258,8 +260,8 @@ class TogetherAIService:
                     completion_tokens=usage.get("completion_tokens", 0), total_tokens=usage.get("total_tokens", 0),
                     fallback_used=True,
                 )
-                logger.info(f"[together_ai] Together unavailable for {call_type} — succeeded via Claude fallback")
-                return result
+                logger.info(f"[together_ai] Together unavailable for {call_type}  -  succeeded via Claude fallback")
+                return result.replace("\u2014", " - ")
         except Exception as e:
             logger.warning(f"[together_ai] Claude fallback also failed: {e}")
         return "Error generating description"
@@ -708,13 +710,13 @@ Generate exactly 3 or 4 opportunities. RULES: Each bullet MUST be one short sent
 
         Reads all 52+ customer signals (income, credit, life_stage, financial_goal,
         spending, debt, competitor card, digital engagement, etc.) and produces:
-          customer_insight_summary  — who they are and what they need now
-          product_fit_rationale     — why THIS product fits THIS customer
-          channel_rationale         — which channel and why
-          personalized_pitch        — ready-to-use 2-sentence pitch for banker/email
-          urgency_signal            — time-sensitive reason to act now (or none)
+          customer_insight_summary   -  who they are and what they need now
+          product_fit_rationale      -  why THIS product fits THIS customer
+          channel_rationale          -  which channel and why
+          personalized_pitch         -  ready-to-use 2-sentence pitch for banker/email
+          urgency_signal             -  time-sensitive reason to act now (or none)
 
-        Returns {} on any failure — caller uses rule-based fallback.
+        Returns {} on any failure  -  caller uses rule-based fallback.
         """
         age             = int(float(customer.get("age", 40) or 40))
         income          = float(customer.get("income", 40000) or 40000)
@@ -763,7 +765,7 @@ CUSTOMER PROFILE:
 - Primary spending: {primary_cat or 'not specified'} at ${monthly_spend:,.0f}/month
 - Outstanding debt: ${debt_total:,.0f}
 - Competitor credit card: {'Yes' if has_competitor else 'No'}
-- Overdraft issues: {'Yes — frequent' if high_overdraft else 'No'}
+- Overdraft issues: {'Yes  -  frequent' if high_overdraft else 'No'}
 - Digital engagement: {digital_score:.0%} (preferred channel: {channel_display})
 - Fee sensitivity: {fee_sensitivity}
 - Travel frequency: {travel_freq or 'not specified'}
@@ -771,19 +773,19 @@ CUSTOMER PROFILE:
 - Churn risk: {churn_category or 'Normal'}
 
 RECOMMENDED PRODUCT: {product_name} ({product_subcat}), annual fee ${product_fee:.0f}, rate {rate_label}
-{f'SELECTED OFFER: {offer_name} — {offer_value}' if offer_name else ''}
+{f'SELECTED OFFER: {offer_name}  -  {offer_value}' if offer_name else ''}
 
 Output a JSON object with EXACTLY these 5 keys (no other keys, no markdown):
-- "customer_insight_summary": 2 sentences — WHO this customer is and WHAT they need most. Reference age, life stage, goal, and one financial signal.
-- "product_fit_rationale": 2 sentences — WHY {product_name} fits THIS customer. Reference credit score, deposits, debt, or spending data specifically.
-- "channel_rationale": 1 sentence — WHY use {channel_display} for this customer based on their {digital_score:.0%} digital engagement.
-- "personalized_pitch": 2 sentences ready for a banker or email campaign — open with the customer's goal/life stage, close with the product benefit.
-- "urgency_signal": 1 sentence about any time-sensitive reason to act now (life event, competitor card, churn risk, debt). If none: "No immediate urgency — recommend standard outreach."
+- "customer_insight_summary": 2 sentences  -  WHO this customer is and WHAT they need most. Reference age, life stage, goal, and one financial signal.
+- "product_fit_rationale": 2 sentences  -  WHY {product_name} fits THIS customer. Reference credit score, deposits, debt, or spending data specifically.
+- "channel_rationale": 1 sentence  -  WHY use {channel_display} for this customer based on their {digital_score:.0%} digital engagement.
+- "personalized_pitch": 2 sentences ready for a banker or email campaign  -  open with the customer's goal/life stage, close with the product benefit.
+- "urgency_signal": 1 sentence about any time-sensitive reason to act now (life event, competitor card, churn risk, debt). If none: "No immediate urgency  -  recommend standard outreach."
 
 Output ONLY the JSON object."""
 
         system_msg = (
-            "You are a senior AI banking advisor. Output only a valid JSON object — "
+            "You are a senior AI banking advisor. Output only a valid JSON object  -  "
             "no markdown, no preamble, no explanation. "
             "Be specific: reference exact numbers from the customer profile."
         )
@@ -867,7 +869,7 @@ Output ONLY the JSON object."""
 
         system_msg = (
             "You are a bank marketing copywriter. "
-            "Output only a single valid JSON object — no preamble, no explanation, no markdown. "
+            "Output only a single valid JSON object  -  no preamble, no explanation, no markdown. "
             "Never use ALL CAPS except in push notifications. Keep copy warm, professional, and specific."
         )
 
@@ -883,7 +885,7 @@ Write a JSON object with exactly these keys:
 - "flyer_headline": punchy customer-specific headline referencing the offer value, max 12 words
 - "flyer_body": 2-3 sentences connecting customer's financial goal to the offer benefit, max 150 words
 - "email_subject": email subject line creating urgency or curiosity, max 60 characters
-- "email_body": personalized email — opening line addresses financial goal; middle paragraph explains offer clearly with terms; closing is a call to action for {best_channel} channel; max 250 words
+- "email_body": personalized email  -  opening line addresses financial goal; middle paragraph explains offer clearly with terms; closing is a call to action for {best_channel} channel; max 250 words
 - "push_notification": app push text, max 50 characters, include key benefit and a verb
 - "sms_text": SMS text, max 160 characters, include product name and offer value
 

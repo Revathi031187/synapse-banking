@@ -23,10 +23,10 @@ interface CustomerSearchSelectProps {
 }
 
 // Virtualization constants for the empty-query "show everything" list (can
-// be thousands of customers) — a fixed row height keeps the windowing math
+// be thousands of customers)  -  a fixed row height keeps the windowing math
 // exact; ROW_HEIGHT must match the button's h-[..] class below.
 const ROW_HEIGHT = 52;
-const LIST_HEIGHT = 256; // matches the dropdown's fixed h-64 (a fixed, not max, height —
+const LIST_HEIGHT = 256; // matches the dropdown's fixed h-64 (a fixed, not max, height  - 
                           // virtualization math needs a stable clientHeight to stay exact)
 const OVERSCAN = 6;
 
@@ -117,10 +117,10 @@ export default function CustomerSearchSelect({
 
   const results = useMemo(() => {
     const q = query.trim().toLowerCase();
-    // Empty query: the full customer list, in whatever order it was given —
+    // Empty query: the full customer list, in whatever order it was given  - 
     // no scoring/sort needed. Can be thousands of rows; the dropdown below
     // virtualizes its rendering so this stays smooth. A typed query still
-    // caps at maxResults — a real search already narrows things down, and
+    // caps at maxResults  -  a real search already narrows things down, and
     // there's no benefit to showing every weak fuzzy match.
     if (!q) return customers;
     return customers
@@ -134,7 +134,7 @@ export default function CustomerSearchSelect({
       .map((r) => r.customer);
   }, [customers, query, maxResults]);
 
-  // Virtualized window into `results` — only these rows actually mount.
+  // Virtualized window into `results`  -  only these rows actually mount.
   // Reuses dropdownRef (below) as the scrollable element itself, since it's
   // already the container these calculations need to track.
   const [scrollTop, setScrollTop] = useState(0);
@@ -151,7 +151,7 @@ export default function CustomerSearchSelect({
     if (dropdownRef.current) dropdownRef.current.scrollTop = 0;
   }, [query, open]);
 
-  // Keyboard nav can move `highlight` outside the currently-rendered window —
+  // Keyboard nav can move `highlight` outside the currently-rendered window  - 
   // scroll it into view (and keep scrollTop state in sync, since this moves
   // the DOM's scroll position directly) so arrowing through a long list works.
   useEffect(() => {
