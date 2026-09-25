@@ -436,7 +436,6 @@ export default function BankingAgentD() {
     return { pin, unpin };
   }
   const recommenderPinToggle = usePinToggle('recommender');
-  const offerPinToggle = usePinToggle('offer');
   type OrchestrateBody = NonNullable<typeof orchestrateQuery.data>['data'];
   // orchestrateQuery.data already covers both the live-fetch and the
   // reload-seeded (initialData) cases  -  no separate fallback needed here.
@@ -657,7 +656,7 @@ export default function BankingAgentD() {
           <p className="text-xs text-slate-500 leading-relaxed border-t border-slate-100 pt-4">
             After Director runs, open <strong>Recommender</strong> → <strong>Customer mode</strong> → same customer →{' '}
             <strong>Run recommendations</strong>. The <strong>supervisor focus product</strong> is auto-applied as{' '}
-            <strong>#1</strong>. Use the <strong>unpin</strong> button on either card below to clear it.
+            <strong>#1</strong>. Use the <strong>unpin</strong> button on the Recommender card below to clear it.
           </p>
         </div>
 
@@ -776,26 +775,6 @@ export default function BankingAgentD() {
                     <p className="text-sm font-bold text-slate-900">Best Offer Agent</p>
                     <p className="text-[11px] text-slate-500">Offer engine  -  retention & eligibility</p>
                   </div>
-                  {cOffer?.product_id && (() => {
-                    const isPinned = String(pinsQuery.data?.offer_pin_product_id ?? '') === String(cOffer.product_id);
-                    const busy = offerPinToggle.pin.isPending || offerPinToggle.unpin.isPending;
-                    return (
-                      <button
-                        type="button"
-                        onClick={() =>
-                          isPinned ? offerPinToggle.unpin.mutate() : offerPinToggle.pin.mutate(cOffer.product_id!)
-                        }
-                        disabled={busy}
-                        title={isPinned ? 'Unpin this offer' : 'Pin this offer'}
-                        className={`shrink-0 inline-flex items-center gap-1 px-2.5 py-1 rounded-full border text-[11px] font-semibold disabled:opacity-50 ${
-                          isPinned ? 'border-violet-200 bg-white text-violet-700 hover:bg-violet-50' : 'border-slate-200 bg-white text-slate-500 hover:bg-slate-50'
-                        }`}
-                      >
-                        {isPinned ? <PinOff className="w-3 h-3" /> : <Pin className="w-3 h-3" />}
-                        {busy ? 'Working…' : isPinned ? 'Unpin' : 'Pin'}
-                      </button>
-                    );
-                  })()}
                   {cOffer?.status === 'Segment recommendation' && (
                     <span className="text-[10px] font-bold uppercase px-2 py-0.5 rounded-full bg-slate-100 text-slate-500 shrink-0">Segment fallback</span>
                   )}
