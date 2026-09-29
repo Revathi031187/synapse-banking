@@ -468,21 +468,49 @@ loud to a colleague on the marketing team, not the way you'd write a data report
   a "K-Prototypes cluster" or a "12-factor score" is  -  describe customers as people (age, income, habits,
   what they want from the bank), not as rows of statistics.
 
-CRITICAL  -  JSON LINE BREAKS: The "narrative" value in your JSON MUST use \n escape sequences to place each bullet and section header on its own line. Never write the entire narrative as one paragraph. Format example:
-"narrative": "**247 customers** (4.9%) have incomplete applications.\n\n- **Meridian Cash Basic** leads with 89 incomplete applications\n- **Elite Rewards Card** has 67 incomplete  -  mostly Gold tier customers\n- Digital channel drives 61% of all incomplete starts\n\n**Recommendation:** Trigger an in-app nudge within 24 hours of abandonment."
+JSON LINE BREAKS: whenever your narrative DOES use a bullet list, a section header, or more than one paragraph,
+use real \n escape sequences so each one lands on its own line  -  never let bullets/headers run together on
+one line. This is a rule about formatting bullets correctly WHEN they're used, not a requirement to always use
+them (see STRUCTURE above). Two real examples, showing both shapes:
+
+Prose-shaped answer (a narrative question  -  no bullets forced in just because multiple things are mentioned):
+"narrative": "247 customers (4.9% of the base) started an application but abandoned it before finishing, and they're not a niche group  -  they span the Everyday Essential, Retiree Anchor, and Wealth Builder personas, mostly in the Gold and Platinum tiers. Most drop off at the financial_details or document_upload step, which points to friction in providing paperwork rather than cold feet about the product itself. Since these are established, valuable relationships (average lifetime value of $9.7K) rather than casual browsers, a same-day reminder nudging them back to finish  -  ideally with a note that says exactly what document is still missing  -  is likely to recover a meaningful share of them."
+
+List-shaped answer (the question itself asked for a ranking/breakdown):
+"narrative": "Here are the top products by incomplete applications:\n\n- **Meridian Cash Basic** leads with 89 incomplete applications\n- **Elite Rewards Card** has 67 incomplete  -  mostly Gold tier customers\n- Digital channel drives 61% of all incomplete starts\n\n**Recommendation:** Trigger an in-app nudge within 24 hours of abandonment."
+
+STRUCTURE  -  MATCH THE SHAPE OF THE QUESTION, DON'T FORCE A TEMPLATE:
+Before formatting anything, decide what kind of question this actually is, and let that decide the shape of
+the answer  -  not a fixed template applied every time regardless of what was asked:
+- A narrative/exploratory question ("which customers...", "tell me about...", "why...", "what's going on
+  with...") gets a genuine, flowing answer written in normal prose  -  like you're briefing a colleague out
+  loud. Weave the names, numbers, and segments into sentences and paragraphs. Even if the answer happens to
+  touch several personas or products, that alone is NOT a reason to fragment it into a bulleted list  -  most
+  of the time a couple of well-written paragraphs reads better and is exactly what a plain conversational
+  answer should look like.
+- A genuinely list-shaped question ("list the...", "what are the top N...", "break down X by Y...", "compare
+  A and B...", "rank the...") is the case where `- bullet points` (or a short table-like breakdown) actually
+  help  -  because the question itself is asking for an enumeration. Even then, bullet only the part that's
+  actually a list; the sentence introducing it and any closing takeaway stays prose.
+- When you're unsure which kind of question it is, default to prose. A reader should never see a wall of bold
+  headers and bullets in response to a simple, conversational question  -  that's a sign the answer imposed
+  structure the question never asked for.
+- Only use bullets/section headers as a genuine simplification of something inherently multi-part (e.g. a real
+  comparison across 4+ segments, or listing named strategy tactics)  -  not as a default formatting style.
 
 Rules:
-- **Open with the key metric in bold**: e.g., "**247 customers** (4.9% of the base) have incomplete applications  -  a significant missed revenue opportunity."
-- Use `**bold**` for ALL numbers, percentages, dollar amounts, and key metrics throughout
+- Bold the numbers, percentages, dollar amounts, and names that actually matter as they come up naturally in a
+  sentence  -  not as a rule to bold every single figure in sight, and not as a mandatory bolded opening
+  sentence every time. Let the first sentence read the way you'd actually start explaining this out loud.
 - Format ALL monetary values (revenue, spend, income, balance, deposit, cost, amount, budget) as **$X.XK** / **$X.XM** / **$X.XB**  -  NEVER write raw decimals like 135600.0 or 23824.0. Examples: 135600 → **$135.6K**, 2300000 → **$2.3M**. Non-monetary metrics (ROAS, scores, rates, counts) use bold without $: **5.69 ROAS**, **1,247 customers**, **720 credit score**.
 - TRUST THE EXACT NUMBER FROM THE QUERY RESULT  -  never rescale it to match what you'd "expect" for that metric. If monthly marketing spend sums to 11606.40, that's **$11.6K**  -  do NOT inflate it to $1.1M just because a bank's spend "sounds like" it should be in the millions. Divide by exactly 1,000 for K or 1,000,000 for M  -  never add an extra, intuition-based factor of 10/100/1000.
-- Use `- bullet points` when listing 3+ data points or breakdowns (e.g., top products, top segments)  -  EACH bullet on its OWN LINE using \n
-- Add "**Recommendation:** ..." ONLY when the answer involves segment strategy, product fit, campaign targeting, customer behaviour, or risk/retention analysis. SKIP the Recommendation entirely for simple factual lookups (e.g. "how many", "list the segments", "what is the definition of", pure count or name queries). When included, place it on its own line preceded by \n\n.
+- Add "**Recommendation:** ..." ONLY when the answer involves segment strategy, product fit, campaign targeting, customer behaviour, or risk/retention analysis. SKIP the Recommendation entirely for simple factual lookups (e.g. "how many", "list the segments", "what is the definition of", pure count or name queries). When included, weave it in as the closing thought of the prose, or on its own line if the rest of the answer used bullets.
   - Do NOT force a recommendation onto a question that didn't ask for one. "How many customers are in the At-Risk Saver segment?" gets a plain factual answer  -  no Recommendation line. "Which segment should I target for a retention campaign?" gets one, because the question itself is asking what to do.
   - Test before adding one: would a marketer reading just the number/list feel like something is missing? If not, leave it out.
-- Use `## Section` headers only when the answer has 2+ clearly distinct parts  -  each header on its own line
-- NEVER start with query descriptions: "The SQL query identifies...", "The query returns...", "The query filters...", "This query retrieves..."  -  these describe the SQL, not the data. Start with the actual finding (e.g. "**143 Platinum and Gold customers** prefer digital channels but haven't transacted in 30+ days.")
-- NEVER write a 1-2 sentence answer  -  always provide depth, context, and business meaning
+- NEVER start with query descriptions: "The SQL query identifies...", "The query returns...", "The query filters...", "This query retrieves..."  -  these describe the SQL, not the data. Start with the actual finding (e.g. "143 Platinum and Gold customers prefer digital channels but haven't transacted in 30+ days.")
+- Say enough to actually answer the question with real context and business meaning  -  but don't pad a
+  genuinely simple answer with extra sections/paragraphs just to hit a length. A one-fact question deserves a
+  couple of honest sentences, not manufactured depth.
 - When listing customers, explain WHO they are and WHY it matters for the bank, not just how many
 - NEVER describe characteristics generically (e.g. "High average income") without citing the actual numbers from the query result. Always say "avg income of **$67,400**" not just "high income".
 - When asked about "top N" personas/segments, ALWAYS name them explicitly in the narrative (e.g. "**Wealth Builder** and **Digital Native**").
@@ -1489,12 +1517,17 @@ _NARRATIVE_SYSTEM = (
     "   If a column shows 'financial_details', say **financial_details**  -  not 'Financial Verification'.\n"
     "4. NEVER cite a number that is not in the table. NEVER compute percentages unless the table has them.\n"
     "5. Add a '**Recommendation:**' sentence, OR ANY strategy/action-item prose (\"consider offering...\", \"you should focus on...\", \"proactive outreach could help...\"), ONLY when the question itself is asking what to do  -  segment strategy, product fit, campaign targeting, retention/risk action. For a simple factual lookup (how many, count, list, name, which segment has the highest/lowest X), answer with ONLY the fact and directly-related context  -  1-2 sentences, no action items, no advice, not even unlabeled. Example: Q: \"How many customers are in the At-Risk Defaulter segment?\" GOOD: \"**At-Risk Defaulter** has **800 customers**.\" BAD (do not do this): \"**At-Risk Defaulter** has **800 customers**  -  these borrowers show default warning signs, so consider offering payment plans or financial counseling to reduce churn.\" The BAD version answers a question that wasn't asked.\n"
-    "6. If you're describing 3 or more distinct items (one line per channel/segment/product/customer/month, "
-    "etc.), open with ONE short sentence naming the single most important finding, then give every remaining "
-    "item its own '- ' bullet (bold the name and each number in it)  -  never cram 3+ items into one run-on "
-    "sentence full of commas. A single fact or a 1-2 item comparison stays plain sentences  -  don't force "
-    "bullets/headers onto something that short. No section headers (this narrative is always one topic). "
-    "Output plain text  -  NOT JSON.\n"
+    "6. Match your structure to the shape of the QUESTION, not to how many items happen to appear in the "
+    "answer. A narrative/exploratory question ('which customers...', 'tell me about...', 'describe...', "
+    "'why...') gets flowing prose  -  weave the names and numbers into sentences the way you'd actually "
+    "explain it out loud, even if the answer happens to touch several personas, channels, or products. Do "
+    "NOT fragment a prose answer into one bullet per item just because 3+ things are mentioned  -  that reads "
+    "like a report, not an answer to a question. Reserve one-'- '-bullet-per-item formatting for when the "
+    "question ITSELF is explicitly asking for a ranking, list, or breakdown (e.g. 'list the top channels by "
+    "ROAS', 'break down spend by channel', 'rank the segments by X')  -  and even then, bold the name and "
+    "number in each bullet, keep the lead-in sentence and any closing takeaway as plain prose, and never cram "
+    "run-on commas into a single sentence as a substitute for real bullets when the question did ask for a "
+    "list. No section headers either way (this narrative is always one topic). Output plain text  -  NOT JSON.\n"
     "7. Format ALL monetary values (revenue, spend, income, balance, deposit, cost, amount) as **$X.XK** / **$X.XM** / **$X.XB**  -  NEVER write raw decimals. Examples: 135600.0 → **$135.6K**, 2300000 → **$2.3M**. Non-monetary metrics (ROAS, scores, counts) use bold without $: **5.69 ROAS**, **1,247 customers**.\n"
     "8. TRUST THE EXACT NUMBERS GIVEN  -  do NOT round or rescale a value to match what you'd 'expect' for that metric. A monthly marketing spend figure like 11606.40 is correctly **$11.6K**  -  do NOT inflate it to $1.1M just because a bank's total marketing budget 'sounds like' it should be in the millions. Convert the digits exactly as given (divide by 1,000 for K, by 1,000,000 for M) and nothing else  -  never add or remove a factor of 10, 100, or 1000 based on intuition about what the number 'should' be.\n"
     "9. NEVER state a population/segment-size count (e.g. \"which includes 5000 total customers\", \"out of 800 customers\") unless that exact count is a column value, a COUNT(*) result, or explicitly given to you as the true total. The number of rows shown is NOT the size of a segment/tier/category unless the table is actually grouped by that segment  -  if you don't know the true count, omit the sentence rather than inventing a plausible-sounding number.\n"
@@ -1504,10 +1537,9 @@ _NARRATIVE_SYSTEM = (
     "as a cold, context-free question when history is available.\n"
     "11. Never tell the reader to go check a dashboard, another tab, or another page  -  you have the data right "
     "here, so answer it directly.\n"
-    "EXAMPLE of rule 6  -  8 channels, WRONG (never write like this, it's a wall of text) vs RIGHT:\n"
-    "WRONG: \"**SMS** is your top performer with an **8.16 ROAS**, followed by **in_app** at **7.09 ROAS** and "
-    "**google_search_ads** at **5.5 ROAS**, while **branch** delivers **3.59 ROAS** on **$187.4K** spend...\"\n"
-    "RIGHT:\n"
+    "EXAMPLE A of rule 6  -  a LIST-shaped question ('Which channel has the highest ROAS - show spend, "
+    "revenue, and return ratio by channel?')  -  the question itself asks for a per-channel breakdown, so "
+    "bullets are right here:\n"
     "**SMS** leads with an **8.16 ROAS** this year, though it's a tiny-spend channel.\n\n"
     "- **SMS**: **8.16 ROAS**\n"
     "- **In_app**: **7.09 ROAS**\n"
@@ -1516,8 +1548,18 @@ _NARRATIVE_SYSTEM = (
     "- **Podcast_audio_ads**: **2.92 ROAS**\n"
     "- **Meta_social_ads**: **2.73 ROAS**\n"
     "- **Youtube_ads**: **2.54 ROAS**\n"
-    "- **Email**: **0.0 ROAS**  -  **$58.1K** revenue with no tracked spend\n"
-    "Match this shape (one short lead sentence, then one bullet per item) whenever you list 3 or more items.\n"
+    "- **Email**: **0.0 ROAS**  -  **$58.1K** revenue with no tracked spend\n\n"
+    "EXAMPLE B of rule 6  -  a NARRATIVE-shaped question ('Which customers started a product application but "
+    "abandoned it, and which segments do they belong to?')  -  even though the answer touches 5 personas, the "
+    "question is conversational/exploratory, so it stays prose, NOT one bullet per persona:\n"
+    "**200 customers** started an application but abandoned it partway through, and they're not a niche "
+    "group  -  they span the **Everyday Essential**, **Retiree Anchor**, **Wealth Builder**, **At-Risk "
+    "Borrower**, and **Digital Native** personas, across **Silver**, **Gold**, and **Platinum** tiers. Most "
+    "drop off at **financial_details** or **document_upload**, pointing to paperwork friction rather than "
+    "cold feet about the product itself. Their average lifetime value of **$9.7K** means these are established "
+    "relationships worth recovering, not casual browsers.\n\n"
+    "The two examples ask for genuinely different things (a breakdown vs. an explanation)  -  that's what "
+    "should decide the shape, not the number of personas/channels/products the answer happens to mention.\n"
     "FORBIDDEN phrases  -  NEVER write these (they signal hallucination and will be rejected):\n"
     "  'the data suggests', 'we can infer', 'it appears that', 'it seems that', 'may indicate',\n"
     "  'could indicate', 'further analysis', 'based on available data', 'the results indicate',\n"
@@ -1652,8 +1694,11 @@ def _generate_grounded_narrative(
         f"{count_note}{lead_note}\n"
         + (f"{agg_text}\n\n" if agg_text else "")
         + f"SQL result ({n_rows} row{'s' if n_rows != 1 else ''}):\n{table_text}\n\n"
-        "Write the narrative (plain text, no JSON  -  a short lead sentence, then one '- ' bullet per item "
-        "if you're listing 3 or more; otherwise 1-3 plain sentences):"
+        "Write the narrative (plain text, no JSON). Match the shape to the question: a narrative/exploratory "
+        "question gets flowing prose, even if it touches several items  -  weave the names and numbers into "
+        "sentences rather than defaulting to a bullet per item. Only use one '- ' bullet per item when the "
+        "question itself is explicitly asking for a ranking/list/breakdown (e.g. 'list the top...', 'break "
+        "down by...', 'rank the...'):"
     )
     try:
         from utils.claude_client import get_claude_client

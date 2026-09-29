@@ -76,7 +76,19 @@ class ClaudeClient:
         if self._anthropic_key:
             try:
                 import anthropic
-                self._anthropic_client = anthropic.Anthropic(api_key=self._anthropic_key)
+                import httpx
+                # Same corporate TLS-inspecting-proxy workaround _call_together
+                # already applies via requests' verify=False + disable_warnings
+                # below - the Anthropic SDK talks over its own httpx client,
+                # which was left on default cert verification and so failed
+                # every call with a generic "Connection error" (a TLS handshake
+                # failure surfaced non-specifically by the SDK), even though
+                # the API key itself was fine. Passing a custom httpx.Client
+                # with verify=False mirrors the requests-based fix.
+                self._anthropic_client = anthropic.Anthropic(
+                    api_key=self._anthropic_key,
+                    http_client=httpx.Client(verify=False),
+                )
             except ImportError:
                 logger.info("ClaudeClient: anthropic package not installed  -  Anthropic unavailable, Together AI only")
             except Exception as e:
